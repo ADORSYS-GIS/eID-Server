@@ -31,7 +31,7 @@ jobs:
 
     cargo-fmt:
         name: Cargo Format Check
-        runs-on: unbuntu-latest
+        runs-on: ubuntu-latest
         needs: setup
 
         steps:
@@ -43,7 +43,7 @@ jobs:
 
     cargo-clippy:
         name: Cargo Clippy Check
-        runs-on: unbuntu-latest
+        runs-on: ubuntu-latest
         needs: setup
 
         steps:
