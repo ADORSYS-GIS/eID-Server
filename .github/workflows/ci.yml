@@ -21,34 +21,45 @@ jobs:
         name: Cargo Build
         runs-on: ubuntu-latest
         needs: setup
-
         steps:
             - name: Fetch Repository
               uses: actions/checkout@v4
+
+            - name: Cache Rust dependencies
+              uses: actions/cache@v3
+              with:
+                path: |
+                  ~/.cargo/bin/
+                  ~/.cargo/registry/index/
+                  ~/.cargo/registry/cache/
+                  ~/.cargo/git/db/
+                  target/
+                key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}
 
             - name: Cargo Build
               run: cargo build --workspace --all-targets --all-features
 
-    cargo-fmt:
-        name: Cargo Format Check
+    format-and-lint:
+        name: Format and Lint Checks
         runs-on: ubuntu-latest
         needs: setup
-
         steps:
             - name: Fetch Repository
               uses: actions/checkout@v4
+
+            - name: Cache Rust dependencies
+              uses: actions/cache@v3
+              with:
+                path: |
+                  ~/.cargo/bin/
+                  ~/.cargo/registry/index/
+                  ~/.cargo/registry/cache/
+                  ~/.cargo/git/db/
+                  target/
+                key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}
 
             - name: Cargo Format Check
               run: cargo fmt --all --check
-
-    cargo-clippy:
-        name: Cargo Clippy Check
-        runs-on: ubuntu-latest
-        needs: setup
-
-        steps:
-            - name: Fetch Repository
-              uses: actions/checkout@v4
 
             - name: Cargo Clippy Check
               run: cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -57,10 +68,20 @@ jobs:
         name: Cargo Nextest
         runs-on: ubuntu-latest
         needs: setup
-
         steps:
             - name: Fetch Repository
               uses: actions/checkout@v4
+
+            - name: Cache Rust dependencies
+              uses: actions/cache@v3
+              with:
+                path: |
+                  ~/.cargo/bin/
+                  ~/.cargo/registry/index/
+                  ~/.cargo/registry/cache/
+                  ~/.cargo/git/db/
+                  target/
+                key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}
 
             - name: Install cargo-nextest
               uses: taiki-e/install-action@v2
@@ -68,4 +89,26 @@ jobs:
                 tool: cargo-nextest
 
             - name: Run Cargo Tests
-              run: cargo nextest run --workspace run --workspace --all-targets --all-feature --no-fail-fast || echo "No test found, skipping..."
+              run: cargo nextest run --workspace --all-targets --all-features --no-fail-fast || echo "No test found, skipping..."
+
+    cargo-doc:
+        name: Cargo Doc
+        runs-on: ubuntu-latest
+        needs: setup
+        steps:
+            - name: Fetch Repository
+              uses: actions/checkout@v4
+
+            - name: Cache Rust dependencies
+              uses: actions/cache@v3
+              with:
+                path: |
+                  ~/.cargo/bin/
+                  ~/.cargo/registry/index/
+                  ~/.cargo/registry/cache/
+                  ~/.cargo/git/db/
+                  target/
+                key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}
+
+            - name: Cargo Doc
+              run: cargo doc --workspace --all-features --no-deps
