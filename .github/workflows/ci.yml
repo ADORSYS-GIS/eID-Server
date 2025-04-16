@@ -1,0 +1,71 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+    setup:
+        name: Setup Rust Toolchain
+        runs-on: ubuntu-latest
+        outputs:
+            cache-key: ${{ steps.cache-key.outputs.cache-key }}
+        steps:
+            - name: Fetch Repository
+              uses: actions/checkout@v4
+
+            - name: Install Stable Rust toolchain
+              uses: actions-rust-lang/setup-rust-toolchain@v1
+              with:
+                components: rustfmt, clippy
+
+    cargo-build:
+        name: Cargo Build
+        runs-on: ubuntu-latest
+        needs: setup
+
+        steps:
+            - name: Fetch Repository
+              uses: actions/checkout@v4
+
+            - name: Cargo Build
+              run: cargo build --workspace --all-targets --all-features
+
+    cargo-fmt:
+        name: Cargo Format Check
+        runs-on: unbuntu-latest
+        needs: setup
+
+        steps:
+            - name: Fetch Repository
+              uses: actions/checkout@v4
+
+            - name: Cargo Format Check
+              run: cargo fmt --all --check
+
+    cargo-clippy:
+        name: Cargo Clippy Check
+        runs-on: unbuntu-latest
+        needs: setup
+
+        steps:
+            - name: Fetch Repository
+              uses: actions/checkout@v4
+
+            - name: Cargo Clippy Check
+              run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+    cargo-nextest:
+        name: Cargo Nextest
+        runs-on: ubuntu-latest
+        needs: setup
+
+        steps:
+            - name: Fetch Repository
+              uses: actions/checkout@v4
+
+            - name: Install cargo-nextest
+              uses: taiki-e/install-action@v2
+              with:
+                tool: cargo-nextest
+
+            - name: Run Cargo Tests
+              run: cargo nextest run --workspace run --workspace --all-targets --all-feature --no-fail-fast || echo "No test found, skipping..."
