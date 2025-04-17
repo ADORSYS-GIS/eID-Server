@@ -1,9 +1,9 @@
 name: CI
 
-on: pull_request
+on: [pull_request]
 
 jobs:
-    setup:
+    ci:
         name: Setup Rust Toolchain
         runs-on: ubuntu-latest
         outputs:
@@ -21,7 +21,7 @@ jobs:
     cargo-build:
         name: Cargo Build
         runs-on: ubuntu-latest
-        needs: setup
+        needs: ci
         steps:
             - &checkout-step
               name: Fetch Repository
@@ -45,7 +45,7 @@ jobs:
     format-and-lint:
         name: Format and Lint Checks
         runs-on: ubuntu-latest
-        needs: setup
+        needs: ci
         steps:
             - *checkout-step
 
@@ -68,7 +68,7 @@ jobs:
     cargo-nextest:
         name: Cargo Nextest
         runs-on: ubuntu-latest
-        needs: setup
+        needs: ci
         steps:
             - *checkout-step
 
@@ -85,7 +85,7 @@ jobs:
     cargo-doc:
         name: Cargo Doc
         runs-on: ubuntu-latest
-        needs: setup
+        needs: ci
         steps:
             - *checkout-step
 
