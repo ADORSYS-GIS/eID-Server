@@ -1,0 +1,1 @@
+// Handles SAML profiles and attribute mapping per TR-03130-3, Sections 5.2–5.6.
