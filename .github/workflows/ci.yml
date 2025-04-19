@@ -26,16 +26,10 @@ jobs:
       - name: Fetch Repository
         uses: actions/checkout@v4
 
-      - name: Cache Rust dependencies
-        uses: actions/cache@v3
+      - name: Cache Rust Dependencies
+        uses: ./.github/actions/cache
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}
+          cache-key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}
 
       - name: Cargo Build
         run: cargo build --workspace --all-targets --all-features
@@ -48,16 +42,10 @@ jobs:
       - name: Fetch Repository
         uses: actions/checkout@v4
 
-      - name: Cache Rust dependencies
-        uses: actions/cache@v3
+      - name: Cache Rust Dependencies
+        uses: ./.github/actions/cache
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}
+          cache-key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}
 
       - name: Cargo Format Check
         run: cargo fmt --all --check
@@ -81,16 +69,10 @@ jobs:
       - name: Fetch Repository
         uses: actions/checkout@v4
 
-      - name: Cache Rust dependencies
-        uses: actions/cache@v3
+      - name: Cache Rust Dependencies
+        uses: ./.github/actions/cache
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}
+          cache-key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -108,16 +90,10 @@ jobs:
       - name: Fetch Repository
         uses: actions/checkout@v4
 
-      - name: Cache Rust dependencies
-        uses: actions/cache@v3
+      - name: Cache Rust Dependencies
+        uses: ./.github/actions/cache
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}
+          cache-key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}
 
       - name: Cargo Doc
         run: cargo doc --workspace --all-features --no-deps
