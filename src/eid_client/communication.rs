@@ -1,1 +1,0 @@
-//to handle eID-Client interactions, possibly using smart card APIs.
