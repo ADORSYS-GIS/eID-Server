@@ -24,9 +24,11 @@ The eID Server enables identity verification using a SOAP-based flow between the
 6. On success, SAML Assertion is sent back to the SP.
 
 ### Functional Diagram
+
 ![functional](/assets/functional.png)
 
 ### Interaction Diagram
+
 ![interaction](/assets/interaction.png)
 
 🖇️ _Currently implemented interface:_ **SOAP (PAOS over HTTP)**  
