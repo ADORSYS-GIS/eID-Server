@@ -4,7 +4,7 @@
 
 ### Prerequisites
 
-- [Rust](https://www.rust-lang.org/) (latest stable version)
+- [Rust & Cargo](https://www.rust-lang.org/tools/install) (latest stable version)
 
 ### Setup
 

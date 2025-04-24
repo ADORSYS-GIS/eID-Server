@@ -3,7 +3,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ResponseBody<T: Serialize> {
     status_code: u16,
-    description: T,
+    data: T,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
