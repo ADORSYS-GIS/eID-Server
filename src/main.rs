@@ -1,14 +1,24 @@
-fn main() {
-    println!("Hello, world!");
-}
+use eid_server::{
+    config::Config,
+    domain::eid::service::Service,
+    server::{Server, ServerConfig}, telemetry,
+};
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[tokio::main]
+async fn main() -> color_eyre::Result<()> {
+    color_eyre::install()?;
+    telemetry::init_tracing();
 
-    #[test]
-    fn test_main() {
-        main();
-        assert_eq!(1, 1);
-    }
+    // Load configuration
+    let config = Config::load()?;
+    tracing::info!("Loaded configuration: {:?}", config);
+
+    let service = Service::new();
+
+    let server_config = ServerConfig {
+        host: &config.server.host,
+        port: config.server.port,
+    };
+    let server = Server::new(service, server_config).await?;
+    server.run().await
 }
