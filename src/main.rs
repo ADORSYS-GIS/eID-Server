@@ -1,7 +1,8 @@
 use eid_server::{
     config::Config,
     domain::eid::service::Service,
-    server::{Server, ServerConfig}, telemetry,
+    server::{Server, ServerConfig},
+    telemetry,
 };
 
 #[tokio::main]
