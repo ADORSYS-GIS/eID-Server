@@ -13,4 +13,10 @@ impl Service {
     }
 }
 
+impl Default for Service {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EidService for Service {}
