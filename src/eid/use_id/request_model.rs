@@ -2,6 +2,7 @@ use crate::common::models::{
     EIDTypeRequest, LevelOfAssurance, ResultCode, TransactionAttestationRequest, UseOperations,
 };
 
+#[derive(Default)]
 pub struct UseIDRequest {
     pub use_operations: Vec<UseOperations>,
     pub age_verification: Option<u8>,
@@ -10,12 +11,18 @@ pub struct UseIDRequest {
     pub transaction_attestation_uri: Option<TransactionAttestationRequest>,
     pub level_of_assurance: Option<LevelOfAssurance>,
     pub eid_type_request: Option<EIDTypeRequest>,
-    pub psk: Option<String>,
+    pub psk: Option<PSK>,
 }
 
-pub struct UseIDResponse {
-    pub session: String,
-    pub ecard_server_address: Option<String>,
-    pub psk: Option<String>,
-    pub result: ResultCode,
+impl UseIDRequest {
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
+
+#[derive(Default)]
+pub struct PSK {
+    pub id: String,
+    pub key: String
+}
+

@@ -2,7 +2,6 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EIDTypeSelection {
     ALLOWED,
@@ -15,8 +14,6 @@ pub struct EIDTypeRequest {
     pub se_endorsed: Option<EIDTypeSelection>,
     pub card_certified: Option<EIDTypeSelection>,
     pub hwkeystore: Option<EIDTypeSelection>,
-
-
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +27,12 @@ pub struct TransactionAttestationRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UseOperations {
+    pub name: String,
+    pub requirement: AttributeRequest,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Operations {
     pub document_type: AttributeRequest,
     pub issuing_state: AttributeRequest,
     pub date_of_expiry: AttributeRequest,
@@ -49,9 +52,7 @@ pub struct UseOperations {
     pub place_verification: Option<AttributeRequest>,
 }
 
-
-
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AttributeRequest {
     REQUIRED,
     ALLOWED,
@@ -71,6 +72,7 @@ pub enum ResultCode {
 }
 
 // From section 3.3.12 of the technical guideline TR-03130
+#[derive(PartialEq, Eq, Debug)]
 pub enum LevelOfAssurance {
     Undefined,
     Normal,
@@ -96,4 +98,3 @@ impl FromStr for LevelOfAssurance {
         }
     }
 }
-
