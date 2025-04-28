@@ -12,7 +12,7 @@ pub struct UseIDRequest {
     pub transaction_attestation_uri: Option<TransactionAttestationRequest>,
     pub level_of_assurance: Option<LevelOfAssurance>,
     pub eid_type_request: Option<EIDTypeRequest>,
-    pub psk: Option<PSK>,
+    pub psk: Option<Psk>,
 }
 
 impl UseIDRequest {
@@ -24,12 +24,12 @@ impl UseIDRequest {
 pub struct UseIDResponse {
     pub session: String,
     pub ecard_server_address: Option<String>,
-    pub psk: PSK,
+    pub psk: Psk,
     pub result: ResultCode,
 }
 
 #[derive(Default)]
-pub struct PSK {
+pub struct Psk {
     pub id: String,
     pub key: String,
 }

@@ -136,7 +136,7 @@ pub fn build_get_result_response(response: &GetResultResponse) -> Result<String,
     writer.write_event(Event::Start(BytesStart::new("eid:PlaceOfBirth")))?;
     writer.write_event(Event::Start(BytesStart::new("eid:FreetextPlace")))?;
     writer.write_event(Event::Text(BytesText::new(
-        &response
+        response
             .personal_data
             .place_of_birth
             .freetextplace

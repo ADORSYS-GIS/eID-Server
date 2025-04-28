@@ -137,7 +137,7 @@ pub fn build_use_id_response(response: &UseIDResponse) -> Result<String, std::io
 #[cfg(test)]
 mod tests {
 
-    use crate::eid::{common::models::ResultCode, use_id::model::PSK};
+    use crate::eid::{common::models::ResultCode, use_id::model::Psk};
 
     use super::*;
 
@@ -146,7 +146,7 @@ mod tests {
         // Arrange
         let response = UseIDResponse {
             session: "1234567890abcdef1234567890abcdef".to_string(),
-            psk: PSK {
+            psk: Psk {
                 id: "0987654321abcdef1234567890abcdef".to_string(),
                 key: "fedcba0987654321fedcba0987654321".to_string(),
             },

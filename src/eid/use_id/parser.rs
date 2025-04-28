@@ -9,7 +9,7 @@ use crate::eid::common::models::{
 };
 
 use super::error::UseIdError;
-use super::model::{PSK, UseIDRequest};
+use super::model::{Psk, UseIDRequest};
 
 /// Parses a `useIDRequest` SOAP XML message into a structured `UseIDRequest`.
 ///
@@ -251,7 +251,7 @@ pub fn parse_use_id_request(xml: &str) -> Result<UseIDRequest, UseIdError> {
                     }
 
                     if let (Some(id), Some(key)) = (id, key) {
-                        useid_request.psk = Some(PSK { id, key });
+                        useid_request.psk = Some(Psk { id, key });
                     }
                 }
 

@@ -59,48 +59,63 @@ pub fn parse_get_result_request(xml: &str) -> Result<GetResultRequest, GetResult
 
     while let Ok(event) = reader.read_event_into(&mut buf) {
         match event {
-            Event::Start(ref e) => match e.name().as_ref() {
-                b"eid:getResultRequest" => loop {
-                    match reader.read_event_into(&mut buf) {
-                        Ok(Event::Start(ref e)) if e.name().as_ref() == b"eid:Session" => loop {
-                            match reader.read_event_into(&mut buf) {
-                                Ok(Event::Start(ref e)) if e.name().as_ref() == b"eid:ID" => {
-                                    if let Ok(Event::Text(text)) = reader.read_event_into(&mut buf)
-                                    {
-                                        get_result_request.session =
-                                            text.unescape().ok().unwrap_or_default().to_string();
+            Event::Start(ref e) => {
+                if e.name().as_ref() == b"eid:getResultRequest" {
+                    loop {
+                        match reader.read_event_into(&mut buf) {
+                            Ok(Event::Start(ref e)) if e.name().as_ref() == b"eid:Session" => {
+                                loop {
+                                    match reader.read_event_into(&mut buf) {
+                                        Ok(Event::Start(ref e))
+                                            if e.name().as_ref() == b"eid:ID" =>
+                                        {
+                                            if let Ok(Event::Text(text)) =
+                                                reader.read_event_into(&mut buf)
+                                            {
+                                                get_result_request.session = text
+                                                    .unescape()
+                                                    .ok()
+                                                    .unwrap_or_default()
+                                                    .to_string();
+                                            }
+                                        }
+                                        Ok(Event::End(ref e))
+                                            if e.name().as_ref() == b"eid:Session" =>
+                                        {
+                                            break;
+                                        }
+                                        _ => (),
                                     }
                                 }
-                                Ok(Event::End(ref e)) if e.name().as_ref() == b"eid:Session" => {
-                                    break;
+                            }
+                            Ok(Event::Start(ref e))
+                                if e.name().as_ref() == b"eid:RequestCounter" =>
+                            {
+                                if let Ok(Event::Text(text)) = reader.read_event_into(&mut buf) {
+                                    get_result_request.request_counter = text
+                                        .unescape()
+                                        .ok()
+                                        .and_then(|s| s.parse::<u8>().ok())
+                                        .unwrap_or(0);
                                 }
-                                _ => (),
                             }
-                        },
-                        Ok(Event::Start(ref e)) if e.name().as_ref() == b"eid:RequestCounter" => {
-                            if let Ok(Event::Text(text)) = reader.read_event_into(&mut buf) {
-                                get_result_request.request_counter = text
-                                    .unescape()
-                                    .ok()
-                                    .and_then(|s| s.parse::<u8>().ok())
-                                    .unwrap_or(0);
+                            Ok(Event::End(ref e))
+                                if e.name().as_ref() == b"eid:getResultRequest" =>
+                            {
+                                break;
+                            }
+                            Ok(_) => (),
+                            Err(e) => {
+                                return Err(GetResultError::GenericError(format!(
+                                    "Error parsing getResultRequest: {}",
+                                    e
+                                )));
                             }
                         }
-                        Ok(Event::End(ref e)) if e.name().as_ref() == b"eid:getResultRequest" => {
-                            break;
-                        }
-                        Ok(_) => (),
-                        Err(e) => {
-                            return Err(GetResultError::GenericError(format!(
-                                "Error parsing getResultRequest: {}",
-                                e
-                            )));
-                        }
+                        buf.clear();
                     }
-                    buf.clear();
-                },
-                _ => (),
-            },
+                }
+            }
             Event::Eof => break,
             _ => (),
         }
