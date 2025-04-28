@@ -1,8 +1,8 @@
-use crate::common::models::{
-    EIDTypeRequest, LevelOfAssurance, ResultCode, TransactionAttestationRequest, UseOperations,
-};
+use crate::eid::common::models::{EIDTypeRequest, LevelOfAssurance, ResultCode, TransactionAttestationRequest, UseOperations};
+
 
 #[derive(Default)]
+#[allow(dead_code)]
 pub struct UseIDRequest {
     pub use_operations: Vec<UseOperations>,
     pub age_verification: Option<u8>,
@@ -18,6 +18,13 @@ impl UseIDRequest {
     pub fn new() -> Self {
         Self::default()
     }
+}
+
+pub struct UseIDResponse {
+    pub session: String,
+    pub ecard_server_address: Option<String>,
+    pub psk: PSK,
+    pub result: ResultCode,
 }
 
 #[derive(Default)]

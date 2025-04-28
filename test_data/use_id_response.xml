@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope
+xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+xmlns:eid="http://bsi.bund.de/eID/"
+xmlns:dss="urn:oasis:names:tc:dss:1.0:core:schema">
+<soapenv:Header />
+<soapenv:Body>
+<eid:useIDResponse>
+<eid:Session>
+<eid:ID>1234567890abcdef1234567890abcdef</eid:ID>
+</eid:Session>
+<eid:PSK>
+<eid:ID>0987654321abcdef1234567890abcdef</eid:ID>
+<eid:Key>fedcba0987654321fedcba0987654321</eid:Key>
+</eid:PSK>
+<dss:Result>
+<ResultMajor>
+http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok
+</ResultMajor>
+</dss:Result>
+</eid:useIDResponse>
+</soapenv:Body>
+</soapenv:Envelope>

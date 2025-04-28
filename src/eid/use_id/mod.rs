@@ -1,4 +1,4 @@
-pub mod request_model;
-pub mod response_model;
 pub mod parser;
+pub mod builder;
 pub(super) mod error;
+pub(super) mod model;
