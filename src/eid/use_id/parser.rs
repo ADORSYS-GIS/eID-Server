@@ -3,11 +3,13 @@ use std::str::FromStr;
 use quick_xml::Reader;
 use quick_xml::events::Event;
 
-use crate::eid::common::models::{AttributeRequest, EIDTypeRequest, EIDTypeSelection, LevelOfAssurance, TransactionAttestationRequest, UseOperations};
+use crate::eid::common::models::{
+    AttributeRequest, EIDTypeRequest, EIDTypeSelection, LevelOfAssurance,
+    TransactionAttestationRequest, UseOperations,
+};
 
 use super::error::UseIdError;
-use super::model::{UseIDRequest, PSK};
-
+use super::model::{PSK, UseIDRequest};
 
 /// Parses a `useIDRequest` SOAP XML message into a structured `UseIDRequest`.
 ///
@@ -266,7 +268,6 @@ pub fn parse_use_id_request(xml: &str) -> Result<UseIDRequest, UseIdError> {
 
 #[cfg(test)]
 mod tests {
- 
 
     use super::*;
 

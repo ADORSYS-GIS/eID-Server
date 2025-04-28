@@ -2,13 +2,13 @@ use crate::eid::common::models::AttributeSelection;
 
 pub struct GetServerInfoResponse {
     pub server_version: VersionType,
-    pub document_verification_rights: OperationsSelector
+    pub document_verification_rights: OperationsSelector,
 }
 pub struct VersionType {
     pub version_string: String,
     pub major: u8,
     pub minor: u8,
-    pub bugfix: u8
+    pub bugfix: u8,
 }
 
 pub struct OperationsSelector {
@@ -28,6 +28,5 @@ pub struct OperationsSelector {
     pub residence_permit: AttributeSelection,
     pub restricted_id: AttributeSelection,
     pub age_verification: AttributeSelection,
-    pub place_verification: AttributeSelection
+    pub place_verification: AttributeSelection,
 }
-

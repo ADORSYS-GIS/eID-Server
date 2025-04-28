@@ -1,5 +1,6 @@
-use crate::eid::common::models::{EIDTypeRequest, LevelOfAssurance, ResultCode, TransactionAttestationRequest, UseOperations};
-
+use crate::eid::common::models::{
+    EIDTypeRequest, LevelOfAssurance, ResultCode, TransactionAttestationRequest, UseOperations,
+};
 
 #[derive(Default)]
 #[allow(dead_code)]
@@ -30,6 +31,5 @@ pub struct UseIDResponse {
 #[derive(Default)]
 pub struct PSK {
     pub id: String,
-    pub key: String
+    pub key: String,
 }
-

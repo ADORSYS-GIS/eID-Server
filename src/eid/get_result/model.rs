@@ -1,10 +1,12 @@
-use crate::eid::common::models::{EIDTypeResponse, LevelOfAssurance, Operations, PersonalData, ResultCode, TransactionAttestationResponse};
+use crate::eid::common::models::{
+    EIDTypeResponse, LevelOfAssurance, Operations, PersonalData, ResultCode,
+    TransactionAttestationResponse,
+};
 
 #[derive(Default)]
 pub struct GetResultRequest {
     pub session: String,
-    pub request_counter: u8
-
+    pub request_counter: u8,
 }
 
 pub struct GetResultResponse {
@@ -15,6 +17,5 @@ pub struct GetResultResponse {
     pub transaction_attestation_response: TransactionAttestationResponse,
     pub level_of_assurance: LevelOfAssurance,
     pub eid_type_response: EIDTypeResponse,
-    pub result: ResultCode
-
+    pub result: ResultCode,
 }

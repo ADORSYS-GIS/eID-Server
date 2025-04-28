@@ -7,7 +7,7 @@ use super::model::UseIDResponse;
 /// Builds a SOAP XML envelope for the `useIDResponse` using `quick-xml` library.
 ///
 /// This function constructs a well-formed SOAP XML response for the `UseIDResponse` struct, which includes
-/// the necessary envelope, header, body, and session data required for eID authentication. It uses the 
+/// the necessary envelope, header, body, and session data required for eID authentication. It uses the
 /// `quick-xml` library for efficient XML generation and writes the XML to a `Writer`, which is then converted
 /// into a UTF-8 string for easy consumption.
 ///
@@ -16,12 +16,12 @@ use super::model::UseIDResponse;
 ///   holds the session data, optional eCard server address, PSK (Pre-Shared Key), and result status for the response.
 ///
 /// ## Returns
-/// - `Result<String, std::io::Error>`: A result containing the generated SOAP XML response as a `String` on success, 
+/// - `Result<String, std::io::Error>`: A result containing the generated SOAP XML response as a `String` on success,
 ///   or an `io::Error` if an error occurs during the XML generation.
 ///
 /// ## XML Structure
 /// The resulting SOAP XML will have the following structure:
-/// 
+///
 /// ```xml
 /// <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:eid="http://bsi.bund.de/eID/" xmlns:dss="urn:oasis:names:tc:dss:1.0:core:schema">
 ///     <soapenv:Header/>
@@ -44,7 +44,7 @@ use super::model::UseIDResponse;
 /// ```
 ///
 /// ## Details
-/// - **Envelope**: The `soapenv:Envelope` element is the root of the SOAP message and contains namespaces for 
+/// - **Envelope**: The `soapenv:Envelope` element is the root of the SOAP message and contains namespaces for
 ///   `soapenv`, `eid`, and `dss`.
 /// - **Header**: The header is empty (`<soapenv:Header/>`), as required by the protocol.
 /// - **Body**: The body contains the main response content under the `eid:useIDResponse` tag. It includes:
@@ -137,7 +137,6 @@ pub fn build_use_id_response(response: &UseIDResponse) -> Result<String, std::io
 #[cfg(test)]
 mod tests {
 
-
     use crate::eid::{common::models::ResultCode, use_id::model::PSK};
 
     use super::*;
@@ -152,7 +151,7 @@ mod tests {
                 key: "fedcba0987654321fedcba0987654321".to_string(),
             },
             result: ResultCode::Ok,
-            ecard_server_address: None, 
+            ecard_server_address: None,
         };
 
         let generated_xml = build_use_id_response(&response).expect("Failed to build XML");

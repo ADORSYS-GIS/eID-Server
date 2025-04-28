@@ -174,7 +174,10 @@ pub fn build_get_server_info_response(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eid::{common::models::AttributeSelection, get_server_info::model::{OperationsSelector, VersionType}};
+    use crate::eid::{
+        common::models::AttributeSelection,
+        get_server_info::model::{OperationsSelector, VersionType},
+    };
 
     #[test]
     fn test_build_get_server_info_response() {

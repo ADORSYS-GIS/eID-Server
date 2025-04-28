@@ -506,7 +506,9 @@ mod tests {
         assert!(xml.contains(
             "<eid:ID>01A4FB509CEBC6595151A4FB5F9C75C6FE01A4FB59CB655A4FB5F9C75C6FEE</eid:ID>"
         ));
-        assert!(xml.contains("<eid:ID2>5C6FE01A4FB59CB655A4FB5F9C75C6FEE01A4FB509CEBC6595151A4FB5F9C7</eid:ID2>"));
+        assert!(xml.contains(
+            "<eid:ID2>5C6FE01A4FB59CB655A4FB5F9C75C6FEE01A4FB509CEBC6595151A4FB5F9C7</eid:ID2>"
+        ));
         // Fulfils*
         assert!(xml.contains("<eid:FulfilsRequest>true</eid:FulfilsRequest>"));
 
