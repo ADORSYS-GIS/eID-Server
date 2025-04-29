@@ -13,6 +13,7 @@ impl EidService for MockService {}
 pub async fn spawn_server() -> String {
     let config = {
         let mut config = Config::load().unwrap();
+        config.server.host = "localhost".to_string();
         // Use a random OS port
         config.server.port = 0;
         config
