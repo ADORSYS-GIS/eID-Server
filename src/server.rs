@@ -58,7 +58,7 @@ impl Server {
                 Method::OPTIONS,
             ]);
 
-        // This will encapsulate dependencies need to execute the business logic
+        // This will encapsulate dependencies needed to execute the business logic
         let state = AppState {
             _eid_service: Arc::new(eid_service),
         };
