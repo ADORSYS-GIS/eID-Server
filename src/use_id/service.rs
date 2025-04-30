@@ -1,11 +1,12 @@
 use chrono::{Duration, Utc};
-use rand::{distributions::Alphanumeric, Rng};
+use rand::{distr::Alphanumeric, Rng};
+
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 use uuid::Uuid;
 
-use super::models::{Session, UseIDRequest, UseIDResponse, PSK};
+use super::models::{Result, Session, UseIDRequest, UseIDResponse, PSK};
 
 /// Configuration for the eID Service
 #[derive(Clone)]
@@ -143,7 +144,7 @@ impl EIDService {
     /// Generate a random PSK for secure communication
     fn generate_psk(&self) -> String {
         // Generate a 32-character random PSK
-        rand::thread_rng()
+        rand::rng()
             .sample_iter(&Alphanumeric)
             .take(32)
             .map(char::from)
@@ -174,5 +175,139 @@ impl EIDService {
             .iter()
             .find(|s| s.id == session_id && s.expiry > now)
             .cloned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::use_id::models::{UseOperation, UseOperations};
+
+    use super::*;
+    use tokio;
+
+    fn create_test_service() -> EIDService {
+        EIDService::new(EIDServiceConfig {
+            max_sessions: 10,
+            session_timeout_minutes: 5,
+            ecard_server_address: Some("https://test.eid.example.com/ecard".to_string()),
+        })
+    }
+
+    #[tokio::test]
+    async fn test_handle_use_id_empty_operations() {
+        let service = create_test_service();
+        let request = UseIDRequest {
+            use_operations: UseOperations {
+                use_operations: vec![],
+            },
+            age_verification_request: None,
+            place_verification_request: None,
+            transaction_info: None,
+            transaction_attestation_request: None,
+            level_of_assurance_request: None,
+            eid_type_request: None,
+            psk: None,
+        };
+
+        let response = service.handle_use_id(request).await.unwrap();
+
+        assert_eq!(response.result.result_major, 
+            "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error");
+        assert_eq!(response.result.result_minor.unwrap(), 
+            "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/parameterError");
+        assert_eq!(response.session.session_identifier, "");
+        assert_eq!(response.session.timeout, "0");
+    }
+
+    #[tokio::test]
+    async fn test_handle_use_id_max_sessions() {
+        let service = create_test_service();
+        
+        // Fill up sessions
+        for _ in 0..10 {
+            let request = UseIDRequest {
+                use_operations: UseOperations {
+                    use_operations: vec![UseOperation {
+                        id: "test".to_string(),
+                    }],
+                },
+                age_verification_request: None,
+                place_verification_request: None,
+                transaction_info: None,
+                transaction_attestation_request: None,
+                level_of_assurance_request: None,
+                eid_type_request: None,
+                psk: None,
+            };
+            service.handle_use_id(request).await.unwrap();
+        }
+
+        // Try one more request
+        let request = UseIDRequest {
+            use_operations: UseOperations {
+                use_operations: vec![UseOperation {
+                    id: "test".to_string(),
+                }],
+            },
+            age_verification_request: None,
+            place_verification_request: None,
+            transaction_info: None,
+            transaction_attestation_request: None,
+            level_of_assurance_request: None,
+            eid_type_request: None,
+            psk: None,
+        };
+
+        let response = service.handle_use_id(request).await.unwrap();
+
+        assert_eq!(response.result.result_major, 
+            "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error");
+        assert_eq!(response.result.result_minor.unwrap(), 
+            "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/tooManySessions");
+    }
+
+    #[tokio::test]
+    async fn test_session_cleanup() {
+        let config = EIDServiceConfig {
+            max_sessions: 10,
+            session_timeout_minutes: -1, // Expired immediately
+            ecard_server_address: None,
+        };
+        let service = EIDService::new(config);
+
+        // Create a session
+        let request = UseIDRequest {
+            use_operations: UseOperations {
+                use_operations: vec![UseOperation {
+                    id: "test".to_string(),
+                }],
+            },
+            age_verification_request: None,
+            place_verification_request: None,
+            transaction_info: None,
+            transaction_attestation_request: None,
+            level_of_assurance_request: None,
+            eid_type_request: None,
+            psk: None,
+        };
+        let response = service.handle_use_id(request).await.unwrap();
+        
+        let session_id = response.session.session_identifier;
+        assert!(!session_id.is_empty());
+
+        // Clean up
+        let removed = service.cleanup_expired_sessions().await;
+        assert_eq!(removed, 1);
+
+        // Verify session is gone
+        let session = service.get_session(&session_id).await;
+        assert!(session.is_none());
+    }
+
+    #[test]
+    fn test_generate_psk_length() {
+        let service = create_test_service();
+        let psk = service.generate_psk();
+        assert_eq!(psk.len(), 32);
     }
 }

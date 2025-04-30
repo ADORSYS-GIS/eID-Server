@@ -2,13 +2,14 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use service::{EIDService, EIDServiceConfig};
+use eid_server::use_id::handlers::use_id_handler; 
+use eid_server::use_id::service::{EIDServiceConfig, EIDService};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 use tower_http::trace::TraceLayer;
-use tracing::{info, Level};
+use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -47,27 +48,18 @@ async fn main() {
 
     // Create router with our service endpoint
     let app = Router::new()
-        .route("/eIDService/useID", post(handlers::use_id_handler))
-        .route("/health", get(|| async { "OK" }))  // Simple health check endpoint
+        .route("/eIDService/useID", post(use_id_handler)) 
+        .route("/health", get(|| async { "OK" })) 
         .layer(TraceLayer::new_for_http())
         .with_state(eid_service);
 
     // Start the server
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     info!("Listening on {}", addr);
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await
-        .unwrap();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_main_placeholder() {
-        // This test is a placeholder
-        assert_eq!(1, 1);
-    }
+    axum::serve(
+        tokio::net::TcpListener::bind(addr).await.unwrap(),
+        app.into_make_service(),
+    )
+    .await
+    .unwrap();
 }

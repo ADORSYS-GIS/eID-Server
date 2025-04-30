@@ -9,6 +9,7 @@ axum = { version = "0.8.3", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5.2"
 tower-http = { version = "0.6.2", features = ["trace"] }
+hyper = { version = "0.14", features = ["client", "http1"] }
 
 # SOAP handling
 yaserde = "0.12"
@@ -32,5 +33,9 @@ chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22.1"
 rand = "0.9.1"
 
+http-body = "1.0"
+http-body-util = "0.1"
+
 [dev-dependencies]
 axum-test = "17.3.0"
+http-body-util = "0.1"

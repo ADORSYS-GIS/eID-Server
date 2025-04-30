@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
-use yaserde::{de::from_str, ser::to_string, YaDeserialize, YaSerialize};
+use yaserde_derive::{YaDeserialize, YaSerialize};
+use yaserde::{de::from_str, ser::to_string};
 
 // TR-03130 useID SOAP Request and Response Models
 
@@ -11,16 +12,15 @@ pub const NS_XSI: &str = "http://www.w3.org/2001/XMLSchema-instance";
 
 /// Defines the result status of a request
 #[derive(Debug, Serialize, Deserialize, YaSerialize, YaDeserialize, Clone, PartialEq)]
-#[yaserde(namespace = "urn:oasis:names:tc:dss:1.0:core:schema")]
 pub struct Result {
     #[yaserde(rename = "ResultMajor")]
     pub result_major: String,
 
-    #[yaserde(rename = "ResultMinor", attribute)]
+    #[yaserde(rename = "ResultMinor")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_minor: Option<String>,
 
-    #[yaserde(rename = "ResultMessage", attribute)]
+    #[yaserde(rename = "ResultMessage")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_message: Option<String>,
 }
@@ -53,7 +53,6 @@ impl Result {
 
 /// This struct represents the UseOperations parameter in the useID request
 #[derive(Debug, Serialize, Deserialize, YaSerialize, YaDeserialize, Clone, PartialEq)]
-#[yaserde(namespace = "urn:iso:std:iso-iec:24727:tech:schema")]
 pub struct UseOperations {
     #[yaserde(rename = "UseOperation")]
     pub use_operations: Vec<UseOperation>,
@@ -61,15 +60,13 @@ pub struct UseOperations {
 
 /// Single UseOperation item
 #[derive(Debug, Serialize, Deserialize, YaSerialize, YaDeserialize, Clone, PartialEq)]
-#[yaserde(namespace = "urn:iso:std:iso-iec:24727:tech:schema")]
 pub struct UseOperation {
-    #[yaserde(attribute)]
+    #[yaserde(rename = "id")]
     pub id: String,
 }
 
 /// AgeVerificationRequest parameter
 #[derive(Debug, Serialize, Deserialize, YaSerialize, YaDeserialize, Clone, PartialEq)]
-#[yaserde(namespace = "urn:iso:std:iso-iec:24727:tech:schema")]
 pub struct AgeVerificationRequest {
     #[yaserde(rename = "AgeToVerify")]
     pub age_to_verify: u8,
@@ -77,7 +74,6 @@ pub struct AgeVerificationRequest {
 
 /// PlaceVerificationRequest parameter
 #[derive(Debug, Serialize, Deserialize, YaSerialize, YaDeserialize, Clone, PartialEq)]
-#[yaserde(namespace = "urn:iso:std:iso-iec:24727:tech:schema")]
 pub struct PlaceVerificationRequest {
     #[yaserde(rename = "CommunityIDsToVerify")]
     pub community_ids_to_verify: Vec<String>,
@@ -85,7 +81,6 @@ pub struct PlaceVerificationRequest {
 
 /// LevelOfAssuranceRequest parameter
 #[derive(Debug, Serialize, Deserialize, YaSerialize, YaDeserialize, Clone, PartialEq)]
-#[yaserde(namespace = "urn:iso:std:iso-iec:24727:tech:schema")]
 pub struct LevelOfAssuranceRequest {
     #[yaserde(rename = "LevelOfAssurance")]
     pub level_of_assurance: String,
@@ -93,7 +88,6 @@ pub struct LevelOfAssuranceRequest {
 
 /// EIDTypeRequest parameter
 #[derive(Debug, Serialize, Deserialize, YaSerialize, YaDeserialize, Clone, PartialEq)]
-#[yaserde(namespace = "urn:iso:std:iso-iec:24727:tech:schema")]
 pub struct EIDTypeRequest {
     #[yaserde(rename = "EIDType")]
     pub eid_type: String,
@@ -101,35 +95,28 @@ pub struct EIDTypeRequest {
 
 /// TransactionInfo parameter
 #[derive(Debug, Serialize, Deserialize, YaSerialize, YaDeserialize, Clone, PartialEq)]
-#[yaserde(namespace = "urn:iso:std:iso-iec:24727:tech:schema")]
 pub struct TransactionInfo {
-    #[yaserde(text)]
+    #[yaserde(text = true)]
     pub value: String,
 }
 
 /// TransactionAttestationRequest parameter
 #[derive(Debug, Serialize, Deserialize, YaSerialize, YaDeserialize, Clone, PartialEq)]
-#[yaserde(namespace = "urn:iso:std:iso-iec:24727:tech:schema")]
 pub struct TransactionAttestationRequest {
-    #[yaserde(attribute, rename = "type")]
+    #[yaserde(rename = "type")]
     pub attestation_type: String,
 }
 
 /// PSK parameter
 #[derive(Debug, Serialize, Deserialize, YaSerialize, YaDeserialize, Clone, PartialEq)]
-#[yaserde(namespace = "urn:iso:std:iso-iec:24727:tech:schema")]
 pub struct PSK {
-    #[yaserde(text)]
+    #[yaserde(text = true)]
     pub value: String,
 }
 
 /// The useID request structure
 #[derive(Debug, Serialize, Deserialize, YaSerialize, YaDeserialize, Clone)]
-#[yaserde(
-    rename = "useID",
-    namespace = "urn:iso:std:iso-iec:24727:tech:schema",
-    prefix = "iso"
-)]
+#[yaserde(rename = "useID")]
 pub struct UseIDRequest {
     #[yaserde(rename = "UseOperations")]
     pub use_operations: UseOperations,
@@ -165,7 +152,6 @@ pub struct UseIDRequest {
 
 /// Session information in the response
 #[derive(Debug, Serialize, Deserialize, YaSerialize, YaDeserialize, Clone, PartialEq)]
-#[yaserde(namespace = "urn:iso:std:iso-iec:24727:tech:schema")]
 pub struct Session {
     #[yaserde(rename = "SessionIdentifier")]
     pub session_identifier: String,
@@ -176,13 +162,9 @@ pub struct Session {
 
 /// The useID response structure
 #[derive(Debug, Serialize, Deserialize, YaSerialize, YaDeserialize, Clone)]
-#[yaserde(
-    rename = "useIDResponse",
-    namespace = "urn:iso:std:iso-iec:24727:tech:schema",
-    prefix = "iso"
-)]
+#[yaserde(rename = "useIDResponse")]
 pub struct UseIDResponse {
-    #[yaserde(rename = "Result", prefix = "dss")]
+    #[yaserde(rename = "Result")]
     pub result: Result,
 
     #[yaserde(rename = "Session")]
@@ -199,25 +181,32 @@ pub struct UseIDResponse {
 
 /// Used for wrapping requests in a SOAP envelope
 #[derive(Debug, Serialize, Deserialize, YaSerialize, YaDeserialize, Clone)]
-#[yaserde(
-    rename = "Envelope",
-    namespace = "http://schemas.xmlsoap.org/soap/envelope/",
-    prefix = "soap"
-)]
-pub struct SoapEnvelope<T> {
-    #[yaserde(rename = "Body", prefix = "soap")]
+#[yaserde(rename = "Envelope")]
+#[yaserde(namespace = "soap: http://schemas.xmlsoap.org/soap/envelope/")]
+#[yaserde(prefix = "soap")]
+pub struct SoapEnvelope<T>
+where
+    T: yaserde::YaSerialize + yaserde::YaDeserialize,
+{
+    #[yaserde(rename = "Body")]
+    #[yaserde(prefix = "soap")]
     pub body: SoapBody<T>,
 }
 
 /// SOAP Body wrapper
 #[derive(Debug, Serialize, Deserialize, YaSerialize, YaDeserialize, Clone)]
-#[yaserde(namespace = "http://schemas.xmlsoap.org/soap/envelope/", prefix = "soap")]
-pub struct SoapBody<T> {
-    #[yaserde(flatten)]
+pub struct SoapBody<T>
+where
+    T: yaserde::YaSerialize + yaserde::YaDeserialize,
+{
+    #[yaserde(flatten = true)]
     pub content: T,
 }
 
-impl<T> SoapEnvelope<T> {
+impl<T> SoapEnvelope<T>
+where
+    T: yaserde::YaSerialize + yaserde::YaDeserialize,
+{
     pub fn new(content: T) -> Self {
         Self {
             body: SoapBody { content },
@@ -230,13 +219,77 @@ pub mod soap {
     use super::*;
     use anyhow::{anyhow, Result};
 
-    pub fn deserialize_soap_request<T: YaDeserialize>(xml: &str) -> Result<T> {
-        let envelope = from_str::<SoapEnvelope<T>>(xml).map_err(|e| anyhow!("XML deserialization error: {}", e))?;
+    // Re-export SoapEnvelope and SoapBody to make them accessible
+    pub use super::{SoapEnvelope, SoapBody};
+
+    pub fn deserialize_soap_request<T: yaserde::YaDeserialize + yaserde::YaSerialize>(
+        xml: &str,
+    ) -> Result<T> {
+        let envelope = from_str::<SoapEnvelope<T>>(xml)
+            .map_err(|e| anyhow!("XML deserialization error: {}", e))?;
         Ok(envelope.body.content)
     }
 
-    pub fn serialize_soap_response<T: YaSerialize>(response: T) -> Result<String> {
+    pub fn serialize_soap_response<T: yaserde::YaSerialize + yaserde::YaDeserialize>(
+        response: T,
+    ) -> Result<String> {
         let envelope = SoapEnvelope::new(response);
         to_string(&envelope).map_err(|e| anyhow!("XML serialization error: {}", e))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_result_success() {
+        let result = Result::success();
+        assert_eq!(
+            result.result_major,
+            "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok"
+        );
+        assert_eq!(result.result_minor, None);
+        assert_eq!(result.result_message, None);
+    }
+
+    #[test]
+    fn test_result_error() {
+        let result = Result::error("minor_error", Some("Error message"));
+        assert_eq!(
+            result.result_major,
+            "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error"
+        );
+        assert_eq!(result.result_minor, Some("minor_error".to_string()));
+        assert_eq!(result.result_message, Some("Error message".to_string()));
+    }
+
+    #[test]
+    fn test_soap_serialization_deserialization() {
+        let request = UseIDRequest {
+            use_operations: UseOperations {
+                use_operations: vec![UseOperation {
+                    id: "test_operation".to_string(),
+                }],
+            },
+            age_verification_request: None,
+            place_verification_request: None,
+            transaction_info: None,
+            transaction_attestation_request: None,
+            level_of_assurance_request: None,
+            eid_type_request: None,
+            psk: Some(PSK {
+                value: "test_psk".to_string(),
+            }),
+        };
+
+        let serialized = soap::serialize_soap_response(request.clone()).unwrap();
+        let deserialized = soap::deserialize_soap_request::<UseIDRequest>(&serialized).unwrap();
+
+        assert_eq!(
+            request.use_operations.use_operations[0].id,
+            deserialized.use_operations.use_operations[0].id
+        );
+        assert_eq!(request.psk.unwrap().value, deserialized.psk.unwrap().value);
     }
 }
