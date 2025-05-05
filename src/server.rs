@@ -5,10 +5,10 @@ mod responses;
 
 use std::sync::Arc;
 
-use axum::{routing::get, Router};
+use axum::http::Method;
+use axum::{Router, routing::get};
 use color_eyre::eyre::eyre;
 use handlers::health::health_check;
-use axum::http::Method;
 use tokio::net::TcpListener;
 use tower_http::{
     cors::{Any, CorsLayer},
