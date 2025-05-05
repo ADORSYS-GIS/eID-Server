@@ -1,4 +1,3 @@
-
 # eID Server (SOAP-based Implementation)
 
 This project implements a secure and specification-compliant **eID Server** that facilitates electronic identity authentication via SOAP. It supports the German eID card (nPA) and follows the **TR-03130** guidelines for secure middleware services.
