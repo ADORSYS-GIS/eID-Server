@@ -8,24 +8,29 @@ edition = "2024"
 axum = { version = "0.8.3", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5.2"
-tower-http = { version = "0.6.2", features = ["trace"] }
+tower-http = { version = "0.6.2", features = ["trace", "cors"] }
 hyper = { version = "0.14", features = ["client", "http1"] }
 
 # SOAP handling
 yaserde = "0.12"
 yaserde_derive = "0.12"
 quick-xml = "0.37.5"
-# Serialization
+
+# Serialization / Deserialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+# Configuration
+config = "0.15"
 
 # Error handling
 thiserror = "2.0.12"
 anyhow = "1.0"
+color-eyre = "0.6"
 
 # Logging and tracing
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Utilities
 uuid = { version = "1.6", features = ["v4", "serde"] }
@@ -33,9 +38,14 @@ chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22.1"
 rand = "0.9.1"
 
+# HTTP Body
 http-body = "1.0"
 http-body-util = "0.1"
 
 [dev-dependencies]
 axum-test = "17.3.0"
 http-body-util = "0.1"
+reqwest = { version = "0.12", features = ["json"] }
+
+[profile.dev.package.backtrace]
+opt-level = 3
