@@ -13,8 +13,6 @@ pub enum UseIdError {
         "Necessary Permissions are missing: permissions missing in terminal authorization certificate"
     )]
     MissingTerminalRights,
-    #[error("Request still has not been completed")]
-    NoResultYet,
     #[error("error: {0}")]
     GenericError(String),
 }
