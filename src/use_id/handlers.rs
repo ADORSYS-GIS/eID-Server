@@ -190,7 +190,14 @@ mod tests {
             soap_response.body.content.result.result_major,
             "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok"
         );
-        assert!(!soap_response.body.content.session.session_identifier.is_empty());
+        assert!(
+            !soap_response
+                .body
+                .content
+                .session
+                .session_identifier
+                .is_empty()
+        );
         assert_eq!(soap_response.body.content.psk.unwrap().value, "test_psk");
     }
 
