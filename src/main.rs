@@ -1,9 +1,9 @@
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
-use eid_server::use_id::handlers::use_id_handler; 
-use eid_server::use_id::service::{EIDServiceConfig, EIDService};
+use eid_server::use_id::handlers::use_id_handler;
+use eid_server::use_id::service::{EIDService, EIDServiceConfig};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -48,8 +48,8 @@ async fn main() {
 
     // Create router with our service endpoint
     let app = Router::new()
-        .route("/eIDService/useID", post(use_id_handler)) 
-        .route("/health", get(|| async { "OK" })) 
+        .route("/eIDService/useID", post(use_id_handler))
+        .route("/health", get(|| async { "OK" }))
         .layer(TraceLayer::new_for_http())
         .with_state(eid_service);
 

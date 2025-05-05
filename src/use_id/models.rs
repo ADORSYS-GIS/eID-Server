@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use yaserde_derive::{YaDeserialize, YaSerialize};
 use yaserde::{de::from_str, ser::to_string};
+use yaserde_derive::{YaDeserialize, YaSerialize};
 
 // TR-03130 useID SOAP Request and Response Models
 
@@ -217,10 +217,10 @@ where
 /// Helper functions for SOAP request/response handling
 pub mod soap {
     use super::*;
-    use anyhow::{anyhow, Result};
+    use anyhow::{Result, anyhow};
 
     // Re-export SoapEnvelope and SoapBody to make them accessible
-    pub use super::{SoapEnvelope, SoapBody};
+    pub use super::{SoapBody, SoapEnvelope};
 
     pub fn deserialize_soap_request<T: yaserde::YaDeserialize + yaserde::YaSerialize>(
         xml: &str,

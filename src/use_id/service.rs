@@ -1,12 +1,12 @@
 use chrono::{Duration, Utc};
-use rand::{distr::Alphanumeric, Rng};
+use rand::{Rng, distr::Alphanumeric};
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 use uuid::Uuid;
 
-use super::models::{Result, Session, UseIDRequest, UseIDResponse, PSK};
+use super::models::{PSK, Result, Session, UseIDRequest, UseIDResponse};
 
 /// Configuration for the eID Service
 #[derive(Clone)]
@@ -89,7 +89,7 @@ impl EIDService {
 
         // Generate a session ID
         let session_id = Uuid::new_v4().to_string();
-        
+
         // Generate or use provided PSK
         let psk = match &request.psk {
             Some(psk) => psk.value.clone(),
@@ -98,7 +98,7 @@ impl EIDService {
 
         // Calculate session expiry time
         let expiry = Utc::now() + Duration::minutes(self.config.session_timeout_minutes);
-        
+
         // Create session info
         let session_info = SessionInfo {
             id: session_id.clone(),
@@ -115,14 +115,14 @@ impl EIDService {
         // Store the session
         {
             let mut sessions = self.sessions.write().await;
-            
+
             // Remove expired sessions first
             let now = Utc::now();
             sessions.retain(|session| session.expiry > now);
-            
+
             // Add new session
             sessions.push(session_info.clone());
-            
+
             info!(
                 "Created new session: {}, expires: {}, operations: {:?}",
                 session_id, expiry, session_info.operations
@@ -158,11 +158,11 @@ impl EIDService {
         let now = Utc::now();
         sessions.retain(|session| session.expiry > now);
         let removed = before_count - sessions.len();
-        
+
         if removed > 0 {
             info!("Removed {} expired sessions", removed);
         }
-        
+
         removed
     }
 
@@ -170,7 +170,7 @@ impl EIDService {
     pub async fn get_session(&self, session_id: &str) -> Option<SessionInfo> {
         let sessions = self.sessions.read().await;
         let now = Utc::now();
-        
+
         sessions
             .iter()
             .find(|s| s.id == session_id && s.expiry > now)
@@ -211,10 +211,14 @@ mod tests {
 
         let response = service.handle_use_id(request).await.unwrap();
 
-        assert_eq!(response.result.result_major, 
-            "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error");
-        assert_eq!(response.result.result_minor.unwrap(), 
-            "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/parameterError");
+        assert_eq!(
+            response.result.result_major,
+            "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error"
+        );
+        assert_eq!(
+            response.result.result_minor.unwrap(),
+            "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/parameterError"
+        );
         assert_eq!(response.session.session_identifier, "");
         assert_eq!(response.session.timeout, "0");
     }
@@ -222,7 +226,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_use_id_max_sessions() {
         let service = create_test_service();
-        
+
         // Fill up sessions
         for _ in 0..10 {
             let request = UseIDRequest {
@@ -260,10 +264,14 @@ mod tests {
 
         let response = service.handle_use_id(request).await.unwrap();
 
-        assert_eq!(response.result.result_major, 
-            "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error");
-        assert_eq!(response.result.result_minor.unwrap(), 
-            "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/tooManySessions");
+        assert_eq!(
+            response.result.result_major,
+            "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error"
+        );
+        assert_eq!(
+            response.result.result_minor.unwrap(),
+            "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/tooManySessions"
+        );
     }
 
     #[tokio::test]
@@ -291,7 +299,7 @@ mod tests {
             psk: None,
         };
         let response = service.handle_use_id(request).await.unwrap();
-        
+
         let session_id = response.session.session_identifier;
         assert!(!session_id.is_empty());
 

@@ -6,7 +6,7 @@ use axum::{
 use std::sync::Arc;
 use tracing::{debug, error};
 
-use crate::use_id::models::{soap, UseIDRequest};
+use crate::use_id::models::{UseIDRequest, soap};
 
 use super::service::EIDService;
 
@@ -103,14 +103,16 @@ fn create_soap_response_headers() -> HeaderMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::use_id::models::{
+        PSK, UseIDRequest, UseIDResponse, UseOperation, UseOperations, soap,
+    };
+    use crate::use_id::service::{EIDService, EIDServiceConfig};
     use axum::{
         body::Body,
         http::{self, Request, StatusCode},
     };
     use std::sync::Arc;
     use yaserde::de::from_str;
-    use crate::use_id::models::{soap, UseIDRequest, UseIDResponse, UseOperation, UseOperations, PSK};
-    use crate::use_id::service::{EIDService, EIDServiceConfig};
 
     fn create_test_service() -> Arc<EIDService> {
         Arc::new(EIDService::new(EIDServiceConfig {
@@ -189,10 +191,7 @@ mod tests {
             "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok"
         );
         assert!(soap_response.body.content.session.session_identifier.len() > 0);
-        assert_eq!(
-            soap_response.body.content.psk.unwrap().value,
-            "test_psk"
-        );
+        assert_eq!(soap_response.body.content.psk.unwrap().value, "test_psk");
     }
 
     #[tokio::test]
