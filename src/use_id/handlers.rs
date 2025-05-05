@@ -31,7 +31,7 @@ pub async fn use_id_handler(
             error!("Failed to parse SOAP request: {}", err);
             return (
                 StatusCode::BAD_REQUEST,
-                format!("Failed to parse SOAP request: {}", err),
+                format!("Failed to parse SOAP request: {err}"),
             )
                 .into_response();
         }
@@ -190,7 +190,7 @@ mod tests {
             soap_response.body.content.result.result_major,
             "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok"
         );
-        assert!(soap_response.body.content.session.session_identifier.len() > 0);
+        assert!(!soap_response.body.content.session.session_identifier.is_empty());
         assert_eq!(soap_response.body.content.psk.unwrap().value, "test_psk");
     }
 
