@@ -25,13 +25,8 @@ config = "0.15"
 # Logging and metrics
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-
-# Utilities
-quick-xml = "0.37"
 color-eyre = "0.6"
+quick-xml = { version = "0.37.5", features = ["serialize"] }
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }
-
-[profile.dev.package.backtrace]
-opt-level = 3

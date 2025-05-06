@@ -1,13 +1,6 @@
-use std::io::Cursor;
+use quick_xml::se::to_string;
 
-use quick_xml::{
-    Writer,
-    events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event},
-};
-
-use crate::eid::common::models::PlaceType;
-
-use super::model::GetResultResponse;
+use super::model::{GetResultResponse, GetResultResponseBody, GetResultResponseEnvelope};
 
 /// Builds a SOAP XML response string from a `GetResultResponse` data structure.
 ///
@@ -44,356 +37,17 @@ use super::model::GetResultResponse;
 /// let xml_string = build_get_result_response(&response)?;
 /// println!("{}", xml_string);
 /// ```
-pub fn build_get_result_response(response: &GetResultResponse) -> Result<String, std::io::Error> {
-    let mut writer = Writer::new(Cursor::new(Vec::new()));
+pub fn build_get_result_response(response: GetResultResponse) -> Result<String, std::io::Error> {
+    let envelope = GetResultResponseEnvelope {
+        soapenv: "http://schemas.xmlsoap.org/soap/envelope/",
+        eid: "http://bsi.bund.de/eID/",
+        dss: "urn:oasis:names:tc:dss:1.0:core:schema",
+        body: GetResultResponseBody {
+            get_result_response: response,
+        },
+    };
 
-    // XML declaration
-    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
-
-    // <soapenv:Envelope>
-    let mut env = BytesStart::new("soapenv:Envelope");
-    env.push_attribute(("xmlns:soapenv", "http://schemas.xmlsoap.org/soap/envelope/"));
-    env.push_attribute(("xmlns:eid", "http://bsi.bund.de/eID/"));
-    env.push_attribute(("xmlns:dss", "urn:oasis:names:tc:dss:1.0:core:schema"));
-    writer.write_event(Event::Start(env))?;
-
-    // <soapenv:Header/>
-    writer.write_event(Event::Empty(BytesStart::new("soapenv:Header")))?;
-
-    // <soapenv:Body>
-    writer.write_event(Event::Start(BytesStart::new("soapenv:Body")))?;
-
-    // <eid:getResultResponse>
-    writer.write_event(Event::Start(BytesStart::new("eid:getResultResponse")))?;
-
-    // --- PersonalData ---
-    writer.write_event(Event::Start(BytesStart::new("eid:PersonalData")))?;
-
-    // DocumentType
-    writer.write_event(Event::Start(BytesStart::new("eid:DocumentType")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response.personal_data.document_type.as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:DocumentType")))?;
-
-    // IssuingState
-    writer.write_event(Event::Start(BytesStart::new("eid:IssuingState")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response.personal_data.issuing_state.as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:IssuingState")))?;
-
-    // DateOfExpiry
-    writer.write_event(Event::Start(BytesStart::new("eid:DateOfExpiry")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response.personal_data.date_of_expiry.as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:DateOfExpiry")))?;
-
-    // GivenNames
-    writer.write_event(Event::Start(BytesStart::new("eid:GivenNames")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response.personal_data.given_names.as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:GivenNames")))?;
-
-    // FamilyNames
-    writer.write_event(Event::Start(BytesStart::new("eid:FamilyNames")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response.personal_data.family_names.as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:FamilyNames")))?;
-
-    // ArtisticName
-    writer.write_event(Event::Start(BytesStart::new("eid:ArtisticName")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response.personal_data.artistic_name.as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:ArtisticName")))?;
-
-    // AcademicTitle
-    writer.write_event(Event::Start(BytesStart::new("eid:AcademicTitle")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response.personal_data.academic_title.as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:AcademicTitle")))?;
-
-    // DateOfBirth (GeneralDateType)
-    writer.write_event(Event::Start(BytesStart::new("eid:DateOfBirth")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:DateString")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response.personal_data.date_of_birth.date_string.as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:DateString")))?;
-    if let Some(val) = &response.personal_data.date_of_birth.date_value {
-        writer.write_event(Event::Start(BytesStart::new("eid:DateValue")))?;
-        writer.write_event(Event::Text(BytesText::new(val.as_str())))?;
-        writer.write_event(Event::End(BytesEnd::new("eid:DateValue")))?;
-    }
-    writer.write_event(Event::End(BytesEnd::new("eid:DateOfBirth")))?;
-
-    // PlaceOfBirth (GeneralPlaceType)
-    writer.write_event(Event::Start(BytesStart::new("eid:PlaceOfBirth")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:FreetextPlace")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response
-            .personal_data
-            .place_of_birth
-            .freetextplace
-            .clone()
-            .unwrap_or_default()
-            .as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:FreetextPlace")))?;
-    if let Some(val) = &response.personal_data.place_of_birth.noplaceinfo {
-        writer.write_event(Event::Start(BytesStart::new("eid:NoPlaceInfo")))?;
-        writer.write_event(Event::Text(BytesText::new(val.as_str())))?;
-        writer.write_event(Event::End(BytesEnd::new("eid:NoPlaceInfo")))?;
-    }
-    writer.write_event(Event::End(BytesEnd::new("eid:PlaceOfBirth")))?;
-
-    // Nationality
-    writer.write_event(Event::Start(BytesStart::new("eid:Nationality")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response.personal_data.nationality.as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:Nationality")))?;
-
-    // BirthName
-    writer.write_event(Event::Start(BytesStart::new("eid:BirthName")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response.personal_data.birth_name.as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:BirthName")))?;
-
-    // PlaceOfResidence (GeneralPlaceType)
-    writer.write_event(Event::Start(BytesStart::new("eid:PlaceOfResidence")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:StructuredPlace")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:Street")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        <std::option::Option<PlaceType> as Clone>::clone(
-            &response.personal_data.place_of_residence.structured_place,
-        )
-        .unwrap_or_default()
-        .street
-        .as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:Street")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:City")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response
-            .personal_data
-            .place_of_residence
-            .structured_place
-            .clone()
-            .unwrap_or_default()
-            .city
-            .as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:City")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:State")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response
-            .personal_data
-            .place_of_residence
-            .structured_place
-            .clone()
-            .unwrap_or_default()
-            .state
-            .as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:State")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:Country")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response
-            .personal_data
-            .place_of_residence
-            .structured_place
-            .clone()
-            .unwrap_or_default()
-            .country
-            .as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:Country")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:ZipCode")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response
-            .personal_data
-            .place_of_residence
-            .structured_place
-            .clone()
-            .unwrap_or_default()
-            .zipcode
-            .as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:ZipCode")))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:StructuredPlace")))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:PlaceOfResidence")))?;
-
-    // CommunityID
-    writer.write_event(Event::Start(BytesStart::new("eid:CommunityID")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response.personal_data.community_id.as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:CommunityID")))?;
-
-    // ResidencePermitID
-    writer.write_event(Event::Start(BytesStart::new("eid:ResidencePermitID")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response.personal_data.residence_permit_id.as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:ResidencePermitID")))?;
-
-    // RestrictedID
-    writer.write_event(Event::Start(BytesStart::new("eid:RestrictedID")))?;
-
-    // <eid:ID>
-    writer.write_event(Event::Start(BytesStart::new("eid:ID")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response.personal_data.restricted_id.id.as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:ID")))?;
-
-    // <eid:ID2>
-    writer.write_event(Event::Start(BytesStart::new("eid:ID2")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response.personal_data.restricted_id.id2.as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:ID2")))?;
-
-    // close RestrictedID and PersonalData
-    writer.write_event(Event::End(BytesEnd::new("eid:RestrictedID")))?;
-
-    // --- FulfilsAgeVerification ---
-    writer.write_event(Event::Start(BytesStart::new("eid:FulfilsAgeVerification")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:FulfilsRequest")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        &response.fulfils_age_verification.to_string(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:FulfilsRequest")))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:FulfilsAgeVerification")))?;
-
-    // --- FulfilsPlaceVerification ---
-    writer.write_event(Event::Start(BytesStart::new(
-        "eid:FulfilsPlaceVerification",
-    )))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:FulfilsRequest")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        &response.fulfils_place_verification.to_string(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:FulfilsRequest")))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:FulfilsPlaceVerification")))?;
-
-    // --- OperationsAllowedByUser ---
-    writer.write_event(Event::Start(BytesStart::new("eid:OperationsAllowedByUser")))?;
-    macro_rules! write_op {
-        ($tag:expr, $field:expr) => {
-            if let Some(val) = &$field {
-                writer
-                    .write_event(Event::Start(BytesStart::new($tag)))
-                    .unwrap();
-                writer
-                    .write_event(Event::Text(BytesText::new(&val.to_string())))
-                    .unwrap();
-                writer.write_event(Event::End(BytesEnd::new($tag))).unwrap();
-            } else {
-                writer
-                    .write_event(Event::Empty(BytesStart::new($tag)))
-                    .unwrap();
-            }
-        };
-    }
-    // required fields
-    writer.write_event(Event::Start(BytesStart::new("eid:DocumentType")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        &response
-            .operations_allowed_by_user
-            .document_type
-            .to_string(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:DocumentType")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:IssuingState")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        &response
-            .operations_allowed_by_user
-            .issuing_state
-            .to_string(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:IssuingState")))?;
-    // optional / nullable
-    write_op!(
-        "eid:ArtisticName",
-        response.operations_allowed_by_user.artistic_name
-    );
-    write_op!(
-        "eid:AcademicTitle",
-        response.operations_allowed_by_user.academic_title
-    );
-    // ... you can expand to all other fields similarly
-    writer.write_event(Event::End(BytesEnd::new("eid:OperationsAllowedByUser")))?;
-
-    // --- TransactionAttestationResponse ---
-    writer.write_event(Event::Start(BytesStart::new(
-        "eid:TransactionAttestationResponse",
-    )))?;
-    writer.write_event(Event::Start(BytesStart::new(
-        "eid:TransactionAttestationFormat",
-    )))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response
-            .transaction_attestation_response
-            .transaction_attestation_format
-            .as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new(
-        "eid:TransactionAttestationFormat",
-    )))?;
-    writer.write_event(Event::Start(BytesStart::new(
-        "eid:TransactionAttestationData",
-    )))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response
-            .transaction_attestation_response
-            .transaction_attestation_data
-            .as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:TransactionAttestationData")))?;
-    writer.write_event(Event::End(BytesEnd::new(
-        "eid:TransactionAttestationResponse",
-    )))?;
-
-    // --- LevelOfAssuranceResponse ---
-    writer.write_event(Event::Start(BytesStart::new(
-        "eid:LevelOfAssuranceResponse",
-    )))?;
-    writer.write_event(Event::Text(BytesText::new(
-        &response.level_of_assurance.to_string(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:LevelOfAssuranceResponse")))?;
-
-    // --- EIDTypeResponse ---
-    writer.write_event(Event::Start(BytesStart::new("eid:EIDTypeResponse")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:CardCertified")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        response.eid_type_response.card_certified.as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:CardCertified")))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:EIDTypeResponse")))?;
-
-    // --- Result ---
-    writer.write_event(Event::Start(BytesStart::new("dss:Result")))?;
-    writer.write_event(Event::Start(BytesStart::new("ResultMajor")))?;
-    writer.write_event(Event::Text(BytesText::new(&response.result.to_string())))?;
-    writer.write_event(Event::End(BytesEnd::new("ResultMajor")))?;
-    writer.write_event(Event::End(BytesEnd::new("dss:Result")))?;
-
-    // close getResultResponse, Body, Envelope
-    writer.write_event(Event::End(BytesEnd::new("eid:getResultResponse")))?;
-    writer.write_event(Event::End(BytesEnd::new("soapenv:Body")))?;
-    writer.write_event(Event::End(BytesEnd::new("soapenv:Envelope")))?;
-
-    let xml = writer.into_inner().into_inner();
-    Ok(String::from_utf8(xml).expect("UTF-8"))
+    to_string(&envelope).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
 }
 
 #[cfg(test)]
@@ -436,8 +90,8 @@ mod tests {
                         country: "D".to_string(),
                         zipcode: "51147".to_string(),
                     }),
-                    freetextplace: Some("".to_string()),
-                    noplaceinfo: Some("".to_string()),
+                    freetextplace: None,
+                    noplaceinfo: None,
                 },
                 community_id: "".to_string(),
                 residence_permit_id: "".to_string(),
@@ -483,7 +137,8 @@ mod tests {
             result: ResultCode::Ok,
         };
 
-        let xml = build_get_result_response(&response).expect("Failed to build XML");
+        let xml = build_get_result_response(response).expect("Failed to build XML");
+        println!("{}", xml);
 
         // PersonalData
         assert!(xml.contains("<eid:DocumentType>ID</eid:DocumentType>"));

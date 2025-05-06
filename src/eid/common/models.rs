@@ -7,6 +7,7 @@ pub enum EIDTypeSelection {
     ALLOWED,
     DENIED,
 }
+
 pub type ICAOCounrty = String;
 
 #[derive(Debug, Default)]
@@ -52,37 +53,65 @@ pub struct Operations {
     pub place_verification: Option<AttributeRequest>,
 }
 
+#[derive(Serialize)]
 pub struct PersonalData {
+    #[serde(rename = "eid:DocumentType")]
     pub document_type: String,
+    #[serde(rename = "eid:IssuingState")]
     pub issuing_state: ICAOCounrty,
+    #[serde(rename = "eid:DateOfExpiry")]
     pub date_of_expiry: String,
+    #[serde(rename = "eid:GivenNames")]
     pub given_names: String,
+    #[serde(rename = "eid:FamilyNames")]
     pub family_names: String,
+    #[serde(rename = "eid:ArtisticName")]
     pub artistic_name: String,
+    #[serde(rename = "eid:AcademicTitle")]
     pub academic_title: String,
+    #[serde(rename = "eid:DateOfBirth")]
     pub date_of_birth: GeneralDateType,
+    #[serde(rename = "eid:PlaceOfBirth")]
     pub place_of_birth: GeneralPlaceType,
+    #[serde(rename = "Nationality")]
     pub nationality: ICAOCounrty,
+    #[serde(rename = "eid:BirthName")]
     pub birth_name: String,
+    #[serde(rename = "eid:PlaceOfResidence")]
     pub place_of_residence: GeneralPlaceType,
+    #[serde(rename = "eid:CommunityID")]
     pub community_id: String,
+    #[serde(rename = "eid:ResidencePermitID")]
     pub residence_permit_id: String,
+    #[serde(rename = "eid:RestrictedID")]
     pub restricted_id: RestrictedID,
 }
 
+#[derive(Serialize)]
 pub struct RestrictedID {
+    #[serde(rename = "eid:ID")]
     pub id: String,
+    #[serde(rename = "eid:ID2")]
     pub id2: String,
 }
 
+#[derive(Serialize)]
 pub struct TransactionAttestationResponse {
+    #[serde(rename = "eid:TransactionAttestationFormat")]
     pub transaction_attestation_format: String,
+    #[serde(rename = "eid:TransactionAttestationData")]
     pub transaction_attestation_data: String,
 }
+
+#[derive(Serialize)]
 pub struct EIDTypeResponse {
+    #[serde(rename = "eid:CardCertified")]
     pub card_certified: EIDTypeUsedType,
+    #[serde(rename = "eid:SeCertified")]
     pub se_certified: EIDTypeUsedType,
+    #[serde(rename = "eid:SeEndorsed")]
     pub se_endorsed: EIDTypeUsedType,
+    #[serde(rename = "eid:HwKeystore")]
     pub hw_keystore: EIDTypeUsedType,
 }
 
@@ -91,24 +120,35 @@ pub type EIDTypeUsedType = String;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GeneralDateType {
     /// The DateString contains the date in yyyymmdd format (8 characters, with spaces and digits).
+    #[serde(rename = "eid:DateString")]
     pub date_string: String,
 
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "eid:DateValue")]
     pub date_value: Option<String>,
 }
 
+#[derive(Serialize)]
 pub struct GeneralPlaceType {
+    #[serde(rename = "eid:StructuredPlace")]
     pub structured_place: Option<PlaceType>,
+    #[serde(rename = "eid:FreetextPlace")]
     pub freetextplace: Option<String>,
+    #[serde(rename = "eid:NoPlaceInfo")]
     pub noplaceinfo: Option<String>,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Serialize)]
 pub struct PlaceType {
+    #[serde(rename = "eid:Street")]
     pub street: String,
+    #[serde(rename = "eid:City")]
     pub city: String,
+    #[serde(rename = "eid:State")]
     pub state: String,
+    #[serde(rename = "eid:Country")]
     pub country: ICAOCounrty,
+    #[serde(rename = "eid:ZipCode")]
     pub zipcode: String,
 }
 
@@ -125,7 +165,7 @@ pub enum AttributeSelection {
 }
 
 // From Technical Guideline TR-03130
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ResultCode {
     Ok,
     NoResultYet,
@@ -137,7 +177,7 @@ pub enum ResultCode {
 }
 
 // From section 3.3.12 of the technical guideline TR-03130
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Serialize)]
 pub enum LevelOfAssurance {
     Undefined,
     Normal,
