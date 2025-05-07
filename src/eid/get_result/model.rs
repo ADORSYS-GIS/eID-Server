@@ -13,13 +13,21 @@ pub struct GetResultRequest {
 
 #[derive(Serialize)]    
 pub struct GetResultResponse {
+    #[serde(rename = "eid:PersonalData")]
     pub personal_data: PersonalData,
+    #[serde(rename = "eid:FulfilAgeVerification")]
     pub fulfils_age_verification: bool,
+    #[serde(rename = "eid:FulfilPlaceVerification")]
     pub fulfils_place_verification: bool,
+    #[serde(rename = "eid:OperationsAllowedByUser")]
     pub operations_allowed_by_user: Operations,
+    #[serde(rename = "eid:TransactionAttestationResponse")]
     pub transaction_attestation_response: TransactionAttestationResponse,
+    #[serde(rename = "eid:LevelOfAssurance")]
     pub level_of_assurance: LevelOfAssurance,
+    #[serde(rename = "eid:EidTypeResponse")]
     pub eid_type_response: EIDTypeResponse,
+    
     pub result: ResultCode,
 }
 

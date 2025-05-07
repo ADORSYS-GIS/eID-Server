@@ -1,6 +1,9 @@
 use quick_xml::se::to_string;
 
-use super::model::{GetResultResponse, GetResultResponseBody, GetResultResponseEnvelope};
+use super::{
+    error::GetResultError,
+    model::{GetResultResponse, GetResultResponseBody, GetResultResponseEnvelope},
+};
 
 /// Builds a SOAP XML response string from a `GetResultResponse` data structure.
 ///
@@ -16,7 +19,7 @@ use super::model::{GetResultResponse, GetResultResponseBody, GetResultResponseEn
 /// # Returns
 ///
 /// * `Ok(String)` - The serialized XML document as a UTF-8 encoded string.
-/// * `Err(std::io::Error)` - If an error occurs during writing to the underlying buffer.
+/// * `Err(GetResultError)` - If an error occurs during writing to the underlying buffer.
 ///
 /// # Errors
 ///
@@ -37,7 +40,7 @@ use super::model::{GetResultResponse, GetResultResponseBody, GetResultResponseEn
 /// let xml_string = build_get_result_response(&response)?;
 /// println!("{}", xml_string);
 /// ```
-pub fn build_get_result_response(response: GetResultResponse) -> Result<String, std::io::Error> {
+pub fn build_get_result_response(response: GetResultResponse) -> Result<String, GetResultError> {
     let envelope = GetResultResponseEnvelope {
         soapenv: "http://schemas.xmlsoap.org/soap/envelope/",
         eid: "http://bsi.bund.de/eID/",
@@ -47,7 +50,9 @@ pub fn build_get_result_response(response: GetResultResponse) -> Result<String, 
         },
     };
 
-    to_string(&envelope).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+    Ok(to_string(&envelope).map_err(|_| {
+        GetResultError::GenericError("{failed to build GetResultResponse}".to_string())
+    })?)
 }
 
 #[cfg(test)]

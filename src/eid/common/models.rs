@@ -34,22 +34,39 @@ pub struct UseOperations {
 }
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Operations {
+    #[serde(rename = "eid:DocumentType")]
     pub document_type: AttributeRequest,
+    #[serde(rename = "eid:IssuingState")]
     pub issuing_state: AttributeRequest,
+    #[serde(rename = "eid:DateOfExpiry")]
     pub date_of_expiry: AttributeRequest,
+    #[serde(rename = "eid:GivenNames")]
     pub given_names: AttributeRequest,
+    #[serde(rename = "eid:FamilyNames")]
     pub family_names: AttributeRequest,
+    #[serde(rename = "eid:ArtisticName")]
     pub artistic_name: Option<AttributeRequest>,
+    #[serde(rename = "eid:AcademicTitle")]
     pub academic_title: Option<AttributeRequest>,
+    #[serde(rename = "eid:DateOfBirth")]
     pub date_of_birth: AttributeRequest,
+    #[serde(rename = "eid:PlaceOfBirth")]
     pub place_of_birth: AttributeRequest,
+    #[serde(rename = "eid:Nationality")]
     pub nationality: AttributeRequest,
+    #[serde(rename = "eid:BirthName")]
     pub birth_name: AttributeRequest,
+    #[serde(rename = "eid:PlaceOfResidence")]
     pub place_of_residence: AttributeRequest,
+    #[serde(rename = "eid:CommunityID")]
     pub community_id: Option<AttributeRequest>,
+    #[serde(rename = "eid:ResidencePermitID")]
     pub residence_permit_id: Option<AttributeRequest>,
+    #[serde(rename = "eid:RestrictedID")]
     pub restricted_id: AttributeRequest,
+    #[serde(rename = "eid:AgeVerification")]
     pub age_verification: Option<AttributeRequest>,
+    #[serde(rename = "eid:PlaceOfVerification")]
     pub place_verification: Option<AttributeRequest>,
 }
 
@@ -73,7 +90,7 @@ pub struct PersonalData {
     pub date_of_birth: GeneralDateType,
     #[serde(rename = "eid:PlaceOfBirth")]
     pub place_of_birth: GeneralPlaceType,
-    #[serde(rename = "Nationality")]
+    #[serde(rename = "eid:Nationality")]
     pub nationality: ICAOCounrty,
     #[serde(rename = "eid:BirthName")]
     pub birth_name: String,
