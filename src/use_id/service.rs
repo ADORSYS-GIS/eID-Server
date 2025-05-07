@@ -1,12 +1,12 @@
 use chrono::{Duration, Utc};
 use rand::{Rng, distr::Alphanumeric};
-
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 use uuid::Uuid;
+use anyhow::Result;
 
-use super::models::{PSK, Result, Session, UseIDRequest, UseIDResponse};
+use super::models::{PSK, Session, UseIDRequest, UseIDResponse, ResultStatus};
 
 /// Configuration for the eID Service
 #[derive(Clone)]
@@ -54,11 +54,11 @@ impl EIDService {
     }
 
     /// Handle a useID request according to TR-03130
-    pub async fn handle_use_id(&self, request: UseIDRequest) -> anyhow::Result<UseIDResponse> {
+    pub async fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse> {
         // Validate the request
         if request.use_operations.use_operations.is_empty() {
             return Ok(UseIDResponse {
-                result: Result::error(
+                result: ResultStatus::error(
                     "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/parameterError",
                     Some("UseOperations must contain at least one operation"),
                 ),
@@ -74,7 +74,7 @@ impl EIDService {
         // Check if we've reached the maximum number of sessions
         if self.sessions.read().await.len() >= self.config.max_sessions {
             return Ok(UseIDResponse {
-                result: Result::error(
+                result: ResultStatus::error(
                     "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/tooManySessions",
                     Some("Maximum number of sessions reached"),
                 ),
@@ -131,7 +131,7 @@ impl EIDService {
 
         // Build response
         Ok(UseIDResponse {
-            result: Result::success(),
+            result: ResultStatus::success(),
             session: Session {
                 session_identifier: session_id,
                 timeout: expiry.to_rfc3339(),
@@ -181,7 +181,6 @@ impl EIDService {
 #[cfg(test)]
 mod tests {
     use crate::use_id::models::{UseOperation, UseOperations};
-
     use super::*;
     use tokio;
 

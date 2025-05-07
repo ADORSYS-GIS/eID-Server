@@ -11,10 +11,8 @@ tower = "0.5.2"
 tower-http = { version = "0.6.2", features = ["trace", "cors"] }
 hyper = { version = "0.14", features = ["client", "http1"] }
 
-# SOAP handling
-yaserde = "0.12"
-yaserde_derive = "0.12"
-quick-xml = "0.37.5"
+# XML handling
+quick-xml = { version = "0.37.5", features = ["serialize"] }
 
 # Serialization / Deserialization
 serde = { version = "1.0", features = ["derive"] }
