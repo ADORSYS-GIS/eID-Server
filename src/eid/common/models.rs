@@ -30,44 +30,44 @@ pub struct TransactionAttestationRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UseOperations {
     pub name: String,
-    pub requirement: AttributeRequest,
+    pub requirement: AttributeRequester,
 }
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Operations {
+pub struct OperationsResponder {
     #[serde(rename = "eid:DocumentType")]
-    pub document_type: AttributeRequest,
+    pub document_type: AttributeResponder,
     #[serde(rename = "eid:IssuingState")]
-    pub issuing_state: AttributeRequest,
+    pub issuing_state: AttributeResponder,
     #[serde(rename = "eid:DateOfExpiry")]
-    pub date_of_expiry: AttributeRequest,
+    pub date_of_expiry: AttributeResponder,
     #[serde(rename = "eid:GivenNames")]
-    pub given_names: AttributeRequest,
+    pub given_names: AttributeResponder,
     #[serde(rename = "eid:FamilyNames")]
-    pub family_names: AttributeRequest,
+    pub family_names: AttributeResponder,
     #[serde(rename = "eid:ArtisticName")]
-    pub artistic_name: Option<AttributeRequest>,
+    pub artistic_name: Option<AttributeResponder>,
     #[serde(rename = "eid:AcademicTitle")]
-    pub academic_title: Option<AttributeRequest>,
+    pub academic_title: Option<AttributeResponder>,
     #[serde(rename = "eid:DateOfBirth")]
-    pub date_of_birth: AttributeRequest,
+    pub date_of_birth: AttributeResponder,
     #[serde(rename = "eid:PlaceOfBirth")]
-    pub place_of_birth: AttributeRequest,
+    pub place_of_birth: AttributeResponder,
     #[serde(rename = "eid:Nationality")]
-    pub nationality: AttributeRequest,
+    pub nationality: AttributeResponder,
     #[serde(rename = "eid:BirthName")]
-    pub birth_name: AttributeRequest,
+    pub birth_name: AttributeResponder,
     #[serde(rename = "eid:PlaceOfResidence")]
-    pub place_of_residence: AttributeRequest,
+    pub place_of_residence: AttributeResponder,
     #[serde(rename = "eid:CommunityID")]
-    pub community_id: Option<AttributeRequest>,
+    pub community_id: Option<AttributeResponder>,
     #[serde(rename = "eid:ResidencePermitID")]
-    pub residence_permit_id: Option<AttributeRequest>,
+    pub residence_permit_id: Option<AttributeResponder>,
     #[serde(rename = "eid:RestrictedID")]
-    pub restricted_id: AttributeRequest,
+    pub restricted_id: AttributeResponder,
     #[serde(rename = "eid:AgeVerification")]
-    pub age_verification: Option<AttributeRequest>,
-    #[serde(rename = "eid:PlaceOfVerification")]
-    pub place_verification: Option<AttributeRequest>,
+    pub age_verification: Option<AttributeResponder>,
+    #[serde(rename = "eid:PlaceVerification")]
+    pub place_verification: Option<AttributeResponder>,
 }
 
 #[derive(Serialize)]
@@ -148,10 +148,13 @@ pub struct GeneralDateType {
 #[derive(Serialize)]
 pub struct GeneralPlaceType {
     #[serde(rename = "eid:StructuredPlace")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub structured_place: Option<PlaceType>,
     #[serde(rename = "eid:FreetextPlace")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub freetextplace: Option<String>,
     #[serde(rename = "eid:NoPlaceInfo")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub noplaceinfo: Option<String>,
 }
 
@@ -162,6 +165,7 @@ pub struct PlaceType {
     #[serde(rename = "eid:City")]
     pub city: String,
     #[serde(rename = "eid:State")]
+    #[serde(default)]
     pub state: String,
     #[serde(rename = "eid:Country")]
     pub country: ICAOCounrty,
@@ -170,17 +174,24 @@ pub struct PlaceType {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum AttributeRequest {
+pub enum AttributeRequester {
     REQUIRED,
     ALLOWED,
     PROHIBITED,
 }
 
+#[derive(Serialize, Clone)]
 pub enum AttributeSelection {
     ALLOWED,
     PROHIBITED,
 }
 
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum AttributeResponder {
+    ALLOWED,
+    PROHIBITED,
+    NOTONCHIP   
+}
 // From Technical Guideline TR-03130
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ResultCode {
@@ -192,6 +203,22 @@ pub enum ResultCode {
     InternalError,
     UnknownError(String),
 }
+
+#[derive(Serialize)]
+pub struct ResultMajor {
+    #[serde(rename = "ResultMajor")]
+    pub result_major: String,
+}
+
+#[derive(Serialize, Default)]
+pub struct Header {}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+pub struct Session {
+    #[serde(rename = "eid:ID")]
+    pub id: String,
+}
+
 
 // From section 3.3.12 of the technical guideline TR-03130
 #[derive(PartialEq, Eq, Debug, Serialize)]
@@ -224,25 +251,25 @@ impl FromStr for LevelOfAssurance {
 impl fmt::Display for LevelOfAssurance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            LevelOfAssurance::Undefined => "Undefined",
-            LevelOfAssurance::Normal => "Normal",
-            LevelOfAssurance::Substantiell => "Substantiell",
-            LevelOfAssurance::Hoch => "Hoch",
-            LevelOfAssurance::Substantial => "Substantial",
-            LevelOfAssurance::High => "High",
-            LevelOfAssurance::Low => "Low",
+            LevelOfAssurance::Undefined => "http://bsi.bund.de/eID/LoA/undefined",
+            LevelOfAssurance::Normal => "http://bsi.bund.de/eID/LoA/normal",
+            LevelOfAssurance::Substantiell => "http://bsi.bund.de/eID/LoA/substantiell",
+            LevelOfAssurance::Hoch => "http://bsi.bund.de/eID/LoA/hoch",
+            LevelOfAssurance::Substantial => "http://eidas.europa.eu/LoA/substantial",
+            LevelOfAssurance::High => "http://eidas.europa.eu/LoA/high",
+            LevelOfAssurance::Low => "http://eidas.europa.eu/LoA/low",
         };
         write!(f, "{}", s)
     }
 }
 
-impl FromStr for AttributeRequest {
+impl FromStr for AttributeRequester {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_uppercase().as_str() {
-            "ALLOWED" => Ok(AttributeRequest::ALLOWED),
-            "PROHIBITED" => Ok(AttributeRequest::PROHIBITED),
-            "REQUIRED" => Ok(AttributeRequest::REQUIRED),
+            "ALLOWED" => Ok(AttributeRequester::ALLOWED),
+            "PROHIBITED" => Ok(AttributeRequester::PROHIBITED),
+            "REQUIRED" => Ok(AttributeRequester::REQUIRED),
             _ => Err("unknown attribute ".to_owned()),
         }
     }
@@ -273,13 +300,14 @@ impl fmt::Display for ResultCode {
     }
 }
 
-impl Display for AttributeRequest {
+impl Display for AttributeRequester {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let text = match self {
-            AttributeRequest::ALLOWED => "ALLOWED",
-            AttributeRequest::PROHIBITED => "PROHIBITED",
-            AttributeRequest::REQUIRED => "REQUIRED",
+            AttributeRequester::ALLOWED => "ALLOWED",
+            AttributeRequester::PROHIBITED => "PROHIBITED",
+            AttributeRequester::REQUIRED => "REQUIRED",
         };
         write!(f, "{text}")
     }
 }
+

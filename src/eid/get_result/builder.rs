@@ -2,65 +2,58 @@ use quick_xml::se::to_string;
 
 use super::{
     error::GetResultError,
-    model::{GetResultResponse, GetResultResponseBody, GetResultResponseEnvelope},
+    model::{GetResultResponse, GetResultResponseBody, GetResultResponseEnvelope, SoapHeader},
 };
 
-/// Builds a SOAP XML response string from a `GetResultResponse` data structure.
+/// Serializes a `GetResultResponse` into a fully namespaced SOAP XML envelope.
 ///
-/// This function constructs a complete SOAP envelope containing personal data fields,
-/// age verification results, and place verification results as specified in the `GetResultResponse`.
-/// It serializes the provided data into an XML format compliant with the expected
-/// eID service schema (namespaces: `soapenv`, `eid`, and `dss`).
+/// Uses `serde` and `quick-xml` to serialize the provided response data into XML,
+/// injects the required `xmlns:` namespace attributes onto the `<soapenv:Envelope>` element,
+/// and prepends the standard XML declaration, producing a valid SOAP message compliant
+/// with the eID service schema (`soapenv`, `eid`, `dss`).
 ///
 /// # Arguments
-///
-/// * `response` - A reference to a [`GetResultResponse`] struct containing the data to serialize.
+/// * `response` - A `GetResultResponse` value containing all payload fields.
 ///
 /// # Returns
-///
-/// * `Ok(String)` - The serialized XML document as a UTF-8 encoded string.
-/// * `Err(GetResultError)` - If an error occurs during writing to the underlying buffer.
-///
-/// # Errors
-///
-/// This function returns an error if writing any part of the XML structure to the writer fails.
-/// This can happen due to I/O errors in the underlying `Cursor<Vec<u8>>`.
-///
-/// # Notes
-///
-/// * The function manually handles XML element creation, including opening and closing tags,
-///   and assumes that all required fields are present in the `GetResultResponse`.
-/// * Special attention should be paid to ensure all XML elements are properly closed,
-///   otherwise the resulting XML may be invalid.
+/// * `Ok(String)` containing the UTF-8 encoded SOAP XML document.
+/// * `Err(GetResultError::GenericError)` if serialization via Serde fails.
 ///
 /// # Example
-///
 /// ```rust
-/// let response = GetResultResponse { /* fields populated */ };
-/// let xml_string = build_get_result_response(&response)?;
+/// let response = GetResultResponse { /* ... */ };
+/// let xml_string = build_get_result_response(response)?;
 /// println!("{}", xml_string);
 /// ```
 pub fn build_get_result_response(response: GetResultResponse) -> Result<String, GetResultError> {
     let envelope = GetResultResponseEnvelope {
-        soapenv: "http://schemas.xmlsoap.org/soap/envelope/",
-        eid: "http://bsi.bund.de/eID/",
-        dss: "urn:oasis:names:tc:dss:1.0:core:schema",
+        header: SoapHeader::default(),
         body: GetResultResponseBody {
             get_result_response: response,
         },
     };
+    let xml = to_string(&envelope).map_err(|e| GetResultError::GenericError(e.to_string()))?;
 
-    Ok(to_string(&envelope).map_err(|_| {
-        GetResultError::GenericError("{failed to build GetResultResponse}".to_string())
-    })?)
+    let xml_with_ns = xml.replacen(
+                    "<soapenv:Envelope",
+                        "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:eid=\"http://bsi.bund.de/eID/\" xmlns:dss=\"urn:oasis:names:tc:dss:1.0:core:schema\"",
+                    1,
+                );
+
+    // 3) Prepend standard XML declaration
+    Ok(format!(r#"<?xml version="1.0" encoding="UTF-8"?>"#) + &xml_with_ns)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::eid::common::models::{
-        AttributeRequest, EIDTypeResponse, GeneralDateType, GeneralPlaceType, LevelOfAssurance,
-        Operations, PersonalData, PlaceType, RestrictedID, ResultCode,
-        TransactionAttestationResponse,
+
+    use crate::eid::{
+        common::models::{
+            AttributeResponder, EIDTypeResponse, GeneralDateType, GeneralPlaceType,
+            LevelOfAssurance, OperationsResponder, PersonalData, PlaceType, RestrictedID,
+            ResultMajor, TransactionAttestationResponse,
+        },
+        get_result::model::FulfilsRequest,
     };
 
     use super::*;
@@ -86,12 +79,12 @@ mod tests {
                     noplaceinfo: None,
                 },
                 nationality: "D".to_string(),
-                birth_name: "".to_string(),
+                birth_name: "NOTONCHIP".to_string(),
                 place_of_residence: GeneralPlaceType {
                     structured_place: Some(PlaceType {
                         street: "HEIDESTRASSE 17".to_string(),
                         city: "KÖLN".to_string(),
-                        state: "NRW".to_string(),
+                        state: "".to_string(), 
                         country: "D".to_string(),
                         zipcode: "51147".to_string(),
                     }),
@@ -107,43 +100,50 @@ mod tests {
                         .to_string(),
                 },
             },
-            fulfils_age_verification: true,
-            fulfils_place_verification: true,
-            operations_allowed_by_user: Operations {
-                document_type: AttributeRequest::ALLOWED,
-                issuing_state: AttributeRequest::ALLOWED,
-                date_of_expiry: AttributeRequest::ALLOWED,
-                given_names: AttributeRequest::ALLOWED,
-                family_names: AttributeRequest::ALLOWED,
+            fulfils_age_verification: FulfilsRequest {
+                fulfils_request: true,
+            },
+            fulfils_place_verification: FulfilsRequest {
+                fulfils_request: true,
+            },
+            operations_allowed_by_user: OperationsResponder {
+                document_type: AttributeResponder::ALLOWED,
+                issuing_state: AttributeResponder::ALLOWED,
+                date_of_expiry: AttributeResponder::ALLOWED,
+                given_names: AttributeResponder::ALLOWED,
+                family_names: AttributeResponder::ALLOWED,
                 artistic_name: None,
                 academic_title: None,
-                date_of_birth: AttributeRequest::ALLOWED,
-                place_of_birth: AttributeRequest::ALLOWED,
-                nationality: AttributeRequest::ALLOWED,
-                birth_name: AttributeRequest::PROHIBITED,
-                place_of_residence: AttributeRequest::ALLOWED,
-                community_id: None,
-                residence_permit_id: None,
-                restricted_id: AttributeRequest::ALLOWED,
-                age_verification: None,
-                place_verification: None,
+                date_of_birth: AttributeResponder::ALLOWED,
+                place_of_birth: AttributeResponder::ALLOWED,
+                nationality: AttributeResponder::ALLOWED,
+                birth_name: AttributeResponder::PROHIBITED,
+                place_of_residence: AttributeResponder::ALLOWED,
+                community_id: Some(AttributeResponder::ALLOWED),
+                residence_permit_id: Some(AttributeResponder::ALLOWED),
+                restricted_id: AttributeResponder::ALLOWED,
+                age_verification: Some(AttributeResponder::ALLOWED),
+                place_verification: Some(AttributeResponder::ALLOWED),
             },
             transaction_attestation_response: TransactionAttestationResponse {
-                transaction_attestation_format: "format1".to_string(),
-                transaction_attestation_data: "attestationdata".to_string(),
+                transaction_attestation_format: "http://bsi.bund.de/eID/ExampleAttestationFormat"
+                    .to_string(),
+                transaction_attestation_data: "V6INOOUsHouL9nYaRwR6RpX5WzccQXv51bIvvpY4Lsbp/VOPvG1ozxQCjo6JOi4xAv9/6b8G2PxaVv8bwdpFR/CN05xsnzxijzfemooKwve3Fl3005OX6dwkVyNQlZxXaWb3eUcYPA\\MEwHSkhzP25ZM/J+CQHHaqLih6JW6wxSvUbuD307sjzkeaMkjJr9tXI9QcUmGmpHBWEWwon56HkWKGL1Dl0XH4\\YuYhKMsTj2yjUJNlLH8OAm9cEX0ptQJlVTMRvNGRk53eUESnfhtQrVSm9bS63v+A9sGPrRlUIquCpcusX1nZe6\\omAzs2tY0S04+s1fNvgHXKmQi24wIdhhbtFPbB2n2j9dAB8xjfGgEcsG3wPMliP6d"
+                    .to_string(),
             },
-            level_of_assurance: LevelOfAssurance::High,
+            level_of_assurance: LevelOfAssurance::Hoch.to_string(),
             eid_type_response: EIDTypeResponse {
                 card_certified: "USED".to_string(),
-                hw_keystore: "ENABLED".to_string(),
-                se_certified: "CERTIFIED".to_string(),
-                se_endorsed: "ENDORSED".to_string(),
+                hw_keystore: "".to_string(),   
+                se_certified: "".to_string(),  
+                se_endorsed: "".to_string(),    
             },
-            result: ResultCode::Ok,
+            result: ResultMajor {
+                result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok".to_string(),
+            },
         };
 
         let xml = build_get_result_response(response).expect("Failed to build XML");
-        println!("{}", xml);
 
         // PersonalData
         assert!(xml.contains("<eid:DocumentType>ID</eid:DocumentType>"));
@@ -159,7 +159,7 @@ mod tests {
         // PlaceOfResidence
         assert!(xml.contains("<eid:Street>HEIDESTRASSE 17</eid:Street>"));
         assert!(xml.contains("<eid:City>KÖLN</eid:City>"));
-        assert!(xml.contains("<eid:State>NRW</eid:State>"));
+        assert!(xml.contains("<eid:State/>"));
         assert!(xml.contains("<eid:ZipCode>51147</eid:ZipCode>"));
         assert!(xml.contains("<eid:FreetextPlace>BERLIN</eid:FreetextPlace>"));
         assert!(xml.contains("<eid:Nationality>D</eid:Nationality>"));
@@ -178,14 +178,27 @@ mod tests {
 
         // TransactionAttestationResponse
         assert!(xml.contains(
-            "<eid:TransactionAttestationFormat>format1</eid:TransactionAttestationFormat>"
+            "<eid:TransactionAttestationFormat>http://bsi.bund.de/eID/ExampleAttestationFormat</eid:TransactionAttestationFormat>"
         ));
         assert!(xml.contains(
-            "<eid:TransactionAttestationData>attestationdata</eid:TransactionAttestationData>"
+            "<eid:TransactionAttestationData>V6INOOUsHouL9nYaRwR6RpX5WzccQXv51bIvvpY4Lsbp/VOPvG1ozxQCjo6JOi4xAv9/6b8G2PxaVv8bwdpFR/CN05xsnzxijzfemooKwve3Fl3005OX6dwkVyNQlZxXaWb3eUcYPA\\MEwHSkhzP25ZM/J+CQHHaqLih6JW6wxSvUbuD307sjzkeaMkjJr9tXI9QcUmGmpHBWEWwon56HkWKGL1Dl0XH4\\YuYhKMsTj2yjUJNlLH8OAm9cEX0ptQJlVTMRvNGRk53eUESnfhtQrVSm9bS63v+A9sGPrRlUIquCpcusX1nZe6\\omAzs2tY0S04+s1fNvgHXKmQi24wIdhhbtFPbB2n2j9dAB8xjfGgEcsG3wPMliP6d</eid:TransactionAttestationData>"
         ));
 
+        // Check all ALLOWED/PROHIBITED entries in OperationsAllowedByUser
+        assert!(xml.contains("<eid:DateOfExpiry>ALLOWED</eid:DateOfExpiry>"));
+        assert!(xml.contains("<eid:GivenNames>ALLOWED</eid:GivenNames>"));
+        assert!(xml.contains("<eid:FamilyNames>ALLOWED</eid:FamilyNames>"));
+        assert!(xml.contains("<eid:DateOfBirth>ALLOWED</eid:DateOfBirth>"));
+        assert!(xml.contains("<eid:PlaceOfBirth>ALLOWED</eid:PlaceOfBirth>"));
+        assert!(xml.contains("<eid:Nationality>ALLOWED</eid:Nationality>"));
+        assert!(xml.contains("<eid:BirthName>NOTONCHIP</eid:BirthName>"));
+        assert!(xml.contains("<eid:PlaceOfResidence>ALLOWED</eid:PlaceOfResidence>"));
+        assert!(xml.contains("<eid:RestrictedID>ALLOWED</eid:RestrictedID>"));
+        assert!(xml.contains("<eid:AgeVerification>ALLOWED</eid:AgeVerification>"));
+        assert!(xml.contains("<eid:PlaceVerification>ALLOWED</eid:PlaceVerification>"));
+
         // LevelOfAssurance & EIDTypeResponse & Result
-        assert!(xml.contains("<eid:LevelOfAssuranceResponse>High</eid:LevelOfAssuranceResponse>"));
+        assert!(xml.contains("<eid:LevelOfAssuranceResponse>http://bsi.bund.de/eID/LoA/hoch</eid:LevelOfAssuranceResponse>"));
         assert!(xml.contains("<eid:CardCertified>USED</eid:CardCertified>"));
         assert!(xml.contains(
             "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ResultMajor>"

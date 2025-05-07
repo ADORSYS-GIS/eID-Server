@@ -1,9 +1,10 @@
+use serde::Serialize;
+
 use crate::eid::common::models::{
-    EIDTypeRequest, LevelOfAssurance, ResultCode, TransactionAttestationRequest, UseOperations,
+    EIDTypeRequest, Header, LevelOfAssurance, ResultMajor, Session, TransactionAttestationRequest, UseOperations
 };
 
 #[derive(Default)]
-#[allow(dead_code)]
 pub struct UseIDRequest {
     pub use_operations: Vec<UseOperations>,
     pub age_verification: Option<u8>,
@@ -21,15 +22,38 @@ impl UseIDRequest {
     }
 }
 
+#[derive(Serialize)]
 pub struct UseIDResponse {
-    pub session: String,
+    #[serde(rename = "eid:Session")]
+    pub session: Session,
+    #[serde(rename = "eid:eCardServerAddress")]
     pub ecard_server_address: Option<String>,
+    #[serde(rename = "eid:PSK")]
     pub psk: Psk,
-    pub result: ResultCode,
+    #[serde(rename = "dss:Result")]
+    pub result: ResultMajor,
 }
 
-#[derive(Default)]
+#[derive(Serialize)]
 pub struct Psk {
     pub id: String,
     pub key: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename = "soapenv:Envelope")]
+pub struct UseIdEnvelope<'a> {
+
+    #[serde(rename = "soapenv:Header")]
+    pub header: Header,
+
+    #[serde(rename = "soapenv:Body")]
+    pub body: UseIdBody<'a>,
+}
+
+#[derive(Serialize)]
+#[serde(rename = "soapenv:Body")]
+pub struct UseIdBody<'a> {
+    #[serde(rename = "eid:useIDResponse")]
+    pub response: &'a UseIDResponse,
 }

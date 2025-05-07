@@ -1,8 +1,10 @@
-use quick_xml::Writer;
-use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
-use std::io::Cursor;
+use std::io;
 
-use super::model::UseIDResponse;
+use quick_xml::se::to_string;
+
+use crate::eid::common::models::Header;
+
+use super::model::{UseIDResponse, UseIdBody, UseIdEnvelope};
 
 /// Builds a SOAP XML envelope for the `useIDResponse` using `quick-xml` library.
 ///
@@ -71,73 +73,39 @@ use super::model::UseIDResponse;
 /// This function may return an `std::io::Error` if any of the `write_event` operations fail.
 /// Ensure that the `response` data is properly formatted and valid for the SOAP structure.
 ///
-#[allow(dead_code)]
 pub fn build_use_id_response(response: &UseIDResponse) -> Result<String, std::io::Error> {
-    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    let envelope = UseIdEnvelope {
+        header: Header::default(),
+        body: UseIdBody { response },
+    };
 
-    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
+    // 2) Serialize with serde/quick_xml (no XML declaration)
+    let xml_inner = to_string(&envelope).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
-    // Envelope start
-    let mut envelope = BytesStart::new("soapenv:Envelope");
-    envelope.push_attribute(("xmlns:soapenv", "http://schemas.xmlsoap.org/soap/envelope/"));
-    envelope.push_attribute(("xmlns:eid", "http://bsi.bund.de/eID/"));
-    envelope.push_attribute(("xmlns:dss", "urn:oasis:names:tc:dss:1.0:core:schema"));
-    writer.write_event(Event::Start(envelope))?;
+    // 3) Inject the three xmlns attributes in one go
+    let xml_with_ns = xml_inner.replacen(
+        "<soapenv:Envelope",
+        "<soapenv:Envelope \
+         xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" \
+         xmlns:eid=\"http://bsi.bund.de/eID/\" \
+         xmlns:dss=\"urn:oasis:names:tc:dss:1.0:core:schema\"",
+        1,
+    );
 
-    // Header
-    writer.write_event(Event::Empty(BytesStart::new("soapenv:Header")))?;
-
-    // Body
-    writer.write_event(Event::Start(BytesStart::new("soapenv:Body")))?;
-
-    writer.write_event(Event::Start(BytesStart::new("eid:useIDResponse")))?;
-
-    // Session
-    writer.write_event(Event::Start(BytesStart::new("eid:Session")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:ID")))?;
-    writer.write_event(Event::Text(BytesText::new(response.session.as_str())))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:ID")))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:Session")))?;
-
-    // eCardServerAddress (optional)
-    if let Some(address) = &response.ecard_server_address {
-        writer.write_event(Event::Start(BytesStart::new("eid:eCardServerAddress")))?;
-        writer.write_event(Event::Text(BytesText::new(address.as_str())))?;
-        writer.write_event(Event::End(BytesEnd::new("eid:eCardServerAddress")))?;
-    }
-
-    // PSK
-    writer.write_event(Event::Start(BytesStart::new("eid:PSK")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:ID")))?;
-    writer.write_event(Event::Text(BytesText::new(response.psk.id.as_str())))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:ID")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:Key")))?;
-    writer.write_event(Event::Text(BytesText::new(response.psk.key.as_str())))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:Key")))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:PSK")))?;
-
-    // Result
-    writer.write_event(Event::Start(BytesStart::new("dss:Result")))?;
-    writer.write_event(Event::Start(BytesStart::new("ResultMajor")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        format!("{}", response.result).as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("ResultMajor")))?;
-    writer.write_event(Event::End(BytesEnd::new("dss:Result")))?;
-
-    writer.write_event(Event::End(BytesEnd::new("eid:useIDResponse")))?;
-
-    writer.write_event(Event::End(BytesEnd::new("soapenv:Body")))?;
-    writer.write_event(Event::End(BytesEnd::new("soapenv:Envelope")))?;
-
-    let result = writer.into_inner().into_inner();
-    Ok(String::from_utf8(result).expect("XML should be UTF-8"))
+    // 4) Prepend XML declaration and return
+    Ok(format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>{}",
+        xml_with_ns
+    ))
 }
 
 #[cfg(test)]
 mod tests {
 
-    use crate::eid::{common::models::ResultCode, use_id::model::Psk};
+    use crate::eid::{
+        common::models::{ResultCode, ResultMajor, Session},
+        use_id::model::Psk,
+    };
 
     use super::*;
 
@@ -145,12 +113,16 @@ mod tests {
     fn test_build_use_id_response_basic() {
         // Arrange
         let response = UseIDResponse {
-            session: "1234567890abcdef1234567890abcdef".to_string(),
+            session: Session {
+                id: "1234567890abcdef1234567890abcdef".to_string(),
+            },
             psk: Psk {
                 id: "0987654321abcdef1234567890abcdef".to_string(),
                 key: "fedcba0987654321fedcba0987654321".to_string(),
             },
-            result: ResultCode::Ok,
+            result: ResultMajor {
+                result_major: ResultCode::Ok.to_string(),
+            },
             ecard_server_address: None,
         };
 
@@ -170,6 +142,7 @@ mod tests {
                 <eid:ID>0987654321abcdef1234567890abcdef</eid:ID>
                 <eid:Key>fedcba0987654321fedcba0987654321</eid:Key>
             </eid:PSK>
+            <eid:eCardServerAddress/>
             <dss:Result>
                 <ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ResultMajor>
             </dss:Result>

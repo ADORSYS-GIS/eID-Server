@@ -4,7 +4,7 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 
 use crate::eid::common::models::{
-    AttributeRequest, EIDTypeRequest, EIDTypeSelection, LevelOfAssurance,
+    AttributeRequester, EIDTypeRequest, EIDTypeSelection, LevelOfAssurance,
     TransactionAttestationRequest, UseOperations,
 };
 
@@ -76,9 +76,9 @@ pub fn parse_use_id_request(xml: &str) -> Result<UseIDRequest, UseIdError> {
                             };
 
                             let requirement = match value.unwrap_or_default().as_str() {
-                                "REQUIRED" => AttributeRequest::REQUIRED,
-                                "ALLOWED" => AttributeRequest::ALLOWED,
-                                "PROHIBITED" => AttributeRequest::PROHIBITED,
+                                "REQUIRED" => AttributeRequester::REQUIRED,
+                                "ALLOWED" => AttributeRequester::ALLOWED,
+                                "PROHIBITED" => AttributeRequester::PROHIBITED,
                                 _ => continue,
                             };
 
@@ -298,51 +298,51 @@ mod tests {
         let ops = &result.use_operations;
 
         assert!(ops.iter().any(|op| op.name == "DocumentType"
-            && op.requirement == AttributeRequest::REQUIRED));
+            && op.requirement == AttributeRequester::REQUIRED));
         assert!(ops.iter().any(|op| op.name == "IssuingState"
-            && op.requirement== AttributeRequest::REQUIRED));
+            && op.requirement== AttributeRequester::REQUIRED));
         assert!(ops.iter().any(|op| op.name == "DateOfExpiry"
-            && op.requirement == AttributeRequest::REQUIRED));
+            && op.requirement == AttributeRequester::REQUIRED));
         assert!(
             ops.iter()
-                .any(|op| op.name == "GivenNames" && op.requirement == AttributeRequest::REQUIRED)
+                .any(|op| op.name == "GivenNames" && op.requirement == AttributeRequester::REQUIRED)
         );
         assert!(
             ops.iter()
-                .any(|op| op.name == "FamilyNames" && op.requirement == AttributeRequest::REQUIRED)
+                .any(|op| op.name == "FamilyNames" && op.requirement == AttributeRequester::REQUIRED)
         );
         assert!(
             ops.iter()
-                .any(|op| op.name == "ArtisticName" && op.requirement == AttributeRequest::ALLOWED)
+                .any(|op| op.name == "ArtisticName" && op.requirement == AttributeRequester::ALLOWED)
         );
         assert!(ops.iter().any(|op| op.name == "AcademicTitle"
-            && op.requirement == AttributeRequest::ALLOWED));
+            && op.requirement == AttributeRequester::ALLOWED));
         assert!(
             ops.iter()
-                .any(|op| op.name == "DateOfBirth" && op.requirement == AttributeRequest::REQUIRED)
+                .any(|op| op.name == "DateOfBirth" && op.requirement == AttributeRequester::REQUIRED)
         );
         assert!(ops.iter().any(|op| op.name == "PlaceOfBirth"
-            && op.requirement == AttributeRequest::REQUIRED));
+            && op.requirement == AttributeRequester::REQUIRED));
         assert!(
             ops.iter()
-                .any(|op| op.name == "Nationality" && op.requirement == AttributeRequest::REQUIRED)
+                .any(|op| op.name == "Nationality" && op.requirement == AttributeRequester::REQUIRED)
         );
         assert!(
             ops.iter()
-                .any(|op| op.name == "BirthName" && op.requirement == AttributeRequest::REQUIRED)
+                .any(|op| op.name == "BirthName" && op.requirement == AttributeRequester::REQUIRED)
         );
         assert!(ops.iter().any(
-            |op| op.name == "PlaceOfResidence" && op.requirement == AttributeRequest::REQUIRED
+            |op| op.name == "PlaceOfResidence" && op.requirement == AttributeRequester::REQUIRED
         ));
         assert!(ops.iter().any(|op| op.name == "RestrictedID"
-            && op.requirement == AttributeRequest::REQUIRED));
+            && op.requirement == AttributeRequester::REQUIRED));
         assert!(
             ops.iter()
                 .any(|op| op.name == "AgeVerification"
-                    && op.requirement == AttributeRequest::REQUIRED)
+                    && op.requirement == AttributeRequester::REQUIRED)
         );
         assert!(ops.iter().any(
-            |op| op.name == "PlaceVerification" && op.requirement == AttributeRequest::REQUIRED
+            |op| op.name == "PlaceVerification" && op.requirement == AttributeRequester::REQUIRED
         ));
 
         assert!(!ops.iter().any(|op| op.name == "CommunityID"));
