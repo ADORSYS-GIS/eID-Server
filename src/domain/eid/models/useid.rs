@@ -1,22 +1,17 @@
-use serde::{Deserialize, Serialize};
 use quick_xml::{de::from_str, se::to_string};
-
-/// SOAP XML Namespaces
-pub const NS_EID: &str = "urn:iso:std:iso-iec:24727:tech:schema";
-pub const NS_DSS: &str = "urn:oasis:names:tc:dss:1.0:core:schema";
-pub const NS_DSSEID: &str = "urn:oasis:names:tc:dss-x:1.0:profiles:eID";
-pub const NS_XSI: &str = "http://www.w3.org/2001/XMLSchema-instance";
+use serde::{Deserialize, Serialize};
 
 /// Defines the result status of a request
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "PascalCase")]
 pub struct ResultStatus {
     #[serde(rename = "ResultMajor")]
     pub result_major: String,
 
-    #[serde(rename = "ResultMinor", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub result_minor: Option<String>,
 
-    #[serde(rename = "ResultMessage", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub result_message: Option<String>,
 }
 
@@ -49,7 +44,7 @@ impl ResultStatus {
 /// Single UseOperation item
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct UseOperation {
-    #[serde(rename = "id")]
+    #[serde(rename = "@id")]
     pub id: String,
 }
 
@@ -91,21 +86,21 @@ pub struct EIDTypeRequest {
 /// TransactionInfo parameter
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TransactionInfo {
-    #[serde(rename = "$value", default)]
+    #[serde(rename = "$text")]
     pub value: String,
 }
 
 /// TransactionAttestationRequest parameter
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TransactionAttestationRequest {
-    #[serde(rename = "type")]
+    #[serde(rename = "@type")]
     pub attestation_type: String,
 }
 
 /// PSK parameter
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct PSK {
-    #[serde(rename = "$value", default)]
+    #[serde(rename = "$text")]
     pub value: String,
 }
 
@@ -116,19 +111,31 @@ pub struct UseIDRequest {
     #[serde(rename = "UseOperations")]
     pub use_operations: UseOperations,
 
-    #[serde(rename = "AgeVerificationRequest", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "AgeVerificationRequest",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub age_verification_request: Option<AgeVerificationRequest>,
 
-    #[serde(rename = "PlaceVerificationRequest", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "PlaceVerificationRequest",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub place_verification_request: Option<PlaceVerificationRequest>,
 
     #[serde(rename = "TransactionInfo", skip_serializing_if = "Option::is_none")]
     pub transaction_info: Option<TransactionInfo>,
 
-    #[serde(rename = "TransactionAttestationRequest", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "TransactionAttestationRequest",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub transaction_attestation_request: Option<TransactionAttestationRequest>,
 
-    #[serde(rename = "LevelOfAssuranceRequest", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "LevelOfAssuranceRequest",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub level_of_assurance_request: Option<LevelOfAssuranceRequest>,
 
     #[serde(rename = "EIDTypeRequest", skip_serializing_if = "Option::is_none")]
@@ -172,7 +179,7 @@ pub struct SoapBody<T>
 where
     T: serde::Serialize + serde::de::DeserializeOwned,
 {
-    #[serde(rename = "useID")]
+    #[serde(rename = "$value")]
     pub content: T,
 }
 
@@ -209,8 +216,8 @@ pub mod soap {
         T: serde::Serialize + serde::de::DeserializeOwned,
     {
         // Explicitly annotate the type to help the compiler
-        let envelope: SoapEnvelope<T> = from_str(xml)
-            .map_err(|e| anyhow!("XML deserialization error: {}", e))?;
+        let envelope: SoapEnvelope<T> =
+            from_str(xml).map_err(|e| anyhow!("XML deserialization error: {}", e))?;
         Ok(envelope.body.content)
     }
 

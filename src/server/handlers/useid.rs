@@ -1,3 +1,4 @@
+use anyhow::Result;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -9,14 +10,13 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 use uuid::Uuid;
-use anyhow::Result;
 
-use crate::domain::eid::models::useid::{soap, ResultStatus, Session, UseIDRequest, UseIDResponse, PSK};
-
-
+use crate::domain::eid::models::useid::{
+    PSK, ResultStatus, Session, UseIDRequest, UseIDResponse, soap,
+};
 
 /// Configuration for the eID Service
-#[derive(Clone)]
+#[derive(Clone, Debug)] // Added Debug
 pub struct EIDServiceConfig {
     /// Maximum number of concurrent sessions
     pub max_sessions: usize,
@@ -46,7 +46,7 @@ pub struct SessionInfo {
 }
 
 /// Main service for handling useID requests
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct EIDService {
     config: EIDServiceConfig,
     sessions: Arc<RwLock<Vec<SessionInfo>>>,
@@ -185,7 +185,6 @@ impl EIDService {
     }
 }
 
-
 pub async fn use_id_handler(
     State(service): State<Arc<EIDService>>,
     headers: HeaderMap,
@@ -197,7 +196,7 @@ pub async fn use_id_handler(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "Expected SOAP XML content type".to_string(),
         )
-        .into_response();
+            .into_response();
     }
 
     // Parse the SOAP request
@@ -260,8 +259,8 @@ fn is_soap_content_type(headers: &HeaderMap) -> bool {
         .and_then(|v| v.to_str().ok())
         .map(|v| {
             v.contains("text/xml")
-            || v.contains("application/soap+xml")
-            || v.contains("application/xml")
+                || v.contains("application/soap+xml")
+                || v.contains("application/xml")
         })
         .unwrap_or(false)
 }
@@ -288,10 +287,10 @@ mod tests {
         body::Body,
         http::{self, Request, StatusCode},
     };
-    use std::sync::Arc;
-    use quick_xml::de::from_str;
     use http_body_util;
-    
+    use quick_xml::de::from_str;
+    use std::sync::Arc;
+
     fn create_test_service() -> EIDService {
         EIDService::new(EIDServiceConfig {
             max_sessions: 10,
@@ -425,7 +424,7 @@ mod tests {
         let psk = service.generate_psk();
         assert_eq!(psk.len(), 32);
     }
-        
+
     fn create_sample_soap_request() -> String {
         let request = UseIDRequest {
             use_operations: UseOperations {

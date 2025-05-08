@@ -1,31 +1,26 @@
 //! This module contains the HTTP server implementation.
 
-mod handlers;
+pub mod handlers;
 mod responses;
 
 use std::sync::Arc;
 
 use axum::http::Method;
+use axum::routing::post;
 use axum::{Router, routing::get};
 use color_eyre::eyre::eyre;
 use handlers::health::health_check;
+use handlers::useid::EIDService;
 use tokio::net::TcpListener;
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
 
-use crate::domain::eid::ports::EidService;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig<'a> {
     pub host: &'a str,
     pub port: u16,
-}
-
-#[derive(Debug, Clone)]
-struct AppState<S: EidService> {
-    _eid_service: Arc<S>,
 }
 
 pub struct Server {
@@ -36,7 +31,7 @@ pub struct Server {
 impl Server {
     /// Creates a new HTTP server with the given service and configuration.
     pub async fn new(
-        eid_service: impl EidService,
+        eid_service: EIDService,
         config: ServerConfig<'_>,
     ) -> color_eyre::Result<Self> {
         // Initialize the tracing layer to log HTTP requests.
@@ -58,13 +53,12 @@ impl Server {
                 Method::OPTIONS,
             ]);
 
-        // This will encapsulate dependencies needed to execute the business logic
-        let state = AppState {
-            _eid_service: Arc::new(eid_service),
-        };
+        // Wrap the service in Arc for shared state
+        let state = Arc::new(eid_service);
 
         let router = axum::Router::new()
             .route("/health", get(health_check))
+            .route("/eIDService/useID", post(handlers::useid::use_id_handler))
             .layer(cors)
             .layer(trace_layer)
             .with_state(state);
