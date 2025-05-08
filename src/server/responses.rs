@@ -1,5 +1,8 @@
 use serde::Serialize;
 
+pub mod xml;
+pub use xml::Xml;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ResponseBody<T: Serialize> {
     status_code: u16,

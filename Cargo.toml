@@ -15,6 +15,7 @@ tokio = { version = "1", features = ["full"] }
 
 # Serialization/Deserialization
 serde = { version = "1", features = ["derive"] }
+quick-xml = { version = "0.31", features = ["serialize"] }
 
 # Configuration
 config = "0.15"
