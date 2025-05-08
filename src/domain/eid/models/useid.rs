@@ -246,7 +246,7 @@ pub mod soap {
     use anyhow::{Result, anyhow};
 
     pub fn deserialize_soap_request(xml: &str) -> Result<UseIDRequest> {
-        println!("Deserializing XML: {xml}" );
+        println!("Deserializing XML: {xml}");
         let envelope: SoapEnvelope<SoapBodyRequest> =
             from_str(xml).map_err(|e| anyhow!("XML deserialization error: {}", e))?;
         println!("Deserialized envelope: {envelope:?}");
