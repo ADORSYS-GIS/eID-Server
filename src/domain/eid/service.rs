@@ -1,12 +1,10 @@
 //! Service layer that provides the business logic of the domain.
 
-use super::ports::EidService;
+use super::{models::ServerInfo, ports::EidService};
 
-// TODO : Implement the service layer.
 #[derive(Debug, Clone)]
 pub struct Service;
 
-// Will need to implement this later
 impl Service {
     pub fn new() -> Self {
         Self
@@ -19,4 +17,9 @@ impl Default for Service {
     }
 }
 
-impl EidService for Service {}
+impl EidService for Service {
+    fn get_server_info(&self) -> ServerInfo {
+        // Return default ServerInfo which contains the basic implementation details
+        ServerInfo::default()
+    }
+}
