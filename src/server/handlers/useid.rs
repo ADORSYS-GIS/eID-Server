@@ -200,7 +200,7 @@ pub async fn use_id_handler(
     }
 
     // Parse the SOAP request
-    let use_id_request = match soap::deserialize_soap_request::<UseIDRequest>(&body) {
+    let use_id_request = match soap::deserialize_soap_request(&body) {
         Ok(request) => request,
         Err(err) => {
             error!("Failed to parse SOAP request: {}", err);
@@ -443,7 +443,7 @@ mod tests {
             }),
         };
 
-        let envelope = SoapEnvelope::<UseIDRequest>::new(request);
+        let envelope = SoapEnvelope::new(request);
         quick_xml::se::to_string(&envelope).expect("Failed to serialize SOAP request")
     }
 
