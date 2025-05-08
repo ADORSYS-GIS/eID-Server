@@ -12,7 +12,7 @@ use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::domain::eid::models::useid::{
-    PSK, ResultStatus, Session, UseIDRequest, UseIDResponse, soap,
+    Psk, ResultStatus, Session, UseIDRequest, UseIDResponse, soap,
 };
 
 /// Configuration for the eID Service
@@ -144,14 +144,14 @@ impl EIDService {
                 timeout: expiry.to_rfc3339(),
             },
             ecard_server_address: self.config.ecard_server_address.clone(),
-            psk: Some(PSK { value: psk }),
+            psk: Some(Psk { value: psk }),
         })
     }
 
     /// Generate a random PSK for secure communication
     fn generate_psk(&self) -> String {
         // Generate a 32-character random PSK
-        rand::rng() // Updated from thread_rng to rng
+        rand::rng()
             .sample_iter(&Alphanumeric)
             .take(32)
             .map(char::from)
@@ -282,7 +282,9 @@ fn create_soap_response_headers() -> HeaderMap {
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::eid::models::useid::{SoapEnvelope, UseIDRequestWrapper, UseIDResponseWrapper, UseOperation, UseOperations};
+    use crate::domain::eid::models::useid::{
+        SoapBodyResponse, SoapEnvelope, UseOperation, UseOperations,
+    };
 
     use super::*;
 
@@ -441,13 +443,12 @@ mod tests {
             transaction_attestation_request: None,
             level_of_assurance_request: None,
             eid_type_request: None,
-            psk: Some(PSK {
+            psk: Some(Psk {
                 value: "test_psk".to_string(),
             }),
         };
 
-        let wrapper = UseIDRequestWrapper { use_id: request }; 
-        let envelope = SoapEnvelope::new(wrapper);
+        let envelope = SoapEnvelope::new_request(request);
         quick_xml::se::to_string(&envelope).expect("Failed to serialize SOAP request")
     }
 
@@ -491,10 +492,15 @@ mod tests {
             .unwrap()
             .to_bytes();
         let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
-        let soap_response: SoapEnvelope<UseIDResponseWrapper> = from_str(&body_str).unwrap(); 
+        let soap_response: SoapEnvelope<SoapBodyResponse> = from_str(&body_str).unwrap();
 
         assert_eq!(
-            soap_response.body.content.use_id_response.result.result_major,
+            soap_response
+                .body
+                .content
+                .use_id_response
+                .result
+                .result_major,
             "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok"
         );
         assert!(
@@ -507,7 +513,13 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(
-            soap_response.body.content.use_id_response.psk.unwrap().value,
+            soap_response
+                .body
+                .content
+                .use_id_response
+                .psk
+                .unwrap()
+                .value,
             "test_psk"
         );
     }

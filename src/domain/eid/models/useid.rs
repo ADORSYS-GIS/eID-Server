@@ -1,12 +1,9 @@
-// Note: I've removed the #[serde(...)] attributes from struct definitions
-// and replaced them with more explicit derive attributes that should work
-
 use quick_xml::{de::from_str, se::to_string};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Defines the result status of a request
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "PascalCase")]
 pub struct ResultStatus {
     #[serde(rename = "ResultMajor")]
     pub result_major: String,
@@ -102,7 +99,7 @@ pub struct TransactionAttestationRequest {
 
 /// PSK parameter
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct PSK {
+pub struct Psk {
     #[serde(rename = "$text")]
     pub value: String,
 }
@@ -143,8 +140,8 @@ pub struct UseIDRequest {
     #[serde(rename = "EIDTypeRequest", skip_serializing_if = "Option::is_none")]
     pub eid_type_request: Option<EIDTypeRequest>,
 
-    #[serde(rename = "PSK", skip_serializing_if = "Option::is_none")]
-    pub psk: Option<PSK>,
+    #[serde(rename = "Psk", skip_serializing_if = "Option::is_none")]
+    pub psk: Option<Psk>,
 }
 
 /// Session information in the response
@@ -169,105 +166,66 @@ pub struct UseIDResponse {
     #[serde(rename = "eCardServerAddress", skip_serializing_if = "Option::is_none")]
     pub ecard_server_address: Option<String>,
 
-    #[serde(rename = "PSK", skip_serializing_if = "Option::is_none")]
-    pub psk: Option<PSK>,
+    #[serde(rename = "Psk", skip_serializing_if = "Option::is_none")]
+    pub psk: Option<Psk>,
 }
 
-/// SOAP Namespaces
+/// SOAP Body wrapper for requests
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SoapNamespaces {
-    #[serde(rename = "@xmlns:soap")]
-    pub soap: String,
-    
-    #[serde(rename = "@xmlns:xsi")]
-    pub xsi: String,
-    
-    #[serde(rename = "@xmlns:xsd")]
-    pub xsd: String,
-
-    #[serde(flatten)]
-    pub other: HashMap<String, String>,
+#[serde(rename = "Body")]
+pub struct SoapBodyRequest {
+    #[serde(rename = "useID")]
+    pub content: UseIDRequest,
 }
 
-/// SOAP Body wrapper
+/// SOAP Body wrapper for responses
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SoapBody<T> {
-    #[serde(rename = "$value")]
-    pub content: T,
+#[serde(rename = "Body")]
+pub struct SoapBodyResponse {
+    #[serde(rename = "useIDResponse")]
+    pub content: UseIDResponseWrapper,
 }
 
 /// Used for wrapping requests in a SOAP envelope
-#[derive(Debug, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename = "Envelope")]
 pub struct SoapEnvelope<T> {
-    pub namespaces: SoapNamespaces,
-    pub body: SoapBody<T>,
+    #[serde(rename = "@xmlns:soap")]
+    pub soap: String,
+
+    #[serde(rename = "@xmlns:xsi")]
+    pub xsi: String,
+
+    #[serde(rename = "@xmlns:xsd")]
+    pub xsd: String,
+
+    #[serde(rename = "Body")]
+    pub body: T,
 }
 
-// Manual implementation of Serialize for SoapEnvelope
-impl<T> Serialize for SoapEnvelope<T>
-where
-    T: Serialize,
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        #[derive(Serialize)]
-        #[serde(rename = "Envelope")]
-        struct Helper<'a, T> {
-            #[serde(flatten)]
-            namespaces: &'a SoapNamespaces,
-            #[serde(rename = "Body")]
-            body: &'a SoapBody<T>,
-        }
-
-        Helper {
-            namespaces: &self.namespaces,
-            body: &self.body,
-        }
-        .serialize(serializer)
-    }
-}
-
-// Manual implementation of Deserialize for SoapEnvelope
-impl<'de, T> Deserialize<'de> for SoapEnvelope<T>
-where
-    T: Deserialize<'de>,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(rename = "Envelope")]
-        struct Helper<T> {
-            #[serde(flatten)]
-            namespaces: SoapNamespaces,
-            #[serde(rename = "Body")]
-            body: SoapBody<T>,
-        }
-
-        let helper = Helper::deserialize(deserializer)?;
-        Ok(SoapEnvelope {
-            namespaces: helper.namespaces,
-            body: helper.body,
-        })
-    }
-}
-
-impl<T> SoapEnvelope<T> {
-    pub fn new(content: T) -> Self {
+impl SoapEnvelope<SoapBodyRequest> {
+    #[allow(dead_code)]
+    pub fn new_request(content: UseIDRequest) -> Self {
         Self {
-            namespaces: SoapNamespaces {
-                soap: "http://schemas.xmlsoap.org/soap/envelope/".to_string(),
-                xsi: "http://www.w3.org/2001/XMLSchema-instance".to_string(),
-                xsd: "http://www.w3.org/2001/XMLSchema".to_string(),
-                other: HashMap::new(),
-            },
-            body: SoapBody { content },
+            soap: "http://schemas.xmlsoap.org/soap/envelope/".to_string(),
+            xsi: "http://www.w3.org/2001/XMLSchema-instance".to_string(),
+            xsd: "http://www.w3.org/2001/XMLSchema".to_string(),
+            body: SoapBodyRequest { content },
         }
     }
 }
+
+impl SoapEnvelope<SoapBodyResponse> {
+    pub fn new_response(content: UseIDResponseWrapper) -> Self {
+        Self {
+            soap: "http://schemas.xmlsoap.org/soap/envelope/".to_string(),
+            xsi: "http://www.w3.org/2001/XMLSchema-instance".to_string(),
+            xsd: "http://www.w3.org/2001/XMLSchema".to_string(),
+            body: SoapBodyResponse { content },
+        }
+    }
+}
+
 /// Used for deserializing useID requests
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UseIDRequestWrapper {
@@ -288,20 +246,23 @@ pub mod soap {
     use anyhow::{Result, anyhow};
 
     pub fn deserialize_soap_request(xml: &str) -> Result<UseIDRequest> {
-        let envelope: SoapEnvelope<UseIDRequestWrapper> = 
+        println!("Deserializing XML: {xml}" );
+        let envelope: SoapEnvelope<SoapBodyRequest> =
             from_str(xml).map_err(|e| anyhow!("XML deserialization error: {}", e))?;
-        Ok(envelope.body.content.use_id)
+        println!("Deserialized envelope: {envelope:?}");
+        Ok(envelope.body.content)
     }
 
     pub fn serialize_soap_response(response: UseIDResponse) -> Result<String> {
         let wrapper = UseIDResponseWrapper {
             use_id_response: response,
         };
-        
-        let envelope = SoapEnvelope::new(wrapper);
-        
+
+        let envelope = SoapEnvelope::new_response(wrapper);
+        println!("Serializing envelope: {envelope:?}");
+
         let xml = to_string(&envelope).map_err(|e| anyhow!("XML serialization error: {}", e))?;
-        Ok(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{}", xml))
+        Ok(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{xml}"))
     }
 }
 
@@ -343,7 +304,7 @@ mod tests {
                     <UseOperations>
                         <UseOperation id="test_operation"/>
                     </UseOperations>
-                    <PSK>test_psk</PSK>
+                    <Psk>test_Psk</Psk>
                 </useID>
             </soap:Body>
         </soap:Envelope>
@@ -352,8 +313,11 @@ mod tests {
         let result = soap::deserialize_soap_request(xml);
         assert!(result.is_ok(), "Deserialization failed: {:?}", result.err());
         let request = result.unwrap();
-        assert_eq!(request.use_operations.use_operations[0].id, "test_operation");
-        assert_eq!(request.psk.unwrap().value, "test_psk");
+        assert_eq!(
+            request.use_operations.use_operations[0].id,
+            "test_operation"
+        );
+        assert_eq!(request.psk.unwrap().value, "test_Psk");
     }
 
     #[test]
@@ -371,30 +335,24 @@ mod tests {
             transaction_attestation_request: None,
             level_of_assurance_request: None,
             eid_type_request: None,
-            psk: Some(PSK {
-                value: "test_psk".to_string(),
+            psk: Some(Psk {
+                value: "test_Psk".to_string(),
             }),
         };
 
         // Test serialization of the request as part of a SOAP request
-        let wrapper = UseIDRequestWrapper { use_id: request.clone() };
-        let envelope = SoapEnvelope::new(wrapper);
+        let envelope = SoapEnvelope::new_request(request.clone());
         let xml = to_string(&envelope).unwrap();
         assert!(xml.contains("test_operation"));
-        assert!(xml.contains("test_psk"));
-
-        // Create a SOAP XML request
-        let soap_xml = format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\"><soap:Body><useID><UseOperations><UseOperation id=\"test_operation\"/></UseOperations><PSK>test_psk</PSK></useID></soap:Body></soap:Envelope>"
-        );
+        assert!(xml.contains("test_Psk"));
 
         // Test deserialization of the SOAP request
-        let deserialized = soap::deserialize_soap_request(&soap_xml).unwrap();
+        let deserialized = soap::deserialize_soap_request(&xml).unwrap();
         assert_eq!(
             deserialized.use_operations.use_operations[0].id,
             "test_operation"
         );
-        assert_eq!(deserialized.psk.unwrap().value, "test_psk");
+        assert_eq!(deserialized.psk.unwrap().value, "test_Psk");
 
         // Create a sample useID response
         let response = UseIDResponse {
@@ -404,8 +362,8 @@ mod tests {
                 timeout: "2025-05-08T12:58:12Z".to_string(),
             },
             ecard_server_address: Some("https://ecard.example.com".to_string()),
-            psk: Some(PSK {
-                value: "response_psk".to_string(),
+            psk: Some(Psk {
+                value: "response_Psk".to_string(),
             }),
         };
 
@@ -413,7 +371,7 @@ mod tests {
         let soap_response = soap::serialize_soap_response(response).unwrap();
         assert!(soap_response.contains("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
         assert!(soap_response.contains("session123"));
-        assert!(soap_response.contains("response_psk"));
+        assert!(soap_response.contains("response_Psk"));
         assert!(soap_response.contains("https://ecard.example.com"));
     }
 }
