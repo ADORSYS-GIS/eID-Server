@@ -56,7 +56,7 @@ pub struct UseOperation {
 /// This struct represents the UseOperations parameter in the useID request
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct UseOperations {
-    #[serde(rename = "UseOperation")]
+    #[serde(rename = "UseOperation", default)]
     pub use_operations: Vec<UseOperation>,
 }
 
@@ -91,7 +91,7 @@ pub struct EIDTypeRequest {
 /// TransactionInfo parameter
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TransactionInfo {
-    #[serde(rename = "$value")]
+    #[serde(rename = "$value", default)]
     pub value: String,
 }
 
@@ -105,7 +105,7 @@ pub struct TransactionAttestationRequest {
 /// PSK parameter
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct PSK {
-    #[serde(rename = "$value")]
+    #[serde(rename = "$value", default)]
     pub value: String,
 }
 
@@ -172,7 +172,7 @@ pub struct SoapBody<T>
 where
     T: serde::Serialize + serde::de::DeserializeOwned,
 {
-    #[serde(flatten)]
+    #[serde(rename = "useID")]
     pub content: T,
 }
 

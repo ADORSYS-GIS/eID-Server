@@ -151,7 +151,7 @@ impl EIDService {
             .collect()
     }
 
-    /// Clean up expired sessions (can be called periodically)
+    /// Clean up expired sessions (can be called periodically)-=
     pub async fn cleanup_expired_sessions(&self) -> usize {
         let mut sessions = self.sessions.write().await;
         let before_count = sessions.len();
