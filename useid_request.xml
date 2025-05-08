@@ -1,0 +1,10 @@
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope">
+    <soap:Body>
+        <UseIDRequest>
+            <UseOperations>
+                <UseOperation id="test_operation"/>
+            </UseOperations>
+            <PSK>test_psk</PSK>
+        </UseIDRequest>
+    </soap:Body>
+</soap:Envelope>

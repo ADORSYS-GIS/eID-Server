@@ -16,7 +16,7 @@ use crate::domain::eid::models::useid::{
 };
 
 /// Configuration for the eID Service
-#[derive(Clone, Debug)] // Added Debug
+#[derive(Clone, Debug)]
 pub struct EIDServiceConfig {
     /// Maximum number of concurrent sessions
     pub max_sessions: usize,
@@ -151,7 +151,7 @@ impl EIDService {
     /// Generate a random PSK for secure communication
     fn generate_psk(&self) -> String {
         // Generate a 32-character random PSK
-        rand::rng()
+        rand::rng() // Updated from thread_rng to rng
             .sample_iter(&Alphanumeric)
             .take(32)
             .map(char::from)
@@ -190,6 +190,9 @@ pub async fn use_id_handler(
     headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
+    // Log the raw SOAP body for debugging
+    debug!("Received raw SOAP body: {}", body);
+
     // Check content type
     if !is_soap_content_type(&headers) {
         return (
@@ -279,7 +282,7 @@ fn create_soap_response_headers() -> HeaderMap {
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::eid::models::useid::{SoapEnvelope, UseOperation, UseOperations};
+    use crate::domain::eid::models::useid::{SoapEnvelope, UseIDRequestWrapper, UseIDResponseWrapper, UseOperation, UseOperations};
 
     use super::*;
 
@@ -443,7 +446,8 @@ mod tests {
             }),
         };
 
-        let envelope = SoapEnvelope::new(request);
+        let wrapper = UseIDRequestWrapper { use_id: request }; 
+        let envelope = SoapEnvelope::new(wrapper);
         quick_xml::se::to_string(&envelope).expect("Failed to serialize SOAP request")
     }
 
@@ -487,21 +491,25 @@ mod tests {
             .unwrap()
             .to_bytes();
         let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
-        let soap_response: SoapEnvelope<UseIDResponse> = from_str(&body_str).unwrap();
+        let soap_response: SoapEnvelope<UseIDResponseWrapper> = from_str(&body_str).unwrap(); 
 
         assert_eq!(
-            soap_response.body.content.result.result_major,
+            soap_response.body.content.use_id_response.result.result_major,
             "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok"
         );
         assert!(
             !soap_response
                 .body
                 .content
+                .use_id_response
                 .session
                 .session_identifier
                 .is_empty()
         );
-        assert_eq!(soap_response.body.content.psk.unwrap().value, "test_psk");
+        assert_eq!(
+            soap_response.body.content.use_id_response.psk.unwrap().value,
+            "test_psk"
+        );
     }
 
     #[tokio::test]

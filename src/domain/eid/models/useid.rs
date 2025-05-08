@@ -1,9 +1,12 @@
+// Note: I've removed the #[serde(...)] attributes from struct definitions
+// and replaced them with more explicit derive attributes that should work
+
 use quick_xml::{de::from_str, se::to_string};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Defines the result status of a request
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(rename_all = "PascalCase")]
 pub struct ResultStatus {
     #[serde(rename = "ResultMajor")]
     pub result_major: String,
@@ -181,56 +184,16 @@ pub struct SoapNamespaces {
     
     #[serde(rename = "@xmlns:xsd")]
     pub xsd: String,
+
+    #[serde(flatten)]
+    pub other: HashMap<String, String>,
 }
 
 /// SOAP Body wrapper
-#[derive(Debug, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SoapBody<T> {
+    #[serde(rename = "$value")]
     pub content: T,
-}
-
-// Separate implementation of Serialize for SoapBody
-impl<T> Serialize for SoapBody<T>
-where
-    T: Serialize,
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        #[derive(Serialize)]
-        struct Helper<'a, T> {
-            #[serde(rename = "$value")]
-            content: &'a T,
-        }
-
-        Helper {
-            content: &self.content,
-        }
-        .serialize(serializer)
-    }
-}
-
-// Separate implementation of Deserialize for SoapBody
-impl<'de, T> Deserialize<'de> for SoapBody<T>
-where
-    T: Deserialize<'de>,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct Helper<T> {
-            #[serde(rename = "$value")]
-            content: T,
-        }
-
-        let helper = Helper::deserialize(deserializer)?;
-        Ok(SoapBody {
-            content: helper.content,
-        })
-    }
 }
 
 /// Used for wrapping requests in a SOAP envelope
@@ -240,7 +203,7 @@ pub struct SoapEnvelope<T> {
     pub body: SoapBody<T>,
 }
 
-// Separate implementation of Serialize for SoapEnvelope
+// Manual implementation of Serialize for SoapEnvelope
 impl<T> Serialize for SoapEnvelope<T>
 where
     T: Serialize,
@@ -250,12 +213,11 @@ where
         S: serde::Serializer,
     {
         #[derive(Serialize)]
-        #[serde(rename = "soap:Envelope")]
+        #[serde(rename = "Envelope")]
         struct Helper<'a, T> {
             #[serde(flatten)]
             namespaces: &'a SoapNamespaces,
-            
-            #[serde(rename = "soap:Body")]
+            #[serde(rename = "Body")]
             body: &'a SoapBody<T>,
         }
 
@@ -267,7 +229,7 @@ where
     }
 }
 
-// Separate implementation of Deserialize for SoapEnvelope
+// Manual implementation of Deserialize for SoapEnvelope
 impl<'de, T> Deserialize<'de> for SoapEnvelope<T>
 where
     T: Deserialize<'de>,
@@ -277,12 +239,11 @@ where
         D: serde::Deserializer<'de>,
     {
         #[derive(Deserialize)]
-        #[serde(rename = "soap:Envelope")]
+        #[serde(rename = "Envelope")]
         struct Helper<T> {
             #[serde(flatten)]
             namespaces: SoapNamespaces,
-            
-            #[serde(rename = "soap:Body")]
+            #[serde(rename = "Body")]
             body: SoapBody<T>,
         }
 
@@ -294,6 +255,19 @@ where
     }
 }
 
+impl<T> SoapEnvelope<T> {
+    pub fn new(content: T) -> Self {
+        Self {
+            namespaces: SoapNamespaces {
+                soap: "http://schemas.xmlsoap.org/soap/envelope/".to_string(),
+                xsi: "http://www.w3.org/2001/XMLSchema-instance".to_string(),
+                xsd: "http://www.w3.org/2001/XMLSchema".to_string(),
+                other: HashMap::new(),
+            },
+            body: SoapBody { content },
+        }
+    }
+}
 /// Used for deserializing useID requests
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UseIDRequestWrapper {
@@ -308,43 +282,24 @@ pub struct UseIDResponseWrapper {
     pub use_id_response: UseIDResponse,
 }
 
-impl<T> SoapEnvelope<T> {
-    pub fn new(content: T) -> Self {
-        Self {
-            namespaces: SoapNamespaces {
-                soap: "http://schemas.xmlsoap.org/soap/envelope/".to_string(),
-                xsi: "http://www.w3.org/2001/XMLSchema-instance".to_string(),
-                xsd: "http://www.w3.org/2001/XMLSchema".to_string(),
-            },
-            body: SoapBody { content },
-        }
-    }
-}
-
 /// Helper functions for SOAP request/response handling
 pub mod soap {
     use super::*;
     use anyhow::{Result, anyhow};
 
     pub fn deserialize_soap_request(xml: &str) -> Result<UseIDRequest> {
-        // Parse the XML into a SOAP envelope containing the useID request wrapper
         let envelope: SoapEnvelope<UseIDRequestWrapper> = 
             from_str(xml).map_err(|e| anyhow!("XML deserialization error: {}", e))?;
-        
-        // Return the actual useID request
         Ok(envelope.body.content.use_id)
     }
 
     pub fn serialize_soap_response(response: UseIDResponse) -> Result<String> {
-        // Create a wrapper for the useID response
         let wrapper = UseIDResponseWrapper {
             use_id_response: response,
         };
         
-        // Create a SOAP envelope containing the useID response wrapper
         let envelope = SoapEnvelope::new(wrapper);
         
-        // Add XML declaration and serialize
         let xml = to_string(&envelope).map_err(|e| anyhow!("XML serialization error: {}", e))?;
         Ok(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{}", xml))
     }
@@ -374,6 +329,31 @@ mod tests {
         );
         assert_eq!(result.result_minor, Some("minor_error".to_string()));
         assert_eq!(result.result_message, Some("Error message".to_string()));
+    }
+
+    #[test]
+    fn test_deserialize_soap_request_from_script() {
+        let xml = r#"
+        <?xml version="1.0" encoding="UTF-8"?>
+        <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" 
+                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+                       xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+            <soap:Body>
+                <useID>
+                    <UseOperations>
+                        <UseOperation id="test_operation"/>
+                    </UseOperations>
+                    <PSK>test_psk</PSK>
+                </useID>
+            </soap:Body>
+        </soap:Envelope>
+        "#;
+
+        let result = soap::deserialize_soap_request(xml);
+        assert!(result.is_ok(), "Deserialization failed: {:?}", result.err());
+        let request = result.unwrap();
+        assert_eq!(request.use_operations.use_operations[0].id, "test_operation");
+        assert_eq!(request.psk.unwrap().value, "test_psk");
     }
 
     #[test]
