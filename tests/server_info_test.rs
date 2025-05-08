@@ -64,12 +64,12 @@ async fn test_server_info_endpoint() {
     // Check for server name - less specific checks
     assert!(body.contains("eID-Server"));
     assert!(body.contains("<SupportedAPIVersions>"));
-    
+
     // Check for the new TR-03130 required fields
     assert!(body.contains("<ServerVersion>"));
     assert!(body.contains("<DocumentVerificationRights>"));
     assert!(body.contains("<Supported>"));
-    
+
     // Make sure 1.1 is not included
     assert!(!body.contains("<SupportedAPIVersions>1.1</SupportedAPIVersions>"));
 }
@@ -90,7 +90,7 @@ fn test_server_info_content() {
             .supported_api_versions
             .contains(&"1.0".to_string())
     );
-    
+
     // Validate new TR-03130 required fields
     assert_eq!(server_info.server_version, "1.0");
     assert_eq!(server_info.document_verification_rights.supported, false);
