@@ -93,6 +93,6 @@ fn test_server_info_content() {
 
     // Validate new TR-03130 required fields
     assert_eq!(server_info.server_version, "1.0");
-    assert_eq!(server_info.document_verification_rights.supported, false);
+    assert!(!server_info.document_verification_rights.supported);
     assert_eq!(server_info.document_verification_rights.version, None);
 }
