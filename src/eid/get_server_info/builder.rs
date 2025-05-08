@@ -38,8 +38,7 @@ pub fn build_get_server_info_response(
         "<soapenv:Envelope",
         "<soapenv:Envelope \
          xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" \
-         xmlns:eid=\"http://bsi.bund.de/eID/\" \
-         xmlns:dss=\"urn:oasis:names:tc:dss:1.0:core:schema\"",
+         xmlns:eid=\"http://bsi.bund.de/eID/\"",
         1,
     );
 
@@ -79,34 +78,20 @@ mod tests {
                 nationality: AttributeSelection::ALLOWED,
                 birth_name: AttributeSelection::ALLOWED,
                 place_of_residence: AttributeSelection::ALLOWED,
-                community_id: AttributeSelection::PROHIBITED,
-                residence_permit: AttributeSelection::PROHIBITED,
+                community_id: None,
+                residence_permit_i: None,
                 restricted_id: AttributeSelection::ALLOWED,
                 age_verification: AttributeSelection::ALLOWED,
                 place_verification: AttributeSelection::ALLOWED,
             },
         };
 
+        // Normalize whitespace for comparison
+        let normalize = |s: &str| s.split_whitespace().collect::<String>();
+
         let xml = build_get_server_info_response(&response).unwrap();
-
-        // VersionInfo
-        assert!(xml.contains("<eid:VersionString>Version 2.4.0\n02.08.2021</eid:VersionString>"));
-        assert!(xml.contains("<eid:Major>2</eid:Major>"));
-        assert!(xml.contains("<eid:Minor>4</eid:Minor>"));
-        assert!(xml.contains("<eid:Bugfix>0</eid:Bugfix>"));
-        assert!(xml.contains("<eid:IssuingState>ALLOWED</eid:IssuingState>"));
-        assert!(xml.contains("<eid:DateOfExpiry>ALLOWED</eid:DateOfExpiry>"));
-        assert!(xml.contains("<eid:GivenNames>ALLOWED</eid:GivenNames>"));
-        assert!(xml.contains("<eid:FamilyNames>ALLOWED</eid:FamilyNames>"));
-        assert!(xml.contains("<eid:AgeVerification>ALLOWED</eid:AgeVerification>"));
-        assert!(xml.contains("<eid:PlaceVerification>ALLOWED</eid:PlaceVerification>"));
-
-        // DocumentVerificationRights allowed fields
-        assert!(xml.contains("<eid:DocumentType>ALLOWED</eid:DocumentType>"));
-        assert!(xml.contains("<eid:ArtisticName>ALLOWED</eid:ArtisticName>"));
-
-        // Empty elements for not allowed
-        assert!(xml.contains("<eid:RestrictedID>ALLOWED</eid:RestrictedID>"));
-        assert!(xml.contains("<eid:CommunityID>PROHIBITED</eid:CommunityID>"));
+        let expected_xml = std::fs::read_to_string("test_data/get_server_info_response.xml")
+            .expect("Failed to read expected XML file");
+        assert_eq!(normalize(&xml), normalize(&expected_xml));
     }
 }

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
 use std::str::FromStr;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub enum EIDTypeSelection {
     ALLOWED,
     DENIED,
@@ -10,29 +10,30 @@ pub enum EIDTypeSelection {
 
 pub type ICAOCounrty = String;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Deserialize)]
 pub struct EIDTypeRequest {
+    #[serde(rename = "eid:SeCertified")]
     pub se_certified: Option<EIDTypeSelection>,
+    #[serde(rename = "eid:SeEndorsed")]
     pub se_endorsed: Option<EIDTypeSelection>,
+    #[serde(rename = "eid:CardCertified")]
     pub card_certified: Option<EIDTypeSelection>,
+    #[serde(rename = "eid:HwKeystore")]
     pub hwkeystore: Option<EIDTypeSelection>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct TransactionAttestationRequest {
     /// URI that identifies the expected format for the transaction attestation
+    #[serde(rename = "TransactionAttestationFormat")]
     pub transaction_attestation_format: String,
 
     /// Optional context information like an ID or hash
+    #[serde(rename = "TransactionContext")]
     pub transaction_context: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct UseOperations {
-    pub name: String,
-    pub requirement: AttributeRequester,
-}
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Serialize)]
 pub struct OperationsResponder {
     #[serde(rename = "eid:DocumentType")]
     pub document_type: AttributeResponder,
@@ -59,15 +60,53 @@ pub struct OperationsResponder {
     #[serde(rename = "eid:PlaceOfResidence")]
     pub place_of_residence: AttributeResponder,
     #[serde(rename = "eid:CommunityID")]
-    pub community_id: Option<AttributeResponder>,
+    pub community_id: AttributeResponder,
     #[serde(rename = "eid:ResidencePermitID")]
-    pub residence_permit_id: Option<AttributeResponder>,
+    pub residence_permit_id: AttributeResponder,
     #[serde(rename = "eid:RestrictedID")]
     pub restricted_id: AttributeResponder,
     #[serde(rename = "eid:AgeVerification")]
-    pub age_verification: Option<AttributeResponder>,
+    pub age_verification: AttributeResponder,
     #[serde(rename = "eid:PlaceVerification")]
-    pub place_verification: Option<AttributeResponder>,
+    pub place_verification: AttributeResponder,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct OperationsRequester {
+    #[serde(rename = "DocumentType")]
+    pub document_type: AttributeRequester,
+    #[serde(rename = "IssuingState")]
+    pub issuing_state: AttributeRequester,
+    #[serde(rename = "DateOfExpiry")]
+    pub date_of_expiry: AttributeRequester,
+    #[serde(rename = "GivenNames")]
+    pub given_names: AttributeRequester,
+    #[serde(rename = "FamilyNames")]
+    pub family_names: AttributeRequester,
+    #[serde(rename = "ArtisticName")]
+    pub artistic_name: AttributeRequester,
+    #[serde(rename = "AcademicTitle")]
+    pub academic_title: AttributeRequester,
+    #[serde(rename = "DateOfBirth")]
+    pub date_of_birth: AttributeRequester,
+    #[serde(rename = "PlaceOfBirth")]
+    pub place_of_birth: AttributeRequester,
+    #[serde(rename = "Nationality")]
+    pub nationality: AttributeRequester,
+    #[serde(rename = "BirthName")]
+    pub birth_name: AttributeRequester,
+    #[serde(rename = "PlaceOfResidence")]
+    pub place_of_residence: AttributeRequester,
+    #[serde(rename = "CommunityID")]
+    pub community_id: Option<AttributeRequester>,
+    #[serde(rename = "ResidencePermitID")]
+    pub residence_permit_id: Option<AttributeRequester>,
+    #[serde(rename = "RestrictedID")]
+    pub restricted_id: AttributeRequester,
+    #[serde(rename = "AgeVerification")]
+    pub age_verification: AttributeRequester,
+    #[serde(rename = "PlaceVerification")]
+    pub place_verification: AttributeRequester,
 }
 
 #[derive(Serialize)]
@@ -174,6 +213,7 @@ pub struct PlaceType {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "UPPERCASE")]
 pub enum AttributeRequester {
     REQUIRED,
     ALLOWED,
@@ -190,7 +230,7 @@ pub enum AttributeSelection {
 pub enum AttributeResponder {
     ALLOWED,
     PROHIBITED,
-    NOTONCHIP   
+    NOTONCHIP,
 }
 // From Technical Guideline TR-03130
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -210,18 +250,23 @@ pub struct ResultMajor {
     pub result_major: String,
 }
 
-#[derive(Serialize, Default)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct Header {}
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
 pub struct Session {
+    #[serde(rename = "ID")]
+    pub id: String,
+}
+
+#[derive(Serialize)]
+pub struct SessionResponse {
     #[serde(rename = "eid:ID")]
     pub id: String,
 }
 
-
 // From section 3.3.12 of the technical guideline TR-03130
-#[derive(PartialEq, Eq, Debug, Serialize)]
+#[derive(PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum LevelOfAssurance {
     Undefined,
     Normal,
@@ -294,7 +339,7 @@ impl fmt::Display for ResultCode {
             ResultCode::InternalError => {
                 "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#internalError"
             }
-            ResultCode::UnknownError(msg) => msg.as_str(), // Custom unknown errors
+            ResultCode::UnknownError(msg) => msg.as_str(),
         };
         write!(f, "{text}")
     }
@@ -310,4 +355,3 @@ impl Display for AttributeRequester {
         write!(f, "{text}")
     }
 }
-

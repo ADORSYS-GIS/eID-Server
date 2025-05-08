@@ -2,7 +2,7 @@ use crate::eid::common::models::Session;
 
 use super::{
     error::GetResultError,
-    model::{GetResultRequest, SoapEnvelope},
+    model::{GetResultRequest, GetResultRequestEnvelope},
 };
 use quick_xml::de::from_str;
 
@@ -48,7 +48,7 @@ use quick_xml::de::from_str;
 /// assert_eq!(req.request_counter, 5);
 /// ```
 pub fn parse_get_result_request(xml: &str) -> Result<GetResultRequest, GetResultError> {
-    let env: SoapEnvelope = from_str(xml)
+    let env: GetResultRequestEnvelope = from_str(xml)
         .map_err(|e| GetResultError::GenericError(format!("XML deserialization failed: {}", e)))?;
 
     let req = env.body.request;
@@ -95,7 +95,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_get_result_request_missing_data() {
+    fn test_parse_get_result_request_missing_request_counter() {
         let xml_data = r#"
         <?xml version="1.0" encoding="UTF-8"?>
         <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:eid="http://bsi.bund.de/eID/">

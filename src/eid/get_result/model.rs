@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::eid::common::models::{
-    EIDTypeResponse, OperationsResponder, PersonalData, ResultMajor, Session, TransactionAttestationResponse
+    EIDTypeResponse, OperationsResponder, PersonalData, ResultMajor, Session,
+    TransactionAttestationResponse,
 };
 
 #[derive(Deserialize, Debug, Clone)]
@@ -32,7 +33,6 @@ pub struct GetResultResponse {
     pub result: ResultMajor,
 }
 
-
 #[derive(Serialize)]
 pub struct FulfilsRequest {
     #[serde(rename = "eid:FulfilsRequest")]
@@ -60,7 +60,7 @@ pub struct GetResultResponseEnvelope {
 
 #[derive(Deserialize)]
 #[serde(rename = "Envelope")]
-pub struct SoapEnvelope {
+pub struct GetResultRequestEnvelope {
     #[serde(rename = "Body")]
     pub body: SoapBody,
 }
@@ -70,6 +70,3 @@ pub struct SoapBody {
     #[serde(rename = "getResultRequest")]
     pub request: GetResultRequest,
 }
-
-
-

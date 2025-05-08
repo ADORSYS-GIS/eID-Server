@@ -27,7 +27,7 @@ use super::{
 /// ```
 pub fn build_get_result_response(response: GetResultResponse) -> Result<String, GetResultError> {
     let envelope = GetResultResponseEnvelope {
-        header: SoapHeader::default(),
+        header: SoapHeader,
         body: GetResultResponseBody {
             get_result_response: response,
         },
@@ -40,8 +40,7 @@ pub fn build_get_result_response(response: GetResultResponse) -> Result<String, 
                     1,
                 );
 
-    // 3) Prepend standard XML declaration
-    Ok(format!(r#"<?xml version="1.0" encoding="UTF-8"?>"#) + &xml_with_ns)
+    Ok(r#"<?xml version="1.0" encoding="UTF-8"?>"#.to_string() + &xml_with_ns)
 }
 
 #[cfg(test)]
@@ -119,11 +118,11 @@ mod tests {
                 nationality: AttributeResponder::ALLOWED,
                 birth_name: AttributeResponder::PROHIBITED,
                 place_of_residence: AttributeResponder::ALLOWED,
-                community_id: Some(AttributeResponder::ALLOWED),
-                residence_permit_id: Some(AttributeResponder::ALLOWED),
+                community_id: AttributeResponder::ALLOWED,
+                residence_permit_id: AttributeResponder::ALLOWED,
                 restricted_id: AttributeResponder::ALLOWED,
-                age_verification: Some(AttributeResponder::ALLOWED),
-                place_verification: Some(AttributeResponder::ALLOWED),
+                age_verification: AttributeResponder::ALLOWED,
+                place_verification: AttributeResponder::ALLOWED,
             },
             transaction_attestation_response: TransactionAttestationResponse {
                 transaction_attestation_format: "http://bsi.bund.de/eID/ExampleAttestationFormat"
@@ -143,65 +142,12 @@ mod tests {
             },
         };
 
+        // Normalize whitespace for comparison
+        let normalize = |s: &str| s.split_whitespace().collect::<String>();
+
         let xml = build_get_result_response(response).expect("Failed to build XML");
+        let xml_file = std::fs::read_to_string("test_data/get_result_response.xml").unwrap();
 
-        // PersonalData
-        assert!(xml.contains("<eid:DocumentType>ID</eid:DocumentType>"));
-        assert!(xml.contains("<eid:IssuingState>D</eid:IssuingState>"));
-        assert!(xml.contains("<eid:DateOfExpiry>2029-10-31</eid:DateOfExpiry>"));
-        assert!(xml.contains("<eid:GivenNames>ERIKA</eid:GivenNames>"));
-        assert!(xml.contains("<eid:FamilyNames>MUSTERMANN</eid:FamilyNames>"));
-
-        // Dates
-        assert!(xml.contains("<eid:DateString>19640812</eid:DateString>"));
-        assert!(xml.contains("<eid:DateValue>1964-08-12</eid:DateValue>"));
-
-        // PlaceOfResidence
-        assert!(xml.contains("<eid:Street>HEIDESTRASSE 17</eid:Street>"));
-        assert!(xml.contains("<eid:City>KÖLN</eid:City>"));
-        assert!(xml.contains("<eid:State/>"));
-        assert!(xml.contains("<eid:ZipCode>51147</eid:ZipCode>"));
-        assert!(xml.contains("<eid:FreetextPlace>BERLIN</eid:FreetextPlace>"));
-        assert!(xml.contains("<eid:Nationality>D</eid:Nationality>"));
-        assert!(xml.contains(
-            "<eid:ID>01A4FB509CEBC6595151A4FB5F9C75C6FE01A4FB59CB655A4FB5F9C75C6FEE</eid:ID>"
-        ));
-        assert!(xml.contains(
-            "<eid:ID2>5C6FE01A4FB59CB655A4FB5F9C75C6FEE01A4FB509CEBC6595151A4FB5F9C7</eid:ID2>"
-        ));
-        // Fulfils*
-        assert!(xml.contains("<eid:FulfilsRequest>true</eid:FulfilsRequest>"));
-
-        // OperationsAllowedByUser document_type and issuing_state
-        assert!(xml.contains("<eid:DocumentType>ALLOWED</eid:DocumentType>"));
-        assert!(xml.contains("<eid:IssuingState>ALLOWED</eid:IssuingState>"));
-
-        // TransactionAttestationResponse
-        assert!(xml.contains(
-            "<eid:TransactionAttestationFormat>http://bsi.bund.de/eID/ExampleAttestationFormat</eid:TransactionAttestationFormat>"
-        ));
-        assert!(xml.contains(
-            "<eid:TransactionAttestationData>V6INOOUsHouL9nYaRwR6RpX5WzccQXv51bIvvpY4Lsbp/VOPvG1ozxQCjo6JOi4xAv9/6b8G2PxaVv8bwdpFR/CN05xsnzxijzfemooKwve3Fl3005OX6dwkVyNQlZxXaWb3eUcYPA\\MEwHSkhzP25ZM/J+CQHHaqLih6JW6wxSvUbuD307sjzkeaMkjJr9tXI9QcUmGmpHBWEWwon56HkWKGL1Dl0XH4\\YuYhKMsTj2yjUJNlLH8OAm9cEX0ptQJlVTMRvNGRk53eUESnfhtQrVSm9bS63v+A9sGPrRlUIquCpcusX1nZe6\\omAzs2tY0S04+s1fNvgHXKmQi24wIdhhbtFPbB2n2j9dAB8xjfGgEcsG3wPMliP6d</eid:TransactionAttestationData>"
-        ));
-
-        // Check all ALLOWED/PROHIBITED entries in OperationsAllowedByUser
-        assert!(xml.contains("<eid:DateOfExpiry>ALLOWED</eid:DateOfExpiry>"));
-        assert!(xml.contains("<eid:GivenNames>ALLOWED</eid:GivenNames>"));
-        assert!(xml.contains("<eid:FamilyNames>ALLOWED</eid:FamilyNames>"));
-        assert!(xml.contains("<eid:DateOfBirth>ALLOWED</eid:DateOfBirth>"));
-        assert!(xml.contains("<eid:PlaceOfBirth>ALLOWED</eid:PlaceOfBirth>"));
-        assert!(xml.contains("<eid:Nationality>ALLOWED</eid:Nationality>"));
-        assert!(xml.contains("<eid:BirthName>NOTONCHIP</eid:BirthName>"));
-        assert!(xml.contains("<eid:PlaceOfResidence>ALLOWED</eid:PlaceOfResidence>"));
-        assert!(xml.contains("<eid:RestrictedID>ALLOWED</eid:RestrictedID>"));
-        assert!(xml.contains("<eid:AgeVerification>ALLOWED</eid:AgeVerification>"));
-        assert!(xml.contains("<eid:PlaceVerification>ALLOWED</eid:PlaceVerification>"));
-
-        // LevelOfAssurance & EIDTypeResponse & Result
-        assert!(xml.contains("<eid:LevelOfAssuranceResponse>http://bsi.bund.de/eID/LoA/hoch</eid:LevelOfAssuranceResponse>"));
-        assert!(xml.contains("<eid:CardCertified>USED</eid:CardCertified>"));
-        assert!(xml.contains(
-            "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ResultMajor>"
-        ));
+        assert_eq!(normalize(&xml), normalize(&xml_file));
     }
 }

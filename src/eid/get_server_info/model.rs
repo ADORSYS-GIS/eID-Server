@@ -41,9 +41,9 @@ pub struct OperationsSelector {
     #[serde(rename = "eid:PlaceOfResidence")]
     pub place_of_residence: AttributeSelection,
     #[serde(rename = "eid:CommunityID")]
-    pub community_id: AttributeSelection,
-    #[serde(rename = "eid:ResidencePermitID")]
-    pub residence_permit: AttributeSelection,
+    pub community_id: Option<AttributeSelection>,
+    #[serde(rename = "eid:ResidencePermitI")]
+    pub residence_permit_i: Option<AttributeSelection>,
     #[serde(rename = "eid:RestrictedID")]
     pub restricted_id: AttributeSelection,
     #[serde(rename = "eid:AgeVerification")]
@@ -61,7 +61,6 @@ pub struct GetServerInfoEnvelope {
     #[serde(rename = "soapenv:Body")]
     pub body: GetServerInfoBody,
 }
-
 
 #[derive(Serialize)]
 #[serde(rename = "soapenv:Body")]
