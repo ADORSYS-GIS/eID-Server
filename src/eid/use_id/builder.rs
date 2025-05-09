@@ -1,60 +1,52 @@
-use quick_xml::Writer;
-use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
-use std::io::Cursor;
+use quick_xml::se::to_string;
 
-use super::model::UseIDResponse;
+use crate::eid::common::models::Header;
 
-/// Builds a SOAP XML envelope for the `useIDResponse` using `quick-xml` library.
+use super::{
+    error::UseIdError,
+    model::{UseIDResponse, UseIdBody, UseIdEnvelope},
+};
+
+/// Serializes a `UseIDResponse` into a complete SOAP XML envelope using `quick-xml`’s
+/// Serde-based serializer, injecting the required namespaces and XML declaration.
 ///
-/// This function constructs a well-formed SOAP XML response for the `UseIDResponse` struct, which includes
-/// the necessary envelope, header, body, and session data required for eID authentication. It uses the
-/// `quick-xml` library for efficient XML generation and writes the XML to a `Writer`, which is then converted
-/// into a UTF-8 string for easy consumption.
+/// # Parameters
+/// - `response`: Reference to a [`UseIDResponse`] struct containing:
+///   - `session`: the session ID to echo back.
+///   - `ecard_server_address`: optional eCard server address URL.
+///   - `psk`: pre-shared key (`id` and `key`) for the session.
+///   - `result`: numeric result code.
 ///
-/// ## Parameters
-/// - `response`: The `UseIDResponse` struct containing the data to be included in the XML response. This struct
-///   holds the session data, optional eCard server address, PSK (Pre-Shared Key), and result status for the response.
+/// # Returns
+/// - `Ok(String)`: A UTF-8 XML document string starting with
+///   `<?xml version="1.0" encoding="UTF-8"?>` and containing the SOAP envelope,
+///   header, body, and `<eid:useIDResponse>` element with all nested fields.
+/// - `Err(UseIdError)`: If serialization with `quick-xml` fails or if the final
+///   namespace injection step encounters an error.
 ///
-/// ## Returns
-/// - `Result<String, std::io::Error>`: A result containing the generated SOAP XML response as a `String` on success,
-///   or an `io::Error` if an error occurs during the XML generation.
-///
-/// ## XML Structure
-/// The resulting SOAP XML will have the following structure:
+/// # XML Structure
 ///
 /// ```xml
-/// <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:eid="http://bsi.bund.de/eID/" xmlns:dss="urn:oasis:names:tc:dss:1.0:core:schema">
-///     <soapenv:Header/>
-///     <soapenv:Body>
-///         <eid:useIDResponse>
-///             <eid:Session>
-///                 <eid:ID>...</eid:ID>
-///             </eid:Session>
-///             <eid:eCardServerAddress>...</eid:eCardServerAddress> <!-- optional -->
-///             <eid:PSK>
-///                 <eid:ID>...</eid:ID>
-///                 <eid:Key>...</eid:Key>
-///             </eid:PSK>
-///             <dss:Result>
-///                 <ResultMajor>...</ResultMajor>
-///             </dss:Result>
-///         </eid:useIDResponse>
-///     </soapenv:Body>
+/// <?xml version="1.0" encoding="UTF-8"?>
+/// <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+///                   xmlns:eid="http://bsi.bund.de/eID/"
+///                   xmlns:dss="urn:oasis:names:tc:dss:1.0:core:schema">
+///   <soapenv:Header/>
+///   <soapenv:Body>
+///     <eid:useIDResponse>
+///       <eid:Session><eid:ID>…</eid:ID></eid:Session>
+///       <eid:eCardServerAddress>…</eid:eCardServerAddress>  <!-- optional -->
+///       <eid:PSK>
+///         <eid:ID>…</eid:ID>
+///         <eid:Key>…</eid:Key>
+///       </eid:PSK>
+///       <dss:Result><ResultMajor>…</ResultMajor></dss:Result>
+///     </eid:useIDResponse>
+///   </soapenv:Body>
 /// </soapenv:Envelope>
 /// ```
 ///
-/// ## Details
-/// - **Envelope**: The `soapenv:Envelope` element is the root of the SOAP message and contains namespaces for
-///   `soapenv`, `eid`, and `dss`.
-/// - **Header**: The header is empty (`<soapenv:Header/>`), as required by the protocol.
-/// - **Body**: The body contains the main response content under the `eid:useIDResponse` tag. It includes:
-///   - `eid:Session`: Contains the `eid:ID` (Session ID).
-///   - `eid:eCardServerAddress`: An optional element representing the address of the eCard server, if provided.
-///   - `eid:PSK`: Contains the Pre-Shared Key information with `eid:ID` and `eid:Key`.
-///   - `dss:Result`: Contains the result major code for the response status.
-///
-/// ## Usage Example
-/// Here's an example of how to use this function to generate a SOAP XML response:
+/// # Example
 ///
 /// ```rust
 /// let response = UseIDResponse {
@@ -63,81 +55,45 @@ use super::model::UseIDResponse;
 ///     psk: PSK { id: "psk123".to_string(), key: "secretkey".to_string() },
 ///     result: 0,
 /// };
-/// let soap_response = build_use_id_response(&response)?;
-/// println!("{}", soap_response);
+/// let xml = build_use_id_response(&response)?;
+/// println!("{}", xml);
 /// ```
 ///
-/// ## Error Handling
-/// This function may return an `std::io::Error` if any of the `write_event` operations fail.
-/// Ensure that the `response` data is properly formatted and valid for the SOAP structure.
-///
+/// # Errors
+/// Returns [`UseIdError::GenericError`] if the underlying `to_string()`
+/// call fails or if namespace injection cannot be applied.
 #[allow(dead_code)]
-pub fn build_use_id_response(response: &UseIDResponse) -> Result<String, std::io::Error> {
-    let mut writer = Writer::new(Cursor::new(Vec::new()));
+pub fn build_use_id_response(response: &UseIDResponse) -> Result<String, UseIdError> {
+    let envelope = UseIdEnvelope {
+        header: Header::default(),
+        body: UseIdBody { response },
+    };
 
-    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
+    let xml_inner = to_string(&envelope)
+        .map_err(|e| UseIdError::GenericError(format!("Failed to build XML message: {}", e)))?;
 
-    // Envelope start
-    let mut envelope = BytesStart::new("soapenv:Envelope");
-    envelope.push_attribute(("xmlns:soapenv", "http://schemas.xmlsoap.org/soap/envelope/"));
-    envelope.push_attribute(("xmlns:eid", "http://bsi.bund.de/eID/"));
-    envelope.push_attribute(("xmlns:dss", "urn:oasis:names:tc:dss:1.0:core:schema"));
-    writer.write_event(Event::Start(envelope))?;
+    let xml_with_ns = xml_inner.replacen(
+        "<soapenv:Envelope",
+        "<soapenv:Envelope \
+         xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" \
+         xmlns:eid=\"http://bsi.bund.de/eID/\" \
+         xmlns:dss=\"urn:oasis:names:tc:dss:1.0:core:schema\"",
+        1,
+    );
 
-    // Header
-    writer.write_event(Event::Empty(BytesStart::new("soapenv:Header")))?;
-
-    // Body
-    writer.write_event(Event::Start(BytesStart::new("soapenv:Body")))?;
-
-    writer.write_event(Event::Start(BytesStart::new("eid:useIDResponse")))?;
-
-    // Session
-    writer.write_event(Event::Start(BytesStart::new("eid:Session")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:ID")))?;
-    writer.write_event(Event::Text(BytesText::new(response.session.as_str())))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:ID")))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:Session")))?;
-
-    // eCardServerAddress (optional)
-    if let Some(address) = &response.ecard_server_address {
-        writer.write_event(Event::Start(BytesStart::new("eid:eCardServerAddress")))?;
-        writer.write_event(Event::Text(BytesText::new(address.as_str())))?;
-        writer.write_event(Event::End(BytesEnd::new("eid:eCardServerAddress")))?;
-    }
-
-    // PSK
-    writer.write_event(Event::Start(BytesStart::new("eid:PSK")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:ID")))?;
-    writer.write_event(Event::Text(BytesText::new(response.psk.id.as_str())))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:ID")))?;
-    writer.write_event(Event::Start(BytesStart::new("eid:Key")))?;
-    writer.write_event(Event::Text(BytesText::new(response.psk.key.as_str())))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:Key")))?;
-    writer.write_event(Event::End(BytesEnd::new("eid:PSK")))?;
-
-    // Result
-    writer.write_event(Event::Start(BytesStart::new("dss:Result")))?;
-    writer.write_event(Event::Start(BytesStart::new("ResultMajor")))?;
-    writer.write_event(Event::Text(BytesText::new(
-        format!("{}", response.result).as_str(),
-    )))?;
-    writer.write_event(Event::End(BytesEnd::new("ResultMajor")))?;
-    writer.write_event(Event::End(BytesEnd::new("dss:Result")))?;
-
-    writer.write_event(Event::End(BytesEnd::new("eid:useIDResponse")))?;
-
-    writer.write_event(Event::End(BytesEnd::new("soapenv:Body")))?;
-    writer.write_event(Event::End(BytesEnd::new("soapenv:Envelope")))?;
-
-    let result = writer.into_inner().into_inner();
-    Ok(String::from_utf8(result).expect("XML should be UTF-8"))
+    Ok(format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>{}",
+        xml_with_ns
+    ))
 }
 
 #[cfg(test)]
 mod tests {
 
-    use crate::eid::{common::models::ResultCode, use_id::model::Psk};
+    use crate::eid::{
+        common::models::{ResultCode, ResultMajor, SessionResponse},
+        use_id::model::Psk,
+    };
 
     use super::*;
 
@@ -145,42 +101,28 @@ mod tests {
     fn test_build_use_id_response_basic() {
         // Arrange
         let response = UseIDResponse {
-            session: "1234567890abcdef1234567890abcdef".to_string(),
+            session: SessionResponse {
+                id: "1234567890abcdef1234567890abcdef".to_string(),
+            },
             psk: Psk {
                 id: "0987654321abcdef1234567890abcdef".to_string(),
                 key: "fedcba0987654321fedcba0987654321".to_string(),
             },
-            result: ResultCode::Ok,
+            result: ResultMajor {
+                result_major: ResultCode::Ok.to_string(),
+            },
             ecard_server_address: None,
         };
 
         let generated_xml = build_use_id_response(&response).expect("Failed to build XML");
 
-        let expected_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:eid="http://bsi.bund.de/eID/"
-                  xmlns:dss="urn:oasis:names:tc:dss:1.0:core:schema">
-    <soapenv:Header />
-    <soapenv:Body>
-        <eid:useIDResponse>
-            <eid:Session>
-                <eid:ID>1234567890abcdef1234567890abcdef</eid:ID>
-            </eid:Session>
-            <eid:PSK>
-                <eid:ID>0987654321abcdef1234567890abcdef</eid:ID>
-                <eid:Key>fedcba0987654321fedcba0987654321</eid:Key>
-            </eid:PSK>
-            <dss:Result>
-                <ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ResultMajor>
-            </dss:Result>
-        </eid:useIDResponse>
-    </soapenv:Body>
-</soapenv:Envelope>"#;
+        let expected_xml = std::fs::read_to_string("test_data/use_id_response.xml")
+            .expect("Failed to read expected XML file");
 
         // Normalize whitespace for comparison (optional but safer)
         let normalize = |s: &str| s.split_whitespace().collect::<String>();
 
         // Assert
-        assert_eq!(normalize(&generated_xml), normalize(expected_xml));
+        assert_eq!(normalize(&generated_xml), normalize(&expected_xml));
     }
 }

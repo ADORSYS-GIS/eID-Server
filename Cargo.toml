@@ -18,6 +18,7 @@ tokio = { version = "1", features = ["full"] }
 
 # Serialization/Deserialization
 serde = { version = "1", features = ["derive"] }
+quick-xml = { version = "0.37", features = ["serialize"] }
 
 # Configuration
 config = "0.15"
@@ -27,7 +28,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Utilities
-quick-xml = "0.37"
 color-eyre = "0.6"
 
 [dev-dependencies]
