@@ -9,10 +9,14 @@ use rand::{Rng, distr::Alphanumeric};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
-use uuid::Uuid;
 
-use crate::domain::eid::models::useid::{
-    Psk, ResultStatus, Session, UseIDRequest, UseIDResponse, soap,
+use crate::eid::common::models::{
+    AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
+};
+use crate::eid::use_id::{
+    builder::build_use_id_response,
+    model::{Psk, UseIDRequest, UseIDResponse},
+    parser::parse_use_id_request,
 };
 
 /// Configuration for the eID Service
@@ -62,44 +66,43 @@ impl EIDService {
 
     /// Handle a useID request according to TR-03130
     pub async fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse> {
-        // Validate the request
-        if request.use_operations.use_operations.is_empty() {
+        // Validate the request: Check if any operations are REQUIRED
+        let required_operations = Self::get_required_operations(&request._use_operations);
+        if required_operations.is_empty() {
             return Ok(UseIDResponse {
-                result: ResultStatus::error(
-                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/parameterError",
-                    Some("UseOperations must contain at least one operation"),
-                ),
-                session: Session {
-                    session_identifier: "".to_string(),
-                    timeout: "0".to_string(),
+                result: ResultMajor {
+                    result_major: ResultCode::InvalidRequest.to_string(),
                 },
+                session: SessionResponse { id: "".to_string() },
                 ecard_server_address: None,
-                psk: None,
+                psk: Psk {
+                    id: "".to_string(),
+                    key: "".to_string(),
+                },
             });
         }
 
         // Check if we've reached the maximum number of sessions
         if self.sessions.read().await.len() >= self.config.max_sessions {
             return Ok(UseIDResponse {
-                result: ResultStatus::error(
-                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/tooManySessions",
-                    Some("Maximum number of sessions reached"),
-                ),
-                session: Session {
-                    session_identifier: "".to_string(),
-                    timeout: "0".to_string(),
+                result: ResultMajor {
+                    result_major: ResultCode::TooManyOpenSessions.to_string(),
                 },
+                session: SessionResponse { id: "".to_string() },
                 ecard_server_address: None,
-                psk: None,
+                psk: Psk {
+                    id: "".to_string(),
+                    key: "".to_string(),
+                },
             });
         }
 
         // Generate a session ID
-        let session_id = Uuid::new_v4().to_string();
+        let session_id = Utc::now().to_string();
 
         // Generate or use provided PSK
-        let psk = match &request.psk {
-            Some(psk) => psk.value.clone(),
+        let psk = match &request._psk {
+            Some(psk) => psk.key.clone(),
             None => self.generate_psk(),
         };
 
@@ -111,12 +114,7 @@ impl EIDService {
             id: session_id.clone(),
             expiry,
             psk: Some(psk.clone()),
-            operations: request
-                .use_operations
-                .use_operations
-                .iter()
-                .map(|op| op.id.clone())
-                .collect(),
+            operations: required_operations,
         };
 
         // Store the session
@@ -138,13 +136,17 @@ impl EIDService {
 
         // Build response
         Ok(UseIDResponse {
-            result: ResultStatus::success(),
-            session: Session {
-                session_identifier: session_id,
-                timeout: expiry.to_rfc3339(),
+            result: ResultMajor {
+                result_major: ResultCode::Ok.to_string(),
+            },
+            session: SessionResponse {
+                id: session_id.clone(),
             },
             ecard_server_address: self.config.ecard_server_address.clone(),
-            psk: Some(Psk { value: psk }),
+            psk: Psk {
+                id: session_id,
+                key: psk,
+            },
         })
     }
 
@@ -183,6 +185,67 @@ impl EIDService {
             .find(|s| s.id == session_id && s.expiry > now)
             .cloned()
     }
+
+    /// Helper function to extract required operations from OperationsRequester
+    fn get_required_operations(ops: &OperationsRequester) -> Vec<String> {
+        let mut required = Vec::new();
+        if ops.document_type == AttributeRequester::REQUIRED {
+            required.push("DocumentType".to_string());
+        }
+        if ops.issuing_state == AttributeRequester::REQUIRED {
+            required.push("IssuingState".to_string());
+        }
+        if ops.date_of_expiry == AttributeRequester::REQUIRED {
+            required.push("DateOfExpiry".to_string());
+        }
+        if ops.given_names == AttributeRequester::REQUIRED {
+            required.push("GivenNames".to_string());
+        }
+        if ops.family_names == AttributeRequester::REQUIRED {
+            required.push("FamilyNames".to_string());
+        }
+        if ops.artistic_name == AttributeRequester::REQUIRED {
+            required.push("ArtisticName".to_string());
+        }
+        if ops.academic_title == AttributeRequester::REQUIRED {
+            required.push("AcademicTitle".to_string());
+        }
+        if ops.date_of_birth == AttributeRequester::REQUIRED {
+            required.push("DateOfBirth".to_string());
+        }
+        if ops.place_of_birth == AttributeRequester::REQUIRED {
+            required.push("PlaceOfBirth".to_string());
+        }
+        if ops.nationality == AttributeRequester::REQUIRED {
+            required.push("Nationality".to_string());
+        }
+        if ops.birth_name == AttributeRequester::REQUIRED {
+            required.push("BirthName".to_string());
+        }
+        if ops.place_of_residence == AttributeRequester::REQUIRED {
+            required.push("PlaceOfResidence".to_string());
+        }
+        if let Some(community_id) = &ops.community_id {
+            if *community_id == AttributeRequester::REQUIRED {
+                required.push("CommunityID".to_string());
+            }
+        }
+        if let Some(residence_permit_id) = &ops.residence_permit_id {
+            if *residence_permit_id == AttributeRequester::REQUIRED {
+                required.push("ResidencePermitID".to_string());
+            }
+        }
+        if ops.restricted_id == AttributeRequester::REQUIRED {
+            required.push("RestrictedID".to_string());
+        }
+        if ops.age_verification == AttributeRequester::REQUIRED {
+            required.push("AgeVerification".to_string());
+        }
+        if ops.place_verification == AttributeRequester::REQUIRED {
+            required.push("PlaceVerification".to_string());
+        }
+        required
+    }
 }
 
 pub async fn use_id_handler(
@@ -203,7 +266,7 @@ pub async fn use_id_handler(
     }
 
     // Parse the SOAP request
-    let use_id_request = match soap::deserialize_soap_request(&body) {
+    let use_id_request = match parse_use_id_request(&body) {
         Ok(request) => request,
         Err(err) => {
             error!("Failed to parse SOAP request: {}", err);
@@ -216,8 +279,8 @@ pub async fn use_id_handler(
     };
 
     debug!(
-        "Received UseID request with {} operations",
-        use_id_request.use_operations.use_operations.len()
+        "Received UseID request with {} required operations",
+        EIDService::get_required_operations(&use_id_request._use_operations).len()
     );
 
     // Process the request
@@ -234,7 +297,7 @@ pub async fn use_id_handler(
     };
 
     // Serialize the response
-    match soap::serialize_soap_response(response) {
+    match build_use_id_response(&response) {
         Ok(soap_response) => {
             debug!("Successfully generated SOAP response");
             (
@@ -246,11 +309,11 @@ pub async fn use_id_handler(
         }
         Err(err) => {
             error!("Failed to serialize SOAP response: {}", err);
-            (
+            return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Failed to create SOAP response".to_string(),
             )
-                .into_response()
+                .into_response();
         }
     }
 }
@@ -278,23 +341,17 @@ fn create_soap_response_headers() -> HeaderMap {
     headers
 }
 
-// ---- Tests Section ----
-
 #[cfg(test)]
 mod tests {
-    use crate::domain::eid::models::useid::{
-        SoapBodyResponse, SoapEnvelope, UseOperation, UseOperations,
-    };
-
     use super::*;
-
+    use crate::eid::common::models::{AttributeRequester, OperationsRequester};
+    use crate::eid::use_id::model::{AgeVerificationRequest, PlaceVerificationRequest};
     use axum::{
         body::Body,
         http::{self, Request, StatusCode},
     };
     use http_body_util;
-    use quick_xml::de::from_str;
-    use std::sync::Arc;
+    use quick_xml::{Reader, events::Event};
 
     fn create_test_service() -> EIDService {
         EIDService::new(EIDServiceConfig {
@@ -303,35 +360,47 @@ mod tests {
             ecard_server_address: Some("https://test.eid.example.com/ecard".to_string()),
         })
     }
-
     #[tokio::test]
     async fn test_handle_use_id_empty_operations() {
         let service = create_test_service();
         let request = UseIDRequest {
-            use_operations: UseOperations {
-                use_operations: vec![],
+            _use_operations: OperationsRequester {
+                document_type: AttributeRequester::ALLOWED,
+                issuing_state: AttributeRequester::ALLOWED,
+                date_of_expiry: AttributeRequester::ALLOWED,
+                given_names: AttributeRequester::ALLOWED,
+                family_names: AttributeRequester::ALLOWED,
+                artistic_name: AttributeRequester::ALLOWED,
+                academic_title: AttributeRequester::ALLOWED,
+                date_of_birth: AttributeRequester::ALLOWED,
+                place_of_birth: AttributeRequester::ALLOWED,
+                nationality: AttributeRequester::ALLOWED,
+                birth_name: AttributeRequester::ALLOWED,
+                place_of_residence: AttributeRequester::ALLOWED,
+                community_id: None,
+                residence_permit_id: None,
+                restricted_id: AttributeRequester::ALLOWED,
+                age_verification: AttributeRequester::ALLOWED,
+                place_verification: AttributeRequester::ALLOWED,
             },
-            age_verification_request: None,
-            place_verification_request: None,
-            transaction_info: None,
-            transaction_attestation_request: None,
-            level_of_assurance_request: None,
-            eid_type_request: None,
-            psk: None,
+            _age_verification: AgeVerificationRequest { _age: 18 },
+            _place_verification: PlaceVerificationRequest {
+                _community_id: "".to_string(),
+            },
+            _transaction_info: None,
+            _transaction_attestation_request: None,
+            _level_of_assurance: None,
+            _eid_type_request: None,
+            _psk: None,
         };
 
         let response = service.handle_use_id(request).await.unwrap();
 
         assert_eq!(
             response.result.result_major,
-            "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error"
+            ResultCode::InvalidRequest.to_string()
         );
-        assert_eq!(
-            response.result.result_minor.unwrap(),
-            "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/parameterError"
-        );
-        assert_eq!(response.session.session_identifier, "");
-        assert_eq!(response.session.timeout, "0");
+        assert_eq!(response.session.id, "");
     }
 
     #[tokio::test]
@@ -341,47 +410,75 @@ mod tests {
         // Fill up sessions
         for _ in 0..10 {
             let request = UseIDRequest {
-                use_operations: UseOperations {
-                    use_operations: vec![UseOperation {
-                        id: "test".to_string(),
-                    }],
+                _use_operations: OperationsRequester {
+                    document_type: AttributeRequester::REQUIRED,
+                    issuing_state: AttributeRequester::ALLOWED,
+                    date_of_expiry: AttributeRequester::ALLOWED,
+                    given_names: AttributeRequester::ALLOWED,
+                    family_names: AttributeRequester::ALLOWED,
+                    artistic_name: AttributeRequester::ALLOWED,
+                    academic_title: AttributeRequester::ALLOWED,
+                    date_of_birth: AttributeRequester::ALLOWED,
+                    place_of_birth: AttributeRequester::ALLOWED,
+                    nationality: AttributeRequester::ALLOWED,
+                    birth_name: AttributeRequester::ALLOWED,
+                    place_of_residence: AttributeRequester::ALLOWED,
+                    community_id: None,
+                    residence_permit_id: None,
+                    restricted_id: AttributeRequester::ALLOWED,
+                    age_verification: AttributeRequester::ALLOWED,
+                    place_verification: AttributeRequester::ALLOWED,
                 },
-                age_verification_request: None,
-                place_verification_request: None,
-                transaction_info: None,
-                transaction_attestation_request: None,
-                level_of_assurance_request: None,
-                eid_type_request: None,
-                psk: None,
+                _age_verification: AgeVerificationRequest { _age: 18 },
+                _place_verification: PlaceVerificationRequest {
+                    _community_id: "".to_string(),
+                },
+                _transaction_info: None,
+                _transaction_attestation_request: None,
+                _level_of_assurance: None,
+                _eid_type_request: None,
+                _psk: None,
             };
             service.handle_use_id(request).await.unwrap();
         }
 
         // Try one more request
         let request = UseIDRequest {
-            use_operations: UseOperations {
-                use_operations: vec![UseOperation {
-                    id: "test".to_string(),
-                }],
+            _use_operations: OperationsRequester {
+                document_type: AttributeRequester::REQUIRED,
+                issuing_state: AttributeRequester::ALLOWED,
+                date_of_expiry: AttributeRequester::ALLOWED,
+                given_names: AttributeRequester::ALLOWED,
+                family_names: AttributeRequester::ALLOWED,
+                artistic_name: AttributeRequester::ALLOWED,
+                academic_title: AttributeRequester::ALLOWED,
+                date_of_birth: AttributeRequester::ALLOWED,
+                place_of_birth: AttributeRequester::ALLOWED,
+                nationality: AttributeRequester::ALLOWED,
+                birth_name: AttributeRequester::ALLOWED,
+                place_of_residence: AttributeRequester::ALLOWED,
+                community_id: None,
+                residence_permit_id: None,
+                restricted_id: AttributeRequester::ALLOWED,
+                age_verification: AttributeRequester::ALLOWED,
+                place_verification: AttributeRequester::ALLOWED,
             },
-            age_verification_request: None,
-            place_verification_request: None,
-            transaction_info: None,
-            transaction_attestation_request: None,
-            level_of_assurance_request: None,
-            eid_type_request: None,
-            psk: None,
+            _age_verification: AgeVerificationRequest { _age: 18 },
+            _place_verification: PlaceVerificationRequest {
+                _community_id: "".to_string(),
+            },
+            _transaction_info: None,
+            _transaction_attestation_request: None,
+            _level_of_assurance: None,
+            _eid_type_request: None,
+            _psk: None,
         };
 
         let response = service.handle_use_id(request).await.unwrap();
 
         assert_eq!(
             response.result.result_major,
-            "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error"
-        );
-        assert_eq!(
-            response.result.result_minor.unwrap(),
-            "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/tooManySessions"
+            ResultCode::TooManyOpenSessions.to_string()
         );
     }
 
@@ -389,29 +486,45 @@ mod tests {
     async fn test_session_cleanup() {
         let config = EIDServiceConfig {
             max_sessions: 10,
-            session_timeout_minutes: -1, // Expired immediately
+            session_timeout_minutes: -1,
             ecard_server_address: None,
         };
         let service = EIDService::new(config);
 
         // Create a session
         let request = UseIDRequest {
-            use_operations: UseOperations {
-                use_operations: vec![UseOperation {
-                    id: "test".to_string(),
-                }],
+            _use_operations: OperationsRequester {
+                document_type: AttributeRequester::REQUIRED,
+                issuing_state: AttributeRequester::ALLOWED,
+                date_of_expiry: AttributeRequester::ALLOWED,
+                given_names: AttributeRequester::ALLOWED,
+                family_names: AttributeRequester::ALLOWED,
+                artistic_name: AttributeRequester::ALLOWED,
+                academic_title: AttributeRequester::ALLOWED,
+                date_of_birth: AttributeRequester::ALLOWED,
+                place_of_birth: AttributeRequester::ALLOWED,
+                nationality: AttributeRequester::ALLOWED,
+                birth_name: AttributeRequester::ALLOWED,
+                place_of_residence: AttributeRequester::ALLOWED,
+                community_id: None,
+                residence_permit_id: None,
+                restricted_id: AttributeRequester::ALLOWED,
+                age_verification: AttributeRequester::ALLOWED,
+                place_verification: AttributeRequester::ALLOWED,
             },
-            age_verification_request: None,
-            place_verification_request: None,
-            transaction_info: None,
-            transaction_attestation_request: None,
-            level_of_assurance_request: None,
-            eid_type_request: None,
-            psk: None,
+            _age_verification: AgeVerificationRequest { _age: 18 },
+            _place_verification: PlaceVerificationRequest {
+                _community_id: "".to_string(),
+            },
+            _transaction_info: None,
+            _transaction_attestation_request: None,
+            _level_of_assurance: None,
+            _eid_type_request: None,
+            _psk: None,
         };
         let response = service.handle_use_id(request).await.unwrap();
 
-        let session_id = response.session.session_identifier;
+        let session_id = response.session.id;
         assert!(!session_id.is_empty());
 
         // Clean up
@@ -431,25 +544,49 @@ mod tests {
     }
 
     fn create_sample_soap_request() -> String {
-        let request = UseIDRequest {
-            use_operations: UseOperations {
-                use_operations: vec![UseOperation {
-                    id: "test_operation".to_string(),
-                }],
-            },
-            age_verification_request: None,
-            place_verification_request: None,
-            transaction_info: None,
-            transaction_attestation_request: None,
-            level_of_assurance_request: None,
-            eid_type_request: None,
-            psk: Some(Psk {
-                value: "test_psk".to_string(),
-            }),
-        };
-
-        let envelope = SoapEnvelope::new_request(request);
-        quick_xml::se::to_string(&envelope).expect("Failed to serialize SOAP request")
+        r#"
+        <?xml version="1.0" encoding="UTF-8"?>
+        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:eid="http://bsi.bund.de/eID/">
+            <soapenv:Body>
+                <useIDRequest>
+                    <UseOperations>
+                        <eid:DocumentType>REQUIRED</eid:DocumentType>
+                        <eid:IssuingState>REQUIRED</eid:IssuingState>
+                        <eid:DateOfExpiry>REQUIRED</eid:DateOfExpiry>
+                        <eid:GivenNames>REQUIRED</eid:GivenNames>
+                        <eid:FamilyNames>REQUIRED</eid:FamilyNames>
+                        <eid:ArtisticName>ALLOWED</eid:ArtisticName>
+                        <eid:AcademicTitle>ALLOWED</eid:AcademicTitle>
+                        <eid:DateOfBirth>REQUIRED</eid:DateOfBirth>
+                        <eid:PlaceOfBirth>REQUIRED</eid:PlaceOfBirth>
+                        <eid:Nationality>REQUIRED</eid:Nationality>
+                        <eid:BirthName>REQUIRED</eid:BirthName>
+                        <eid:PlaceOfResidence>REQUIRED</eid:PlaceOfResidence>
+                        <eid:CommunityID>PROHIBITED</eid:CommunityID>
+                        <eid:ResidencePermitI>PROHIBITED</eid:ResidencePermitI>
+                        <eid:RestrictedID>REQUIRED</eid:RestrictedID>
+                        <eid:AgeVerification>REQUIRED</eid:AgeVerification>
+                        <eid:PlaceVerification>REQUIRED</eid:PlaceVerification>
+                    </UseOperations>
+                    <AgeVerificationRequest>
+                        <eid:Age>18</eid:Age>
+                    </AgeVerificationRequest>
+                    <eid:PlaceVerificationRequest>
+                        <eid:CommunityID>027605</eid:CommunityID>
+                    </eid:PlaceVerificationRequest>
+                    <eid:TransactionAttestationRequest>
+                        <eid:TransactionAttestationFormat>http://bsi.bund.de/eID/ExampleAttestationFormat</eid:TransactionAttestationFormat>
+                        <eid:TransactionContext>id599456-df</eid:TransactionContext>
+                    </eid:TransactionAttestationRequest>
+                    <eid:LevelOfAssuranceRequest>http://bsi.bund.de/eID/LoA/hoch</eid:LevelOfAssuranceRequest>
+                    <eid:EIDTypeRequest>
+                        <eid:SECertified>ALLOWED</eid:SECertified>
+                        <eid:SEEndorsed>ALLOWED</eid:SEEndorsed>
+                    </eid:EIDTypeRequest>
+                </useIDRequest>
+            </soapenv:Body>
+        </soapenv:Envelope>
+        "#.to_string()
     }
 
     #[tokio::test]
@@ -479,8 +616,19 @@ mod tests {
         .await
         .into_response();
 
-        assert_eq!(response.status(), StatusCode::OK);
+        // Check status and print debug info if not OK
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = http_body_util::BodyExt::collect(response.into_body())
+                .await
+                .unwrap()
+                .to_bytes();
+            let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+            eprintln!("Response status: {}, body: {}", status, body_str);
+            panic!("Expected 200 OK, got {}", status);
+        }
 
+        // Proceed with remaining assertions
         let content_type = response
             .headers()
             .get("content-type")
@@ -492,36 +640,58 @@ mod tests {
             .unwrap()
             .to_bytes();
         let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
-        let soap_response: SoapEnvelope<SoapBodyResponse> = from_str(&body_str).unwrap();
 
-        assert_eq!(
-            soap_response
-                .body
-                .content
-                .use_id_response
-                .result
-                .result_major,
-            "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok"
-        );
-        assert!(
-            !soap_response
-                .body
-                .content
-                .use_id_response
-                .session
-                .session_identifier
-                .is_empty()
-        );
-        assert_eq!(
-            soap_response
-                .body
-                .content
-                .use_id_response
-                .psk
-                .unwrap()
-                .value,
-            "test_psk"
-        );
+        // Parse the XML manually to extract required fields
+        let mut reader = Reader::from_str(&body_str);
+        reader.config_mut().trim_text(true);
+        let mut buf = Vec::new();
+        let mut result_major = None;
+        let mut session_id = None;
+        let mut psk_key = None;
+        let mut current_tag = String::new();
+
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(e)) => {
+                    current_tag = String::from_utf8(e.name().as_ref().to_vec()).unwrap();
+                }
+                Ok(Event::Text(e)) => {
+                    let text = e.unescape().unwrap().into_owned();
+                    match current_tag.as_str() {
+                        "ResultMajor" => {
+                            // Map the response URI to ResultCode::Ok
+                            if text == "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok" {
+                                result_major = Some(ResultCode::Ok.to_string());
+                            } else {
+                                result_major = Some(text);
+                            }
+                        }
+                        "eid:ID" => {
+                            if psk_key.is_none() {
+                                // Assume eid:ID under eid:Session
+                                session_id = Some(text);
+                            }
+                        }
+                        "eid:Key" => psk_key = Some(text),
+                        _ => {}
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(e) => panic!(
+                    "Error parsing XML at position {}: {:?}",
+                    reader.buffer_position(),
+                    e
+                ),
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        // Verify the extracted fields
+        assert_eq!(result_major, Some(ResultCode::Ok.to_string()));
+        assert!(session_id.is_some() && !session_id.unwrap().is_empty());
+        // Since request omits Psk, handler generates a random 32-char PSK
+        assert!(psk_key.is_some() && psk_key.unwrap().len() == 32);
     }
 
     #[tokio::test]
