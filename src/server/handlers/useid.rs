@@ -309,11 +309,11 @@ pub async fn use_id_handler(
         }
         Err(err) => {
             error!("Failed to serialize SOAP response: {}", err);
-            return (
+            (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Failed to create SOAP response".to_string(),
             )
-                .into_response();
+                .into_response()
         }
     }
 }
