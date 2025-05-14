@@ -94,4 +94,41 @@ mod tests {
             .expect("Failed to read expected XML file");
         assert_eq!(normalize(&xml), normalize(&expected_xml));
     }
+
+    #[test]
+    fn test_build_get_server_info_response_minimal() {
+        let response = GetServerInfoResponse {
+            server_version: VersionType {
+                version_string: "1.0.0".to_string(),
+                major: 1,
+                minor: 0,
+                bugfix: 0,
+            },
+            document_verification_rights: OperationsSelector {
+                document_type: AttributeSelection::PROHIBITED,
+                issuing_state: AttributeSelection::PROHIBITED,
+                date_of_expiry: AttributeSelection::PROHIBITED,
+                given_names: AttributeSelection::PROHIBITED,
+                family_names: AttributeSelection::PROHIBITED,
+                artistic_names: AttributeSelection::PROHIBITED,
+                academic_title: AttributeSelection::PROHIBITED,
+                date_of_birth: AttributeSelection::PROHIBITED,
+                place_of_birth: AttributeSelection::PROHIBITED,
+                nationality: AttributeSelection::PROHIBITED,
+                birth_name: AttributeSelection::PROHIBITED,
+                place_of_residence: AttributeSelection::PROHIBITED,
+                community_id: None,
+                residence_permit_i: None,
+                restricted_id: AttributeSelection::PROHIBITED,
+                age_verification: AttributeSelection::PROHIBITED,
+                place_verification: AttributeSelection::PROHIBITED,
+            },
+        };
+        let xml = build_get_server_info_response(&response).unwrap();
+        assert!(xml.contains("<soapenv:Envelope"));
+        assert!(xml.contains("xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\""));
+        assert!(xml.contains("xmlns:eid=\"http://bsi.bund.de/eID/\""));
+        assert!(xml.contains("<eid:ServerVersion>"));
+        assert!(xml.contains("<eid:DocumentVerificationRights>"));
+    }
 }

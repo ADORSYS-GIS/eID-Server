@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use axum::{Router, routing::get};
 use color_eyre::eyre::eyre;
-use handlers::{eid::get_server_info, health::health_check};
+use handlers::health::health_check;
+use crate::eid::get_server_info::handler::get_server_info;
 use hyper::Method;
 use tokio::net::TcpListener;
 use tower_http::{
@@ -24,7 +25,7 @@ pub struct ServerConfig<'a> {
 }
 
 #[derive(Debug, Clone)]
-struct AppState<S: EidService> {
+pub struct AppState<S: EidService> {
     pub eid_service: Arc<S>,
 }
 
