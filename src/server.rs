@@ -8,6 +8,7 @@ use std::sync::Arc;
 use axum::{Router, routing::get};
 use color_eyre::eyre::eyre;
 use handlers::health::health_check;
+use crate::eid::get_server_info::handler::get_server_info;
 use hyper::Method;
 use tokio::net::TcpListener;
 use tower_http::{
@@ -24,8 +25,8 @@ pub struct ServerConfig<'a> {
 }
 
 #[derive(Debug, Clone)]
-struct AppState<S: EidService> {
-    _eid_service: Arc<S>,
+pub struct AppState<S: EidService> {
+    pub eid_service: Arc<S>,
 }
 
 pub struct Server {
@@ -60,11 +61,12 @@ impl Server {
 
         // This will encapsulate dependencies needed to execute the business logic
         let state = AppState {
-            _eid_service: Arc::new(eid_service),
+            eid_service: Arc::new(eid_service),
         };
 
         let router = axum::Router::new()
             .route("/health", get(health_check))
+            .route("/eIDService/getServerInfo", get(get_server_info))
             .layer(cors)
             .layer(trace_layer)
             .with_state(state);
