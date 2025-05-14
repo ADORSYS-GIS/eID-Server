@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# error handling
+thiserror = "2.0.12"
+
 # Web framework
 hyper = "1.6"
 axum = "0.8"
@@ -15,7 +18,7 @@ tokio = { version = "1", features = ["full"] }
 
 # Serialization/Deserialization
 serde = { version = "1", features = ["derive"] }
-quick-xml = { version = "0.31", features = ["serialize"] }
+quick-xml = { version = "0.37", features = ["serialize"] }
 
 # Configuration
 config = "0.15"
