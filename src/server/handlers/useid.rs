@@ -97,8 +97,21 @@ impl EIDService {
             });
         }
 
-        // Generate a session ID
-        let session_id = Utc::now().to_string();
+        fn generate_session_id() -> String {
+            let timestamp = Utc::now()
+                .timestamp_nanos_opt()
+                .expect("System time out of range for timestamp_nanos_opt()");
+
+            let random_part: String = rand::rng()
+                .sample_iter(&Alphanumeric)
+                .take(16)
+                .map(char::from)
+                .collect();
+
+            format!("{timestamp}-{random_part}" )
+        }
+
+        let session_id = generate_session_id();
 
         // Generate or use provided PSK
         let psk = match &request._psk {
@@ -624,8 +637,8 @@ mod tests {
                 .unwrap()
                 .to_bytes();
             let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
-            eprintln!("Response status: {}, body: {}", status, body_str);
-            panic!("Expected 200 OK, got {}", status);
+            eprintln!("Response status: {status}, body: {body_str}");
+            panic!("Expected 200 OK, got {status}" );
         }
 
         // Proceed with remaining assertions
