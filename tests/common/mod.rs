@@ -1,6 +1,6 @@
 use eid_server::{
     config::Config,
-    server::handlers::useid::{EIDService, EIDServiceConfig}, // Import EIDService and EIDServiceConfig
+    domain::eid::service::{EIDService, EIDServiceConfig},
     server::{Server, ServerConfig},
 };
 
