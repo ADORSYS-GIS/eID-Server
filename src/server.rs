@@ -6,9 +6,9 @@ mod responses;
 use std::sync::Arc;
 
 use axum::{Router, routing::get};
+use axum::{http::Method, routing::post};
 use color_eyre::eyre::eyre;
 use handlers::health::health_check;
-use hyper::Method;
 use tokio::net::TcpListener;
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -25,7 +25,7 @@ pub struct ServerConfig<'a> {
 
 #[derive(Debug, Clone)]
 struct AppState<S: EidService> {
-    _eid_service: Arc<S>,
+    use_id: Arc<S>,
 }
 
 pub struct Server {
@@ -58,16 +58,17 @@ impl Server {
                 Method::OPTIONS,
             ]);
 
-        // This will encapsulate dependencies needed to execute the business logic
+        // Wrap the service in Arc for shared state
         let state = AppState {
-            _eid_service: Arc::new(eid_service),
+            use_id: Arc::new(eid_service),
         };
 
         let router = axum::Router::new()
             .route("/health", get(health_check))
+            .route("/eIDService/useID", post(handlers::useid::use_id_handler))
             .layer(cors)
             .layer(trace_layer)
-            .with_state(state);
+            .with_state(Arc::new(state));
 
         let listener = TcpListener::bind(format!("{}:{}", config.host, config.port))
             .await
