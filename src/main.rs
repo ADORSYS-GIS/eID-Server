@@ -1,6 +1,6 @@
 use eid_server::{
     config::Config,
-    domain::eid::service::{EIDService, EIDServiceConfig, Service},
+    domain::eid::service::{EIDService, EIDServiceConfig},
     server::{Server, ServerConfig},
     telemetry,
 };
@@ -21,6 +21,6 @@ async fn main() -> color_eyre::Result<()> {
         host: &config.server.host,
         port: config.server.port,
     };
-    let server = Server::new(service, server_config).await?;
+    let server = Server::new(eid_service, server_config).await?;
     server.run().await
 }

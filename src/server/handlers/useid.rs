@@ -3,226 +3,19 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use chrono::{Duration, Utc};
-use color_eyre::Result;
-use rand::{Rng, distr::Alphanumeric};
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use crate::{
     domain::eid::{
-        models::use_id::{
-            builder::build_use_id_response,
-            model::{Psk, UseIDRequest, UseIDResponse},
-            parser::parse_use_id_request,
-        },
-        service::{EIDService, SessionInfo},
+        models::use_id::{builder::build_use_id_response, parser::parse_use_id_request},
+        ports::EidService,
     },
-    eid::common::models::{
-        AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
-    },
+    server::AppState,
 };
 
-impl EIDService {
-    /// Handle a useID request according to TR-03130
-    pub async fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse> {
-        // Validate the request: Check if any operations are REQUIRED
-        let required_operations = Self::get_required_operations(&request._use_operations);
-        if required_operations.is_empty() {
-            return Ok(UseIDResponse {
-                result: ResultMajor {
-                    result_major: ResultCode::InvalidRequest.to_string(),
-                },
-                session: SessionResponse { id: "".to_string() },
-                ecard_server_address: None,
-                psk: Psk {
-                    id: "".to_string(),
-                    key: "".to_string(),
-                },
-            });
-        }
-
-        // Check if we've reached the maximum number of sessions
-        if self.sessions.read().unwrap().len() >= self.config.max_sessions {
-            return Ok(UseIDResponse {
-                result: ResultMajor {
-                    result_major: ResultCode::TooManyOpenSessions.to_string(),
-                },
-                session: SessionResponse { id: "".to_string() },
-                ecard_server_address: None,
-                psk: Psk {
-                    id: "".to_string(),
-                    key: "".to_string(),
-                },
-            });
-        }
-
-        fn generate_session_id() -> String {
-            let timestamp = Utc::now()
-                .timestamp_nanos_opt()
-                .expect("System time out of range for timestamp_nanos_opt()");
-
-            let random_part: String = rand::rng()
-                .sample_iter(&Alphanumeric)
-                .take(16)
-                .map(char::from)
-                .collect();
-
-            format!("{timestamp}-{random_part}")
-        }
-
-        let session_id = generate_session_id();
-
-        // Generate or use provided PSK
-        let psk = match &request._psk {
-            Some(psk) => psk.key.clone(),
-            None => self.generate_psk(),
-        };
-
-        // Calculate session expiry time
-        let expiry = Utc::now() + Duration::minutes(self.config.session_timeout_minutes);
-
-        // Create session info
-        let session_info = SessionInfo {
-            id: session_id.clone(),
-            expiry,
-            psk: Some(psk.clone()),
-            operations: required_operations,
-        };
-
-        // Store the session
-        {
-            let mut sessions = self.sessions.write().unwrap();
-
-            // Remove expired sessions first
-            let now = Utc::now();
-            sessions.retain(|session| session.expiry > now);
-
-            // Add new session
-            sessions.push(session_info.clone());
-
-            info!(
-                "Created new session: {}, expires: {}, operations: {:?}",
-                session_id, expiry, session_info.operations
-            );
-        }
-
-        // Build response
-        Ok(UseIDResponse {
-            result: ResultMajor {
-                result_major: ResultCode::Ok.to_string(),
-            },
-            session: SessionResponse {
-                id: session_id.clone(),
-            },
-            ecard_server_address: self.config.ecard_server_address.clone(),
-            psk: Psk {
-                id: session_id,
-                key: psk,
-            },
-        })
-    }
-
-    /// Generate a random PSK for secure communication
-    fn generate_psk(&self) -> String {
-        // Generate a 32-character random PSK
-        rand::rng()
-            .sample_iter(&Alphanumeric)
-            .take(32)
-            .map(char::from)
-            .collect()
-    }
-
-    /// Clean up expired sessions (can be called periodically)
-    async fn _cleanup_expired_sessions(&self) -> usize {
-        let mut sessions = self.sessions.write().unwrap();
-        let before_count = sessions.len();
-        let now = Utc::now();
-        sessions.retain(|session| session.expiry > now);
-        let removed = before_count - sessions.len();
-
-        if removed > 0 {
-            info!("Removed {} expired sessions", removed);
-        }
-
-        removed
-    }
-
-    /// Get a session by ID
-    async fn _get_session(&self, session_id: &str) -> Option<SessionInfo> {
-        let sessions = self.sessions.read().unwrap();
-        let now = Utc::now();
-
-        sessions
-            .iter()
-            .find(|s| s.id == session_id && s.expiry > now)
-            .cloned()
-    }
-
-    /// Helper function to extract required operations from OperationsRequester
-    fn get_required_operations(ops: &OperationsRequester) -> Vec<String> {
-        let mut required = Vec::new();
-        if ops.document_type == AttributeRequester::REQUIRED {
-            required.push("DocumentType".to_string());
-        }
-        if ops.issuing_state == AttributeRequester::REQUIRED {
-            required.push("IssuingState".to_string());
-        }
-        if ops.date_of_expiry == AttributeRequester::REQUIRED {
-            required.push("DateOfExpiry".to_string());
-        }
-        if ops.given_names == AttributeRequester::REQUIRED {
-            required.push("GivenNames".to_string());
-        }
-        if ops.family_names == AttributeRequester::REQUIRED {
-            required.push("FamilyNames".to_string());
-        }
-        if ops.artistic_name == AttributeRequester::REQUIRED {
-            required.push("ArtisticName".to_string());
-        }
-        if ops.academic_title == AttributeRequester::REQUIRED {
-            required.push("AcademicTitle".to_string());
-        }
-        if ops.date_of_birth == AttributeRequester::REQUIRED {
-            required.push("DateOfBirth".to_string());
-        }
-        if ops.place_of_birth == AttributeRequester::REQUIRED {
-            required.push("PlaceOfBirth".to_string());
-        }
-        if ops.nationality == AttributeRequester::REQUIRED {
-            required.push("Nationality".to_string());
-        }
-        if ops.birth_name == AttributeRequester::REQUIRED {
-            required.push("BirthName".to_string());
-        }
-        if ops.place_of_residence == AttributeRequester::REQUIRED {
-            required.push("PlaceOfResidence".to_string());
-        }
-        if let Some(community_id) = &ops.community_id {
-            if *community_id == AttributeRequester::REQUIRED {
-                required.push("CommunityID".to_string());
-            }
-        }
-        if let Some(residence_permit_id) = &ops.residence_permit_id {
-            if *residence_permit_id == AttributeRequester::REQUIRED {
-                required.push("ResidencePermitID".to_string());
-            }
-        }
-        if ops.restricted_id == AttributeRequester::REQUIRED {
-            required.push("RestrictedID".to_string());
-        }
-        if ops.age_verification == AttributeRequester::REQUIRED {
-            required.push("AgeVerification".to_string());
-        }
-        if ops.place_verification == AttributeRequester::REQUIRED {
-            required.push("PlaceVerification".to_string());
-        }
-        required
-    }
-}
-
-pub async fn use_id_handler(
-    State(service): State<Arc<EIDService>>,
+pub async fn use_id_handler<S: EidService>(
+    State(state): State<Arc<AppState<S>>>,
     headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
@@ -251,13 +44,8 @@ pub async fn use_id_handler(
         }
     };
 
-    debug!(
-        "Received UseID request with {} required operations",
-        EIDService::get_required_operations(&use_id_request._use_operations).len()
-    );
-
     // Process the request
-    let response = match service.handle_use_id(use_id_request).await {
+    let response = match state.use_id.handle_use_id(use_id_request) {
         Ok(response) => response,
         Err(err) => {
             error!("Error processing useID request: {}", err);
@@ -319,10 +107,12 @@ mod tests {
     use super::*;
     use crate::{
         domain::eid::{
-            models::use_id::model::{AgeVerificationRequest, PlaceVerificationRequest},
-            service::EIDServiceConfig,
+            models::use_id::model::{
+                AgeVerificationRequest, PlaceVerificationRequest, UseIDRequest,
+            },
+            service::{EIDService, EIDServiceConfig},
         },
-        eid::common::models::{AttributeRequester, OperationsRequester},
+        eid::common::models::{AttributeRequester, OperationsRequester, ResultCode},
     };
     use axum::{
         body::Body,
@@ -330,6 +120,7 @@ mod tests {
     };
     use http_body_util;
     use quick_xml::{Reader, events::Event};
+    use std::sync::Arc;
 
     fn create_test_service() -> EIDService {
         EIDService::new(EIDServiceConfig {
@@ -341,7 +132,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_use_id_empty_operations() {
-        // Test implementation remains unchanged
         let service = create_test_service();
         let request = UseIDRequest {
             _use_operations: OperationsRequester {
@@ -374,7 +164,7 @@ mod tests {
             _psk: None,
         };
 
-        let response = service.handle_use_id(request).await.unwrap();
+        let response = service.handle_use_id(request).unwrap();
 
         assert_eq!(
             response.result.result_major,
@@ -438,7 +228,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_use_id_handler_valid_request() {
-        let service = Arc::new(create_test_service());
+        let service = create_test_service();
+        let state = Arc::new(AppState {
+            use_id: Arc::new(service),
+        });
         let soap_request = create_sample_soap_request();
 
         let request = Request::builder()
@@ -449,7 +242,7 @@ mod tests {
             .unwrap();
 
         let response = use_id_handler(
-            State(service),
+            State(state),
             request.headers().clone(),
             String::from_utf8(
                 http_body_util::BodyExt::collect(request.into_body())
@@ -543,13 +336,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_use_id_handler_invalid_content_type() {
-        let service = Arc::new(create_test_service());
+        let service = create_test_service();
+        let state = Arc::new(AppState {
+            use_id: Arc::new(service),
+        });
         let soap_request = create_sample_soap_request();
 
         let mut headers = HeaderMap::new();
         headers.insert("content-type", "application/json".parse().unwrap());
 
-        let response = use_id_handler(State(service), headers, soap_request)
+        let response = use_id_handler(State(state), headers, soap_request)
             .await
             .into_response();
 
@@ -565,13 +361,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_use_id_handler_invalid_soap() {
-        let service = Arc::new(create_test_service());
+        let service = create_test_service();
+        let state = Arc::new(AppState {
+            use_id: Arc::new(service),
+        });
         let invalid_soap = "<invalid>xml</invalid>";
 
         let mut headers = HeaderMap::new();
         headers.insert("content-type", "application/soap+xml".parse().unwrap());
 
-        let response = use_id_handler(State(service), headers, invalid_soap.to_string())
+        let response = use_id_handler(State(state), headers, invalid_soap.to_string())
             .await
             .into_response();
 

@@ -68,7 +68,7 @@ impl Server {
             .route("/eIDService/useID", post(handlers::useid::use_id_handler))
             .layer(cors)
             .layer(trace_layer)
-            .with_state(state);
+            .with_state(Arc::new(state));
 
         let listener = TcpListener::bind(format!("{}:{}", config.host, config.port))
             .await
