@@ -3,19 +3,18 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use std::sync::Arc;
 use tracing::{debug, error};
 
 use crate::{
     domain::eid::{
         models::use_id::{builder::build_use_id_response, parser::parse_use_id_request},
-        ports::EidService,
+        ports::UseIdService,
     },
     server::AppState,
 };
 
-pub async fn use_id_handler<S: EidService>(
-    State(state): State<Arc<AppState<S>>>,
+pub async fn use_id_handler<S: UseIdService>(
+    State(state): State<AppState<S>>,
     headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
@@ -229,9 +228,9 @@ mod tests {
     #[tokio::test]
     async fn test_use_id_handler_valid_request() {
         let service = create_test_service();
-        let state = Arc::new(AppState {
+        let state = AppState {
             use_id: Arc::new(service),
-        });
+        };
         let soap_request = create_sample_soap_request();
 
         let request = Request::builder()
@@ -337,9 +336,9 @@ mod tests {
     #[tokio::test]
     async fn test_use_id_handler_invalid_content_type() {
         let service = create_test_service();
-        let state = Arc::new(AppState {
+        let state = AppState {
             use_id: Arc::new(service),
-        });
+        };
         let soap_request = create_sample_soap_request();
 
         let mut headers = HeaderMap::new();
@@ -362,9 +361,9 @@ mod tests {
     #[tokio::test]
     async fn test_use_id_handler_invalid_soap() {
         let service = create_test_service();
-        let state = Arc::new(AppState {
+        let state = AppState {
             use_id: Arc::new(service),
-        });
+        };
         let invalid_soap = "<invalid>xml</invalid>";
 
         let mut headers = HeaderMap::new();

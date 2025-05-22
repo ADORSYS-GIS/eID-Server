@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use color_eyre::Result;
 use rand::Rng;
 
-use super::ports::EidService;
+use super::ports::{UseIdService, UserRegistrationService};
 use crate::domain::eid::models::use_id::model::{Psk, UseIDRequest, UseIDResponse};
 use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
@@ -129,15 +129,8 @@ impl EIDService {
     }
 }
 
-impl EidService for EIDService {
-    fn use_id_register(user: String) -> Result<(), String> {
-        if user.is_empty() {
-            Err("User cannot be empty".to_string())
-        } else {
-            Ok(())
-        }
-    }
-
+// Implement the UseIdService trait for the EIDService
+impl UseIdService for EIDService {
     fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse> {
         // Validate the request: Check if any operations are REQUIRED
         let required_operations = Self::get_required_operations(&request._use_operations);
@@ -236,5 +229,16 @@ impl EidService for EIDService {
                 key: psk,
             },
         })
+    }
+}
+
+// Implement the UserRegistrationService trait for EIDService
+impl UserRegistrationService for EIDService {
+    fn register_user(&self, user: String) -> Result<(), String> {
+        if user.is_empty() {
+            Err("User cannot be empty".to_string())
+        } else {
+            Ok(())
+        }
     }
 }

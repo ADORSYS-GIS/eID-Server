@@ -38,9 +38,6 @@ chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22.1"
 rand = "0.9.1"
 
-# HTTP Body
-http-body = "1.0"
-http-body-util = "0.1"
 
 [dev-dependencies]
 http-body-util = "0.1"
