@@ -15,7 +15,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::domain::eid::ports::UseIdService;
+use crate::domain::eid::ports::EIDService;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig<'a> {
@@ -24,7 +24,7 @@ pub struct ServerConfig<'a> {
 }
 
 #[derive(Debug, Clone)]
-struct AppState<S: UseIdService> {
+struct AppState<S: EIDService> {
     use_id: Arc<S>,
 }
 
@@ -36,7 +36,7 @@ pub struct Server {
 impl Server {
     /// Creates a new HTTP server with the given service and configuration.
     pub async fn new(
-        eid_service: impl UseIdService,
+        eid_service: impl EIDService,
         config: ServerConfig<'_>,
     ) -> color_eyre::Result<Self> {
         // Initialize the tracing layer to log HTTP requests.

@@ -1,6 +1,6 @@
 use eid_server::{
     config::Config,
-    domain::eid::service::{EIDService, EIDServiceConfig},
+    domain::eid::service::{EIDServiceConfig, UseidService},
     server::{Server, ServerConfig},
 };
 
@@ -13,7 +13,7 @@ pub async fn spawn_server() -> String {
         config.server.port = 0;
         config
     };
-    let eid_service = EIDService::new(EIDServiceConfig::default());
+    let eid_service = UseidService::new(EIDServiceConfig::default());
 
     let server_config = ServerConfig {
         host: &config.server.host,

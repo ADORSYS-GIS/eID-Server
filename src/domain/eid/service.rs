@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use color_eyre::Result;
 use rand::Rng;
 
-use super::ports::{UseIdService, UserRegistrationService};
+use super::ports::EIDService;
 use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
 };
@@ -44,12 +44,12 @@ pub struct SessionInfo {
 
 /// Main service for handling useID requests
 #[derive(Clone, Debug)]
-pub struct EIDService {
+pub struct UseidService {
     pub config: EIDServiceConfig,
     pub sessions: Arc<RwLock<Vec<SessionInfo>>>,
 }
 
-impl EIDService {
+impl UseidService {
     pub fn new(config: EIDServiceConfig) -> Self {
         Self {
             config,
@@ -130,36 +130,23 @@ impl EIDService {
 }
 
 // Implement the UseIdService trait for the EIDService
-impl UseIdService for EIDService {
+impl EIDService for UseidService {
     fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse> {
         // Validate the request: Check if any operations are REQUIRED
         let required_operations = Self::get_required_operations(&request._use_operations);
         if required_operations.is_empty() {
             return Ok(UseIDResponse {
                 result: ResultMajor {
-                    result_major: ResultCode::InvalidRequest.to_string(),
+                    result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok".to_string(),
                 },
-                session: SessionResponse { id: "".to_string() },
-                ecard_server_address: None,
-                psk: Psk {
-                    id: "".to_string(),
-                    key: "".to_string(),
-                },
+                ..Default::default()
             });
         }
 
         // Check if we've reached the maximum number of sessions
         if self.sessions.read().unwrap().len() >= self.config.max_sessions {
             return Ok(UseIDResponse {
-                result: ResultMajor {
-                    result_major: ResultCode::TooManyOpenSessions.to_string(),
-                },
-                session: SessionResponse { id: "".to_string() },
-                ecard_server_address: None,
-                psk: Psk {
-                    id: "".to_string(),
-                    key: "".to_string(),
-                },
+                ..Default::default()
             });
         }
 
@@ -229,16 +216,5 @@ impl UseIdService for EIDService {
                 key: psk,
             },
         })
-    }
-}
-
-// Implement the UserRegistrationService trait for EIDService
-impl UserRegistrationService for EIDService {
-    fn register_user(&self, user: String) -> Result<(), String> {
-        if user.is_empty() {
-            Err("User cannot be empty".to_string())
-        } else {
-            Ok(())
-        }
     }
 }

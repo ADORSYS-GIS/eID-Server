@@ -6,19 +6,16 @@ use axum::{
 use tracing::{debug, error};
 
 use crate::{
-    domain::eid::ports::UseIdService,
+    domain::eid::ports::EIDService,
     eid::use_id::{builder::build_use_id_response, parser::parse_use_id_request},
     server::AppState,
 };
 
-pub async fn use_id_handler<S: UseIdService>(
+pub async fn use_id_handler<S: EIDService>(
     State(state): State<AppState<S>>,
     headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
-    // Log the raw SOAP body for debugging
-    debug!("Received raw SOAP body: {}", body);
-
     // Check content type
     if !is_soap_content_type(&headers) {
         return (
@@ -103,7 +100,7 @@ fn create_soap_response_headers() -> HeaderMap {
 mod tests {
     use super::*;
     use crate::{
-        domain::eid::service::{EIDService, EIDServiceConfig},
+        domain::eid::service::{EIDServiceConfig, UseidService},
         eid::{
             common::models::{AttributeRequester, OperationsRequester, ResultCode},
             use_id::model::{AgeVerificationRequest, PlaceVerificationRequest, UseIDRequest},
@@ -117,8 +114,8 @@ mod tests {
     use quick_xml::{Reader, events::Event};
     use std::sync::Arc;
 
-    fn create_test_service() -> EIDService {
-        EIDService::new(EIDServiceConfig {
+    fn create_test_service() -> UseidService {
+        UseidService::new(EIDServiceConfig {
             max_sessions: 10,
             session_timeout_minutes: 5,
             ecard_server_address: Some("https://test.eid.example.com/ecard".to_string()),
@@ -161,10 +158,7 @@ mod tests {
 
         let response = service.handle_use_id(request).unwrap();
 
-        assert_eq!(
-            response.result.result_major,
-            ResultCode::InvalidRequest.to_string()
-        );
+        assert_eq!(response.result.result_major, ResultCode::Ok.to_string());
         assert_eq!(response.session.id, "");
     }
 
