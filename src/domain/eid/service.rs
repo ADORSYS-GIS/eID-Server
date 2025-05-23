@@ -7,7 +7,7 @@ use color_eyre::Result;
 use rand::Rng;
 
 use super::ports::{UseIdService, UserRegistrationService};
-use crate::domain::eid::models::use_id::model::{Psk, UseIDRequest, UseIDResponse};
+use crate::eid::use_id::model::{Psk, UseIDRequest, UseIDResponse};
 use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
 };

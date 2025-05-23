@@ -6,11 +6,7 @@ use axum::{
 use tracing::{debug, error};
 
 use crate::{
-    domain::eid::{
-        models::use_id::{builder::build_use_id_response, parser::parse_use_id_request},
-        ports::UseIdService,
-    },
-    server::AppState,
+    domain::eid::ports::UseIdService, eid::use_id::{builder::build_use_id_response, parser::parse_use_id_request}, server::AppState
 };
 
 pub async fn use_id_handler<S: UseIdService>(
@@ -105,13 +101,9 @@ fn create_soap_response_headers() -> HeaderMap {
 mod tests {
     use super::*;
     use crate::{
-        domain::eid::{
-            models::use_id::model::{
+        domain::eid::service::{EIDService, EIDServiceConfig}, eid::{common::models::{AttributeRequester, OperationsRequester, ResultCode}, use_id::model::{
                 AgeVerificationRequest, PlaceVerificationRequest, UseIDRequest,
-            },
-            service::{EIDService, EIDServiceConfig},
-        },
-        eid::common::models::{AttributeRequester, OperationsRequester, ResultCode},
+            }}
     };
     use axum::{
         body::Body,
