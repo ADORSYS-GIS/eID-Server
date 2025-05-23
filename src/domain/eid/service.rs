@@ -7,10 +7,10 @@ use color_eyre::Result;
 use rand::Rng;
 
 use super::ports::{UseIdService, UserRegistrationService};
-use crate::eid::use_id::model::{Psk, UseIDRequest, UseIDResponse};
 use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
 };
+use crate::eid::use_id::model::{Psk, UseIDRequest, UseIDResponse};
 
 // Configuration for the eID Service
 #[derive(Clone, Debug)]

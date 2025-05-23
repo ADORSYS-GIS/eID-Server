@@ -91,8 +91,8 @@ pub fn build_use_id_response(response: &UseIDResponse) -> Result<String, UseIdEr
 mod tests {
 
     use crate::{
-        eid::use_id::model::Psk,
         eid::common::models::{ResultCode, ResultMajor, SessionResponse},
+        eid::use_id::model::Psk,
     };
 
     use super::*;
