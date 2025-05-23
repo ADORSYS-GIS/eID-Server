@@ -175,59 +175,14 @@ mod tests {
         assert_eq!(psk.len(), 32);
     }
 
-    fn create_sample_soap_request() -> String {
-        r#"
-        <?xml version="1.0" encoding="UTF-8"?>
-        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:eid="http://bsi.bund.de/eID/">
-            <soapenv:Body>
-                <useIDRequest>
-                    <UseOperations>
-                        <eid:DocumentType>REQUIRED</eid:DocumentType>
-                        <eid:IssuingState>REQUIRED</eid:IssuingState>
-                        <eid:DateOfExpiry>REQUIRED</eid:DateOfExpiry>
-                        <eid:GivenNames>REQUIRED</eid:GivenNames>
-                        <eid:FamilyNames>REQUIRED</eid:FamilyNames>
-                        <eid:ArtisticName>ALLOWED</eid:ArtisticName>
-                        <eid:AcademicTitle>ALLOWED</eid:AcademicTitle>
-                        <eid:DateOfBirth>REQUIRED</eid:DateOfBirth>
-                        <eid:PlaceOfBirth>REQUIRED</eid:PlaceOfBirth>
-                        <eid:Nationality>REQUIRED</eid:Nationality>
-                        <eid:BirthName>REQUIRED</eid:BirthName>
-                        <eid:PlaceOfResidence>REQUIRED</eid:PlaceOfResidence>
-                        <eid:CommunityID>PROHIBITED</eid:CommunityID>
-                        <eid:ResidencePermitI>PROHIBITED</eid:ResidencePermitI>
-                        <eid:RestrictedID>REQUIRED</eid:RestrictedID>
-                        <eid:AgeVerification>REQUIRED</eid:AgeVerification>
-                        <eid:PlaceVerification>REQUIRED</eid:PlaceVerification>
-                    </UseOperations>
-                    <AgeVerificationRequest>
-                        <eid:Age>18</eid:Age>
-                    </AgeVerificationRequest>
-                    <eid:PlaceVerificationRequest>
-                        <eid:CommunityID>027605</eid:CommunityID>
-                    </eid:PlaceVerificationRequest>
-                    <eid:TransactionAttestationRequest>
-                        <eid:TransactionAttestationFormat>http://bsi.bund.de/eID/ExampleAttestationFormat</eid:TransactionAttestationFormat>
-                        <eid:TransactionContext>id599456-df</eid:TransactionContext>
-                    </eid:TransactionAttestationRequest>
-                    <eid:LevelOfAssuranceRequest>http://bsi.bund.de/eID/LoA/hoch</eid:LevelOfAssuranceRequest>
-                    <eid:EIDTypeRequest>
-                        <eid:SECertified>ALLOWED</eid:SECertified>
-                        <eid:SEEndorsed>ALLOWED</eid:SEEndorsed>
-                    </eid:EIDTypeRequest>
-                </useIDRequest>
-            </soapenv:Body>
-        </soapenv:Envelope>
-        "#.to_string()
-    }
-
     #[tokio::test]
     async fn test_use_id_handler_valid_request() {
         let service = create_test_service();
         let state = AppState {
             use_id: Arc::new(service),
         };
-        let soap_request = create_sample_soap_request();
+        let soap_request = std::fs::read_to_string("test_data/use_id_request.xml")
+            .expect("Failed to read test SOAP request XML");
 
         let request = Request::builder()
             .method(http::Method::POST)
@@ -335,7 +290,8 @@ mod tests {
         let state = AppState {
             use_id: Arc::new(service),
         };
-        let soap_request = create_sample_soap_request();
+        let soap_request = std::fs::read_to_string("test_data/use_id_request.xml")
+            .expect("Failed to read test SOAP request XML");
 
         let mut headers = HeaderMap::new();
         headers.insert("content-type", "application/json".parse().unwrap());
