@@ -5,6 +5,7 @@ mod responses;
 
 use std::sync::Arc;
 
+use crate::eid::get_server_info::handler::get_server_info;
 use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
 use color_eyre::eyre::eyre;
@@ -15,7 +16,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::domain::eid::ports::EIDService;
+use crate::domain::eid::ports::{EIDService, EidService};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig<'a> {
@@ -24,8 +25,9 @@ pub struct ServerConfig<'a> {
 }
 
 #[derive(Debug, Clone)]
-struct AppState<S: EIDService> {
-    use_id: Arc<S>,
+pub struct AppState<S: EIDService + EidService> {
+    pub use_id: Arc<S>,
+    pub eid_service: Arc<S>,
 }
 
 pub struct Server {
@@ -36,7 +38,7 @@ pub struct Server {
 impl Server {
     /// Creates a new HTTP server with the given service and configuration.
     pub async fn new(
-        eid_service: impl EIDService,
+        eid_service: impl EIDService + EidService,
         config: ServerConfig<'_>,
     ) -> color_eyre::Result<Self> {
         // Initialize the tracing layer to log HTTP requests.
@@ -59,13 +61,16 @@ impl Server {
             ]);
 
         // This will encapsulate dependencies needed to execute the business logic
+        let eid_service_arc = Arc::new(eid_service);
         let state = AppState {
-            use_id: Arc::new(eid_service),
+            use_id: eid_service_arc.clone(),
+            eid_service: eid_service_arc,
         };
 
         let router = axum::Router::new()
             .route("/health", get(health_check))
             .route("/eIDService/useID", post(handlers::useid::use_id_handler))
+            .route("/eIDService/getServerInfo", get(get_server_info))
             .layer(cors)
             .layer(trace_layer)
             .with_state(state);

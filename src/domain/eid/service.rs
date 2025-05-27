@@ -6,7 +6,8 @@ use chrono::{DateTime, Utc};
 use color_eyre::Result;
 use rand::Rng;
 
-use super::ports::EIDService;
+use super::models::ServerInfo;
+use super::ports::{EIDService, EidService};
 use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
 };
@@ -129,7 +130,7 @@ impl UseidService {
     }
 }
 
-// Implement the UseIdService trait for the EIDService
+// Implement the EIDService trait for UseidService
 impl EIDService for UseidService {
     fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse> {
         // Validate the request: Check if any operations are REQUIRED
@@ -216,5 +217,13 @@ impl EIDService for UseidService {
                 key: psk,
             },
         })
+    }
+}
+
+// Implement the EidService trait for UseidService
+impl EidService for UseidService {
+    fn get_server_info(&self) -> ServerInfo {
+        // Return default ServerInfo which contains the basic implementation details
+        ServerInfo::default()
     }
 }

@@ -6,12 +6,12 @@ use axum::{
 use tracing::{debug, error};
 
 use crate::{
-    domain::eid::ports::EIDService,
+    domain::eid::ports::{EIDService, EidService},
     eid::use_id::{builder::build_use_id_response, parser::parse_use_id_request},
     server::AppState,
 };
 
-pub async fn use_id_handler<S: EIDService>(
+pub async fn use_id_handler<S: EIDService + EidService>(
     State(state): State<AppState<S>>,
     headers: HeaderMap,
     body: String,
@@ -122,6 +122,15 @@ mod tests {
         })
     }
 
+    fn create_test_state() -> AppState<UseidService> {
+        let service = create_test_service();
+        let service_arc = Arc::new(service);
+        AppState {
+            use_id: service_arc.clone(),
+            eid_service: service_arc,
+        }
+    }
+
     #[tokio::test]
     async fn test_handle_use_id_empty_operations() {
         let service = create_test_service();
@@ -171,10 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_use_id_handler_valid_request() {
-        let service = create_test_service();
-        let state = AppState {
-            use_id: Arc::new(service),
-        };
+        let state = create_test_state();
         let soap_request = std::fs::read_to_string("test_data/use_id_request.xml")
             .expect("Failed to read test SOAP request XML");
 
@@ -280,10 +286,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_use_id_handler_invalid_content_type() {
-        let service = create_test_service();
-        let state = AppState {
-            use_id: Arc::new(service),
-        };
+        let state = create_test_state();
         let soap_request = std::fs::read_to_string("test_data/use_id_request.xml")
             .expect("Failed to read test SOAP request XML");
 
@@ -306,10 +309,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_use_id_handler_invalid_soap() {
-        let service = create_test_service();
-        let state = AppState {
-            use_id: Arc::new(service),
-        };
+        let state = create_test_state();
         let invalid_soap = "<invalid>xml</invalid>";
 
         let mut headers = HeaderMap::new();
