@@ -1,16 +1,27 @@
-use axum::{extract::State, http::{StatusCode, header, HeaderValue}, response::IntoResponse};
-
-use crate::{
-    domain::eid::ports::EidService,
-    server::AppState,
-    eid::get_server_info::builder::build_get_server_info_response,
-    eid::get_server_info::model::{GetServerInfoResponse, VersionType, OperationsSelector},
-    eid::common::models::AttributeSelection,
+use axum::{
+    extract::State,
+    http::{HeaderValue, StatusCode, header},
+    response::IntoResponse,
 };
 
-fn convert_to_soap_model(server_info: crate::domain::eid::models::ServerInfo) -> GetServerInfoResponse {
+use crate::{
+    domain::eid::ports::{EIDService, EidService},
+    eid::{
+        common::models::AttributeSelection,
+        get_server_info::{
+            builder::build_get_server_info_response,
+            model::{GetServerInfoResponse, OperationsSelector, VersionType},
+        },
+    },
+    server::AppState,
+};
+
+fn convert_to_soap_model(
+    server_info: crate::domain::eid::models::ServerInfo,
+) -> GetServerInfoResponse {
     // Parse version components (e.g., "0.1.0" -> 0, 1, 0)
-    let version_parts: Vec<u8> = server_info.version
+    let version_parts: Vec<u8> = server_info
+        .version
         .split('.')
         .filter_map(|s| s.parse::<u8>().ok())
         .collect();
@@ -48,17 +59,22 @@ fn convert_to_soap_model(server_info: crate::domain::eid::models::ServerInfo) ->
 }
 
 /// Handler for the /eIDService/getServerInfo endpoint
+/// Handler for the /eIDService/getServerInfo endpoint
 /// Returns information about the eID-Server capabilities and version
-pub(crate) async fn get_server_info<S: EidService>(
-    State(state): State<AppState<S>>,
-) -> impl IntoResponse {
+pub(crate) async fn get_server_info<S>(State(state): State<AppState<S>>) -> impl IntoResponse
+where
+    S: EIDService + EidService,
+{
     let server_info = state.eid_service.get_server_info();
     let soap_response = convert_to_soap_model(server_info);
-    let xml = build_get_server_info_response(&soap_response)
-        .unwrap_or_else(|_| "<error/>".to_string());
+    let xml =
+        build_get_server_info_response(&soap_response).unwrap_or_else(|_| "<error/>".to_string());
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, HeaderValue::from_static("application/xml; charset=utf-8"))],
-        xml
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/xml; charset=utf-8"),
+        )],
+        xml,
     )
-} 
+}

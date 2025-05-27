@@ -90,9 +90,9 @@ pub fn build_use_id_response(response: &UseIDResponse) -> Result<String, UseIdEr
 #[cfg(test)]
 mod tests {
 
-    use crate::eid::{
-        common::models::{ResultCode, ResultMajor, SessionResponse},
-        use_id::model::Psk,
+    use crate::{
+        eid::common::models::{ResultCode, ResultMajor, SessionResponse},
+        eid::use_id::model::Psk,
     };
 
     use super::*;

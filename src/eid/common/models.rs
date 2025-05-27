@@ -244,7 +244,7 @@ pub enum ResultCode {
     UnknownError(String),
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 pub struct ResultMajor {
     #[serde(rename = "ResultMajor")]
     pub result_major: String,
@@ -259,7 +259,7 @@ pub struct Session {
     pub id: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 pub struct SessionResponse {
     #[serde(rename = "eid:ID")]
     pub id: String,
