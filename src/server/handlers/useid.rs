@@ -11,7 +11,7 @@ use crate::{
     server::AppState,
 };
 
-pub async fn use_id_handler<S: EIDService + EidService>(
+pub async fn use_id_handler<S: EIDService + EidService + >(
     State(state): State<AppState<S>>,
     headers: HeaderMap,
     body: String,

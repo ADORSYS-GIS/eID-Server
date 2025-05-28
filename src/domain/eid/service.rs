@@ -6,8 +6,8 @@ use chrono::{DateTime, Utc};
 use color_eyre::Result;
 use rand::Rng;
 
-use super::models::ServerInfo;
-use super::ports::{EIDService, EidService};
+use super::models::{AuthError, ConnectionHandle, DIDAuthenticateRequest, DIDAuthenticateResponse, ResponseProtocolData, ServerInfo};
+use super::ports::{EIDService, DIDAuthenticate, EidService};
 use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
 };
@@ -48,6 +48,24 @@ pub struct SessionInfo {
 pub struct UseidService {
     pub config: EIDServiceConfig,
     pub sessions: Arc<RwLock<Vec<SessionInfo>>>,
+}
+
+// Add placeholder types for DIDAuthenticate implementation
+// You'll need to replace these with your actual types
+#[derive(Clone, Debug)]
+pub struct CertificateStore;
+
+#[derive(Clone, Debug)]
+pub struct CryptoProvider;
+
+#[derive(Clone, Debug)]
+pub struct CardCommunicator;
+
+#[derive(Clone, Debug)]
+pub struct DIDAuthenticateService {
+    certificate_store: CertificateStore,
+    crypto_provider: CryptoProvider,
+    card_communicator: CardCommunicator,
 }
 
 impl UseidService {
@@ -225,5 +243,61 @@ impl EidService for UseidService {
     fn get_server_info(&self) -> ServerInfo {
         // Return default ServerInfo which contains the basic implementation details
         ServerInfo::default()
+    }
+}
+
+impl DIDAuthenticateService {
+    pub fn new(
+        certificate_store: CertificateStore,
+        crypto_provider: CryptoProvider,
+        card_communicator: CardCommunicator,
+    ) -> Self {
+        DIDAuthenticateService {
+            certificate_store,
+            crypto_provider,
+            card_communicator,
+        }
+    }
+
+    async fn validate_connection(&self, handle: &ConnectionHandle) -> Result<(), AuthError> {
+        // Implement connection validation
+        Ok(())
+    }
+
+    async fn perform_terminal_auth(&self, request: &DIDAuthenticateRequest) -> Result<(), AuthError> {
+        // Implement terminal authentication (certificate validation, challenge signing)
+        Ok(())
+    }
+
+    async fn establish_secure_channel(&self, request: &DIDAuthenticateRequest) -> Result<(), AuthError> {
+        // Implement chip authentication (ECDH key exchange)
+        Ok(())
+    }
+
+    async fn read_identity_data(&self, request: &DIDAuthenticateRequest) -> Result<ResponseProtocolData, AuthError> {
+        // Implement data retrieval
+        Ok(ResponseProtocolData {
+            challenge: None,
+            certificate: Some("mock_certificate".to_string()),
+            personal_data: Some("mock_personal_data".to_string()),
+        })
+    }
+}
+
+impl DIDAuthenticate for UseidService {
+    fn handle_did_authenticate(&self, request: DIDAuthenticateRequest) -> Result<DIDAuthenticateResponse, AuthError> {
+        // Note: This is a synchronous implementation. If you need async, you'll need to modify the trait
+        // For now, we'll create a mock implementation
+        let identity_data = ResponseProtocolData {
+            challenge: None,
+            certificate: Some("mock_certificate".to_string()),
+            personal_data: Some("mock_personal_data".to_string()),
+        };
+
+        Ok(DIDAuthenticateResponse {
+            result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok".to_string(),
+            result_minor: None,
+            authentication_protocol_data: identity_data,
+        })
     }
 }

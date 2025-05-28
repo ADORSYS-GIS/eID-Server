@@ -44,6 +44,62 @@ pub struct DocumentVerificationRights {
     pub version: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConnectionHandle {
+    pub channel_handle: String,
+    pub ifd_name: String,
+    pub slot_index: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthenticationProtocolData {
+    pub certificate_description: String,
+    pub required_chat: String,
+    pub optional_chat: Option<String>,
+    pub transaction_info: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DIDAuthenticateRequest {
+    pub connection_handle: ConnectionHandle,
+    pub did_name: String,
+    pub authentication_protocol_data: AuthenticationProtocolData,
+}
+
+#[derive(Debug, Clone)]
+pub struct DIDAuthenticateResponse {
+    pub result_major: String,
+    pub result_minor: Option<String>,
+    pub authentication_protocol_data: ResponseProtocolData,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResponseProtocolData {
+    pub challenge: Option<String>,
+    pub certificate: Option<String>,
+    pub personal_data: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SoapResponse {
+    pub body: String,
+    pub status: u16,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AuthError {
+    #[error("Invalid connection handle")]
+    InvalidConnection,
+    #[error("Certificate validation failed")]
+    InvalidCertificate,
+    #[error("User cancelled authentication")]
+    UserCancellation,
+    #[error("Card error")]
+    CardError,
+    #[error("Authentication failed")]
+    AuthenticationFailed,
+}
+
 impl Default for ServerInfo {
     fn default() -> Self {
         Self {

@@ -10,13 +10,14 @@ use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
 use color_eyre::eyre::eyre;
 use handlers::health::health_check;
+use handlers::did_auth::did_authenticate;
 use tokio::net::TcpListener;
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
 
-use crate::domain::eid::ports::{EIDService, EidService};
+use crate::domain::eid::ports::{DIDAuthenticate, EIDService, EidService};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig<'a> {
@@ -38,7 +39,7 @@ pub struct Server {
 impl Server {
     /// Creates a new HTTP server with the given service and configuration.
     pub async fn new(
-        eid_service: impl EIDService + EidService,
+        eid_service: impl EIDService + EidService + DIDAuthenticate,
         config: ServerConfig<'_>,
     ) -> color_eyre::Result<Self> {
         // Initialize the tracing layer to log HTTP requests.
@@ -71,6 +72,7 @@ impl Server {
             .route("/health", get(health_check))
             .route("/eIDService/useID", post(handlers::useid::use_id_handler))
             .route("/eIDService/getServerInfo", get(get_server_info))
+            .route("/did_authenticate", post(did_authenticate)) 
             .layer(cors)
             .layer(trace_layer)
             .with_state(state);
