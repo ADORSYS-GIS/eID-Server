@@ -21,3 +21,9 @@ target/
 
 # Added by vscode
 .vscode/
+
+.cursor
+.DS_Store
+playground/node_modules/
+Docs/
+config.json
