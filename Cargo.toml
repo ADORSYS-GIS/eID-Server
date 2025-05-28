@@ -23,15 +23,23 @@ quick-xml = { version = "0.37", features = ["serialize"] }
 # Configuration
 config = "0.15"
 
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+tempfile = "3.20.0"
+
 # Logging and metrics
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Utilities
 color-eyre = "0.6"
+base64 = "0.22.1"
+url = "2.5.4"
+libflate = "2.1.0"
+openssl = "0.10.72"
 
 [dev-dependencies]
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "blocking", "rustls-tls"] }
 
 [profile.dev.package.backtrace]
 opt-level = 3

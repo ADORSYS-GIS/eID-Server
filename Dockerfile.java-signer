@@ -1,0 +1,8 @@
+FROM openjdk:11-jdk
+
+WORKDIR /app
+
+# Copy the Java signer JAR file into the container
+COPY signer.jar /app/signer.jar
+
+# The command to run the Java signer is specified in docker-compose.yml 

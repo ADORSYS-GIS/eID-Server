@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  xmlsec:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./tests/keys:/app/keys
+      - ./tmp:/app/tmp
+    command: >
+      bash -c "
+        echo 'Checking xmlsec1 version...' &&
+        xmlsec1 --version &&
+        echo 'Listing keys directory contents:' &&
+        ls -la /app/keys &&
+        echo 'Fixing file permissions...' &&
+        chmod 644 /app/keys/* &&
+        echo 'Signing /app/tmp/authn_request.xml...' &&
+        xmlsec1 --sign --privkey-pem /app/keys/saml_request_private_key.pem /app/tmp/authn_request.xml > /app/tmp/signed.xml &&
+        echo 'Signed XML content:' &&
+        cat /app/tmp/signed.xml
+      "
+
+  java-signer:
+    build:
+      context: .
+      dockerfile: Dockerfile.java-signer
+    volumes:
+      - ./tests/keys:/app/keys
+      - ./tmp:/app/tmp
+    command: >
+      bash -c "
+        echo 'Signing SAML AuthnRequest with Java (RSA-PSS)...' &&
+        java -cp /app/signer.jar com.example.SamlSigner /app/tmp/authn_request.xml /app/keys/saml_request_private_key.pem /app/tmp/signed.xml
+      "
+
