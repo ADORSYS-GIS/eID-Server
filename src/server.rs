@@ -72,7 +72,7 @@ impl Server {
             .route("/health", get(health_check))
             .route("/eIDService/useID", post(handlers::useid::use_id_handler))
             .route("/eIDService/getServerInfo", get(get_server_info))
-            .route("/did_authenticate", post(did_authenticate)) 
+            .route("/did-authenticate", post(did_authenticate)) 
             .layer(cors)
             .layer(trace_layer)
             .with_state(state);

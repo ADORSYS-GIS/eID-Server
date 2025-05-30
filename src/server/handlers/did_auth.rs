@@ -2,9 +2,9 @@ use axum::{extract::State, response::IntoResponse, http::StatusCode};
 use quick_xml::{Reader, Writer, events::{Event, BytesStart, BytesText, BytesEnd}};
 use serde::Deserialize;
 use color_eyre::Result;
-use crate::server::AppState;
+use crate::{domain::eid::models::{AuthError, SoapResponse}, server::AppState};
 use crate::domain::eid::{
-    models::{AuthError, ConnectionHandle, DIDAuthenticateRequest, DIDAuthenticateResponse, SoapResponse},
+    models::{ConnectionHandle, DIDAuthenticateRequest, DIDAuthenticateResponse},
     ports::{DIDAuthenticate, EIDService, EidService},
 };
 
@@ -23,7 +23,6 @@ struct AuthenticationProtocolData {
     optional_chat: Option<String>,
     transaction_info: Option<String>,
 }
-
 
 // Handler for DIDAuthenticate requests
 pub struct DIDAuthenticateHandler<T: DIDAuthenticate> {
@@ -62,11 +61,15 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(e)) => {
                     current_element = String::from_utf8(e.name().as_ref().to_vec())
-                        .map_err(|_| AuthError::InvalidConnection)?;
+                        .map_err(|_| AuthError::InvalidConnection {
+                            reason: "Invalid UTF-8 in element name".to_string(),
+                        })?;
                 }
                 Ok(Event::Text(e)) => {
                     let text = e.unescape()
-                        .map_err(|_| AuthError::InvalidConnection)?
+                        .map_err(|_| AuthError::InvalidConnection {
+                            reason: "Failed to unescape text content".to_string(),
+                        })?
                         .to_string();
                     match current_element.as_str() {
                         "ChannelHandle" => request.connection_handle.channel_handle = text,
@@ -92,7 +95,9 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
                     current_element.clear();
                 }
                 Ok(Event::Eof) => break,
-                Err(_) => return Err(AuthError::InvalidConnection),
+                Err(_) => return Err(AuthError::InvalidConnection {
+                    reason: "Failed to parse XML request".to_string(),
+                }),
                 _ => {}
             }
             buf.clear();
@@ -107,67 +112,111 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
 
         // Start DIDAuthenticateResponse
         writer.write_event(Event::Start(BytesStart::new("DIDAuthenticateResponse")))
-            .map_err(|_| AuthError::InvalidConnection)?;
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write DIDAuthenticateResponse element".to_string(),
+            })?;
 
         // Write Result
         writer.write_event(Event::Start(BytesStart::new("Result")))
-            .map_err(|_| AuthError::InvalidConnection)?;
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write Result element".to_string(),
+            })?;
         writer.write_event(Event::Start(BytesStart::new("ResultMajor")))
-            .map_err(|_| AuthError::InvalidConnection)?;
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write ResultMajor element".to_string(),
+            })?;
         writer.write_event(Event::Text(BytesText::new(&response.result_major)))
-            .map_err(|_| AuthError::InvalidConnection)?;
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write ResultMajor text".to_string(),
+            })?;
         writer.write_event(Event::End(BytesEnd::new("ResultMajor")))
-            .map_err(|_| AuthError::InvalidConnection)?;
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to close ResultMajor element".to_string(),
+            })?;
 
         if let Some(minor) = &response.result_minor {
             writer.write_event(Event::Start(BytesStart::new("ResultMinor")))
-                .map_err(|_| AuthError::InvalidConnection)?;
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write ResultMinor element".to_string(),
+                })?;
             writer.write_event(Event::Text(BytesText::new(minor)))
-                .map_err(|_| AuthError::InvalidConnection)?;
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write ResultMinor text".to_string(),
+                })?;
             writer.write_event(Event::End(BytesEnd::new("ResultMinor")))
-                .map_err(|_| AuthError::InvalidConnection)?;
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to close ResultMinor element".to_string(),
+                })?;
         }
         writer.write_event(Event::End(BytesEnd::new("Result")))
-            .map_err(|_| AuthError::InvalidConnection)?;
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to close Result element".to_string(),
+            })?;
 
         // Write AuthenticationProtocolData
         writer.write_event(Event::Start(BytesStart::new("AuthenticationProtocolData")))
-            .map_err(|_| AuthError::InvalidConnection)?;
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write AuthenticationProtocolData element".to_string(),
+            })?;
 
         if let Some(challenge) = &response.authentication_protocol_data.challenge {
             writer.write_event(Event::Start(BytesStart::new("Challenge")))
-                .map_err(|_| AuthError::InvalidConnection)?;
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write Challenge element".to_string(),
+                })?;
             writer.write_event(Event::Text(BytesText::new(challenge)))
-                .map_err(|_| AuthError::InvalidConnection)?;
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write Challenge text".to_string(),
+                })?;
             writer.write_event(Event::End(BytesEnd::new("Challenge")))
-                .map_err(|_| AuthError::InvalidConnection)?;
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to close Challenge element".to_string(),
+                })?;
         }
 
         if let Some(certificate) = &response.authentication_protocol_data.certificate {
             writer.write_event(Event::Start(BytesStart::new("Certificate")))
-                .map_err(|_| AuthError::InvalidConnection)?;
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write Certificate element".to_string(),
+                })?;
             writer.write_event(Event::Text(BytesText::new(certificate)))
-                .map_err(|_| AuthError::InvalidConnection)?;
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write Certificate text".to_string(),
+                })?;
             writer.write_event(Event::End(BytesEnd::new("Certificate")))
-                .map_err(|_| AuthError::InvalidConnection)?;
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to close Certificate element".to_string(),
+                })?;
         }
 
         if let Some(personal_data) = &response.authentication_protocol_data.personal_data {
             writer.write_event(Event::Start(BytesStart::new("PersonalData")))
-                .map_err(|_| AuthError::InvalidConnection)?;
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write PersonalData element".to_string(),
+                })?;
             writer.write_event(Event::Text(BytesText::new(personal_data)))
-                .map_err(|_| AuthError::InvalidConnection)?;
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write PersonalData text".to_string(),
+                })?;
             writer.write_event(Event::End(BytesEnd::new("PersonalData")))
-                .map_err(|_| AuthError::InvalidConnection)?;
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to close PersonalData element".to_string(),
+                })?;
         }
 
         writer.write_event(Event::End(BytesEnd::new("AuthenticationProtocolData")))
-            .map_err(|_| AuthError::InvalidConnection)?;
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to close AuthenticationProtocolData element".to_string(),
+            })?;
         writer.write_event(Event::End(BytesEnd::new("DIDAuthenticateResponse")))
-            .map_err(|_| AuthError::InvalidConnection)?;
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to close DIDAuthenticateResponse element".to_string(),
+            })?;
 
         let result = String::from_utf8(writer.into_inner())
-            .map_err(|_| AuthError::InvalidConnection)?;
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to convert response to UTF-8".to_string(),
+            })?;
         Ok(result)
     }
 

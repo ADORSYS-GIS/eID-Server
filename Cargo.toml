@@ -38,6 +38,12 @@ chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22.1"
 rand = "0.9.1"
 
+# cryptographic dependencies
+ring = "0.17"                   
+x509-parser = "0.15"
+pcsc = "2.8"
+lru = "0.12"
+hex = "0.4"
 
 [dev-dependencies]
 http-body-util = "0.1"
