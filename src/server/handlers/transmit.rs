@@ -1,9 +1,4 @@
-use axum::{
-    body::Bytes,
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{body::Bytes, extract::State, http::StatusCode, response::IntoResponse};
 use tracing::{debug, error};
 
 use crate::sal::transmit::channel::ApduTransport;
@@ -28,7 +23,7 @@ impl ApduTransport for ServerApduTransport {
 pub async fn transmit_handler<S>(
     State(state): State<crate::server::AppState<S>>,
     body: Bytes,
-) -> impl IntoResponse 
+) -> impl IntoResponse
 where
     S: crate::domain::eid::ports::EIDService + crate::domain::eid::ports::EidService,
 {
@@ -52,7 +47,9 @@ where
 mod tests {
     use super::*;
     use crate::domain::eid::service::{EIDServiceConfig, UseidService};
-    use crate::sal::transmit::{channel::TransmitChannel, protocol::ProtocolHandler, session::SessionManager};
+    use crate::sal::transmit::{
+        channel::TransmitChannel, protocol::ProtocolHandler, session::SessionManager,
+    };
     use crate::server::AppState;
     use axum::http::StatusCode;
     use std::sync::Arc;
@@ -68,7 +65,7 @@ mod tests {
             session_manager,
             Arc::new(ServerApduTransport),
         ));
-        
+
         let eid_service = Arc::new(UseidService::new(EIDServiceConfig::default()));
         let state = AppState {
             use_id: eid_service.clone(),
@@ -78,11 +75,12 @@ mod tests {
 
         // Test with invalid request
         let invalid_request = Bytes::from_static(b"invalid request");
-        let response = transmit_handler(State(state), invalid_request).await.into_response();
+        let response = transmit_handler(State(state), invalid_request)
+            .await
+            .into_response();
 
         // Verify - TransmitChannel converts errors to valid XML responses with error codes
         // so we expect a 200 OK status with an XML error response
         assert_eq!(response.status(), StatusCode::OK);
-        
     }
 }
