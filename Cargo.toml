@@ -33,11 +33,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Utilities
-uuid = { version = "1.6", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-base64 = "0.22.1"
+async-trait = "0.1"
+uuid = { version = "1.7", features = ["v4"] }
+hex = "0.4.3"
+chrono = "0.4.41"
 rand = "0.9.1"
-
 
 [dev-dependencies]
 http-body-util = "0.1"

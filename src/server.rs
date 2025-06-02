@@ -4,12 +4,14 @@ mod handlers;
 mod responses;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::eid::get_server_info::handler::get_server_info;
 use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
 use color_eyre::eyre::eyre;
 use handlers::health::health_check;
+use handlers::transmit::{ServerApduTransport, transmit_handler};
 use tokio::net::TcpListener;
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -17,6 +19,9 @@ use tower_http::{
 };
 
 use crate::domain::eid::ports::{EIDService, EidService};
+use crate::sal::transmit::{
+    channel::TransmitChannel, protocol::ProtocolHandler, session::SessionManager,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig<'a> {
@@ -28,6 +33,7 @@ pub struct ServerConfig<'a> {
 pub struct AppState<S: EIDService + EidService> {
     pub use_id: Arc<S>,
     pub eid_service: Arc<S>,
+    pub transmit_channel: Arc<TransmitChannel>,
 }
 
 pub struct Server {
@@ -62,15 +68,27 @@ impl Server {
 
         // This will encapsulate dependencies needed to execute the business logic
         let eid_service_arc = Arc::new(eid_service);
+
+        // Initialize the TransmitChannel components
+        let protocol_handler = ProtocolHandler::new();
+        let session_manager = SessionManager::new(Duration::from_secs(60));
+        let transmit_channel = Arc::new(TransmitChannel::new(
+            protocol_handler,
+            session_manager,
+            Arc::new(ServerApduTransport),
+        ));
+
         let state = AppState {
             use_id: eid_service_arc.clone(),
             eid_service: eid_service_arc,
+            transmit_channel,
         };
 
         let router = axum::Router::new()
             .route("/health", get(health_check))
             .route("/eIDService/useID", post(handlers::useid::use_id_handler))
             .route("/eIDService/getServerInfo", get(get_server_info))
+            .route("/transmit", post(transmit_handler))
             .layer(cors)
             .layer(trace_layer)
             .with_state(state);

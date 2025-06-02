@@ -125,9 +125,27 @@ mod tests {
     fn create_test_state() -> AppState<UseidService> {
         let service = create_test_service();
         let service_arc = Arc::new(service);
+
+        // Create a TransmitChannel for testing
+        use crate::sal::transmit::{
+            channel::{MockApduTransport, TransmitChannel},
+            protocol::ProtocolHandler,
+            session::SessionManager,
+        };
+        use std::time::Duration;
+
+        let protocol_handler = ProtocolHandler::new();
+        let session_manager = SessionManager::new(Duration::from_secs(60));
+        let transmit_channel = Arc::new(TransmitChannel::new(
+            protocol_handler,
+            session_manager,
+            Arc::new(MockApduTransport),
+        ));
+
         AppState {
             use_id: service_arc.clone(),
             eid_service: service_arc,
+            transmit_channel,
         }
     }
 
