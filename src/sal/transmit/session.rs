@@ -49,7 +49,7 @@ impl Session {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SessionManager {
     sessions: Arc<RwLock<HashMap<String, Session>>>,
     session_timeout: Duration,

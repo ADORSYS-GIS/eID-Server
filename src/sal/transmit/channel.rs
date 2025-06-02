@@ -29,6 +29,16 @@ pub struct TransmitChannel {
     apdu_transport: Arc<dyn ApduTransport>,
 }
 
+impl std::fmt::Debug for TransmitChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TransmitChannel")
+            .field("protocol_handler", &self.protocol_handler)
+            .field("session_manager", &self.session_manager)
+            .field("apdu_transport", &"<ApduTransport>")
+            .finish()
+    }
+}
+
 impl TransmitChannel {
     pub fn new(
         protocol_handler: ProtocolHandler,
