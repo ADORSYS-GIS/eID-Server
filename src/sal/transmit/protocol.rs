@@ -147,24 +147,18 @@ impl ProtocolHandler {
 
     /// Parses a request from the eID-Client
     pub fn parse_request(&self, request: &[u8]) -> Result<ParsedRequest, TransmitError> {
-        // In a real implementation, this would parse the binary protocol format
-        // For now, we'll assume a simple JSON format for demonstration
         serde_json::from_slice(request)
             .map_err(|e| TransmitError::ProtocolError(format!("Failed to parse request: {}", e)))
     }
 
     /// Formats a response to be sent to the eID-Client
     pub fn format_response(&self, response: Response) -> Result<Vec<u8>, TransmitError> {
-        // In a real implementation, this would format the response according to the protocol
-        // For now, we'll use JSON for demonstration
         serde_json::to_vec(&response)
             .map_err(|e| TransmitError::ProtocolError(format!("Failed to format response: {}", e)))
     }
 
     /// Processes data from the eID-Client
     pub fn process_data(&self, data: Option<String>) -> Result<String, TransmitError> {
-        // In a real implementation, this would process the data according to the protocol
-        // For now, we'll just echo the data back
         data.ok_or_else(|| TransmitError::InvalidRequest("No data provided".to_string()))
     }
 

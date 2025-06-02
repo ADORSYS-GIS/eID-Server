@@ -415,9 +415,6 @@ mod tests {
             let response = channel.handle_request(wrong_status_xml.as_bytes()).await.unwrap();
             let response_xml = String::from_utf8(response).unwrap();
 
-            // Print actual XML for debugging
-            println!("ACTUAL XML RESPONSE:\n{}", response_xml);
-
             // Should contain error for status code mismatch
             assert!(response_xml.contains("<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"));
             assert!(response_xml.contains("<ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/ifd#cardError</ResultMinor>"));
@@ -448,9 +445,6 @@ mod tests {
 
             let response = channel.handle_request(invalid_apdu_xml.as_bytes()).await.unwrap();
             let response_xml = String::from_utf8(response).unwrap();
-
-            // Print actual XML for debugging
-            println!("INVALID APDU TEST - ACTUAL XML RESPONSE:\n{}", response_xml);
 
             // Should contain error for invalid APDU
             assert!(response_xml.contains("<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"));
