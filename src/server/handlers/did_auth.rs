@@ -1,14 +1,19 @@
-use axum::{extract::State, response::IntoResponse, http::StatusCode};
-use quick_xml::{Reader, Writer, events::{Event, BytesStart, BytesText, BytesEnd}};
-use serde::Deserialize;
-use color_eyre::Result;
-use crate::{domain::eid::models::{AuthError, SoapResponse}, server::AppState};
 use crate::domain::eid::{
-    models::{ConnectionHandle, DIDAuthenticateRequest, DIDAuthenticateResponse},
+    models::{
+        AuthError, AuthenticationProtocolData, ConnectionHandle, DIDAuthenticateRequest,
+        DIDAuthenticateResponse, SoapResponse,
+    },
     ports::{DIDAuthenticate, EIDService, EidService},
 };
+use crate::server::AppState;
+use axum::{extract::State, http::StatusCode, response::IntoResponse};
+use color_eyre::Result;
+use quick_xml::{
+    Reader, Writer,
+    events::{BytesEnd, BytesStart, BytesText, Event},
+};
+use serde::Deserialize;
 
-// Request structure for DIDAuthenticate
 #[derive(Debug, Deserialize)]
 struct SoapDIDAuthenticateRequest {
     connection_handle: ConnectionHandle,
@@ -16,15 +21,6 @@ struct SoapDIDAuthenticateRequest {
     authentication_protocol_data: AuthenticationProtocolData,
 }
 
-#[derive(Debug, Deserialize)]
-struct AuthenticationProtocolData {
-    certificate_description: String,
-    required_chat: String,
-    optional_chat: Option<String>,
-    transaction_info: Option<String>,
-}
-
-// Handler for DIDAuthenticate requests
 pub struct DIDAuthenticateHandler<T: DIDAuthenticate> {
     eid_service: T,
 }
@@ -41,9 +37,9 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
 
         let mut request = SoapDIDAuthenticateRequest {
             connection_handle: ConnectionHandle {
-                channel_handle: String::new(),
-                ifd_name: String::new(),
-                slot_index: 0,
+                channel_handle: Some(String::new()),
+                ifd_name: Some(String::new()),
+                slot_index: Some(0),
             },
             did_name: String::new(),
             authentication_protocol_data: AuthenticationProtocolData {
@@ -60,23 +56,29 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(e)) => {
-                    current_element = String::from_utf8(e.name().as_ref().to_vec())
-                        .map_err(|_| AuthError::InvalidConnection {
+                    let name = e.local_name().as_ref().to_vec();
+                    current_element =
+                        String::from_utf8(name).map_err(|_| AuthError::InvalidConnection {
                             reason: "Invalid UTF-8 in element name".to_string(),
                         })?;
+                    tracing::debug!("Processing element: {}", current_element);
                 }
                 Ok(Event::Text(e)) => {
-                    let text = e.unescape()
+                    let text = e
+                        .unescape()
                         .map_err(|_| AuthError::InvalidConnection {
                             reason: "Failed to unescape text content".to_string(),
                         })?
                         .to_string();
+                    tracing::debug!("Text content for {}: {}", current_element, text);
                     match current_element.as_str() {
-                        "ChannelHandle" => request.connection_handle.channel_handle = text,
-                        "IFDName" => request.connection_handle.ifd_name = text,
-                        "SlotIndex" => request.connection_handle.slot_index = text.parse().unwrap_or(0),
+                        "ChannelHandle" => request.connection_handle.channel_handle = Some(text),
+                        "IFDName" => request.connection_handle.ifd_name = Some(text),
+                        "SlotIndex" => {
+                            request.connection_handle.slot_index = Some(text.parse().unwrap_or(0));
+                        }
                         "DIDName" => request.did_name = text,
-                        "CertificateDescription" => {
+                        "Certificate" => {
                             request.authentication_protocol_data.certificate_description = text;
                         }
                         "RequiredCHAT" => {
@@ -85,7 +87,7 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
                         "OptionalCHAT" => {
                             request.authentication_protocol_data.optional_chat = Some(text);
                         }
-                        "TransactionInfo" => {
+                        "AuthenticatedAuxiliaryData" => {
                             request.authentication_protocol_data.transaction_info = Some(text);
                         }
                         _ => {}
@@ -95,14 +97,17 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
                     current_element.clear();
                 }
                 Ok(Event::Eof) => break,
-                Err(_) => return Err(AuthError::InvalidConnection {
-                    reason: "Failed to parse XML request".to_string(),
-                }),
+                Err(e) => {
+                    return Err(AuthError::InvalidConnection {
+                        reason: format!("Failed to parse XML request: {}", e),
+                    });
+                }
                 _ => {}
             }
             buf.clear();
         }
 
+        tracing::debug!("Parsed request: {:?}", request);
         Ok(request)
     }
 
@@ -110,111 +115,171 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
     fn to_soap_response(&self, response: DIDAuthenticateResponse) -> Result<String, AuthError> {
         let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
 
-        // Start DIDAuthenticateResponse
-        writer.write_event(Event::Start(BytesStart::new("DIDAuthenticateResponse")))
+        let mut envelope = BytesStart::new("soapenv:Envelope");
+        envelope.push_attribute(("xmlns:soapenv", "http://schemas.xmlsoap.org/soap/envelope/"));
+        envelope.push_attribute(("xmlns:ecard", "http://www.bsi.bund.de/ecard/api/1.1"));
+        writer
+            .write_event(Event::Start(envelope))
             .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write DIDAuthenticateResponse element".to_string(),
+                reason: "Failed to write SOAP Envelope".to_string(),
             })?;
 
-        // Write Result
-        writer.write_event(Event::Start(BytesStart::new("Result")))
+        writer
+            .write_event(Event::Start(BytesStart::new("soapenv:Header")))
             .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write Result element".to_string(),
+                reason: "Failed to write SOAP Header".to_string(),
             })?;
-        writer.write_event(Event::Start(BytesStart::new("ResultMajor")))
+        writer
+            .write_event(Event::End(BytesEnd::new("soapenv:Header")))
             .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write ResultMajor element".to_string(),
+                reason: "Failed to close SOAP Header".to_string(),
             })?;
-        writer.write_event(Event::Text(BytesText::new(&response.result_major)))
+
+        writer
+            .write_event(Event::Start(BytesStart::new("soapenv:Body")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write SOAP Body".to_string(),
+            })?;
+
+        writer
+            .write_event(Event::Start(BytesStart::new(
+                "ecard:DIDAuthenticateResponse",
+            )))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write DIDAuthenticateResponse".to_string(),
+            })?;
+
+        writer
+            .write_event(Event::Start(BytesStart::new("ecard:Result")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write Result".to_string(),
+            })?;
+        writer
+            .write_event(Event::Start(BytesStart::new("ecard:ResultMajor")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write ResultMajor".to_string(),
+            })?;
+        writer
+            .write_event(Event::Text(BytesText::new(&response.result_major)))
             .map_err(|_| AuthError::InvalidConnection {
                 reason: "Failed to write ResultMajor text".to_string(),
             })?;
-        writer.write_event(Event::End(BytesEnd::new("ResultMajor")))
+        writer
+            .write_event(Event::End(BytesEnd::new("ecard:ResultMajor")))
             .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close ResultMajor element".to_string(),
+                reason: "Failed to close ResultMajor".to_string(),
             })?;
 
         if let Some(minor) = &response.result_minor {
-            writer.write_event(Event::Start(BytesStart::new("ResultMinor")))
+            writer
+                .write_event(Event::Start(BytesStart::new("ecard:ResultMinor")))
                 .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write ResultMinor element".to_string(),
+                    reason: "Failed to write ResultMinor".to_string(),
                 })?;
-            writer.write_event(Event::Text(BytesText::new(minor)))
+            writer
+                .write_event(Event::Text(BytesText::new(minor)))
                 .map_err(|_| AuthError::InvalidConnection {
                     reason: "Failed to write ResultMinor text".to_string(),
                 })?;
-            writer.write_event(Event::End(BytesEnd::new("ResultMinor")))
+            writer
+                .write_event(Event::End(BytesEnd::new("ecard:ResultMinor")))
                 .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to close ResultMinor element".to_string(),
+                    reason: "Failed to close ResultMinor".to_string(),
                 })?;
         }
-        writer.write_event(Event::End(BytesEnd::new("Result")))
+        writer
+            .write_event(Event::End(BytesEnd::new("ecard:Result")))
             .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close Result element".to_string(),
+                reason: "Failed to close Result".to_string(),
             })?;
 
-        // Write AuthenticationProtocolData
-        writer.write_event(Event::Start(BytesStart::new("AuthenticationProtocolData")))
+        writer
+            .write_event(Event::Start(BytesStart::new(
+                "ecard:AuthenticationProtocolData",
+            )))
             .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write AuthenticationProtocolData element".to_string(),
+                reason: "Failed to write AuthenticationProtocolData".to_string(),
             })?;
-
-        if let Some(challenge) = &response.authentication_protocol_data.challenge {
-            writer.write_event(Event::Start(BytesStart::new("Challenge")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write Challenge element".to_string(),
-                })?;
-            writer.write_event(Event::Text(BytesText::new(challenge)))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write Challenge text".to_string(),
-                })?;
-            writer.write_event(Event::End(BytesEnd::new("Challenge")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to close Challenge element".to_string(),
-                })?;
-        }
 
         if let Some(certificate) = &response.authentication_protocol_data.certificate {
-            writer.write_event(Event::Start(BytesStart::new("Certificate")))
+            writer
+                .write_event(Event::Start(BytesStart::new("ecard:Certificate")))
                 .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write Certificate element".to_string(),
+                    reason: "Failed to write Certificate".to_string(),
                 })?;
-            writer.write_event(Event::Text(BytesText::new(certificate)))
+            writer
+                .write_event(Event::Text(BytesText::new(certificate)))
                 .map_err(|_| AuthError::InvalidConnection {
                     reason: "Failed to write Certificate text".to_string(),
                 })?;
-            writer.write_event(Event::End(BytesEnd::new("Certificate")))
+            writer
+                .write_event(Event::End(BytesEnd::new("ecard:Certificate")))
                 .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to close Certificate element".to_string(),
+                    reason: "Failed to close Certificate".to_string(),
                 })?;
         }
 
         if let Some(personal_data) = &response.authentication_protocol_data.personal_data {
-            writer.write_event(Event::Start(BytesStart::new("PersonalData")))
+            writer
+                .write_event(Event::Start(BytesStart::new("ecard:PersonalData")))
                 .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write PersonalData element".to_string(),
+                    reason: "Failed to write PersonalData".to_string(),
                 })?;
-            writer.write_event(Event::Text(BytesText::new(personal_data)))
+            writer
+                .write_event(Event::Text(BytesText::new(personal_data)))
                 .map_err(|_| AuthError::InvalidConnection {
                     reason: "Failed to write PersonalData text".to_string(),
                 })?;
-            writer.write_event(Event::End(BytesEnd::new("PersonalData")))
+            writer
+                .write_event(Event::End(BytesEnd::new("ecard:PersonalData")))
                 .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to close PersonalData element".to_string(),
+                    reason: "Failed to close PersonalData".to_string(),
                 })?;
         }
 
-        writer.write_event(Event::End(BytesEnd::new("AuthenticationProtocolData")))
+        if let Some(auth_token) = &response.authentication_protocol_data.authentication_token {
+            writer
+                .write_event(Event::Start(BytesStart::new("ecard:AuthenticationToken")))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write AuthenticationToken".to_string(),
+                })?;
+            writer
+                .write_event(Event::Text(BytesText::new(auth_token)))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write AuthenticationToken text".to_string(),
+                })?;
+            writer
+                .write_event(Event::End(BytesEnd::new("ecard:AuthenticationToken")))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to close AuthenticationToken".to_string(),
+                })?;
+        }
+
+        writer
+            .write_event(Event::End(BytesEnd::new(
+                "ecard:AuthenticationProtocolData",
+            )))
             .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close AuthenticationProtocolData element".to_string(),
+                reason: "Failed to close AuthenticationProtocolData".to_string(),
             })?;
-        writer.write_event(Event::End(BytesEnd::new("DIDAuthenticateResponse")))
+        writer
+            .write_event(Event::End(BytesEnd::new("ecard:DIDAuthenticateResponse")))
             .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close DIDAuthenticateResponse element".to_string(),
+                reason: "Failed to close DIDAuthenticateResponse".to_string(),
+            })?;
+        writer
+            .write_event(Event::End(BytesEnd::new("soapenv:Body")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to close SOAP Body".to_string(),
+            })?;
+        writer
+            .write_event(Event::End(BytesEnd::new("soapenv:Envelope")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to close SOAP Envelope".to_string(),
             })?;
 
-        let result = String::from_utf8(writer.into_inner())
-            .map_err(|_| AuthError::InvalidConnection {
+        let result =
+            String::from_utf8(writer.into_inner()).map_err(|_| AuthError::InvalidConnection {
                 reason: "Failed to convert response to UTF-8".to_string(),
             })?;
         Ok(result)
@@ -230,17 +295,20 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
             connection_handle: soap_request.connection_handle,
             did_name: soap_request.did_name,
             authentication_protocol_data: crate::domain::eid::models::AuthenticationProtocolData {
-                certificate_description: soap_request.authentication_protocol_data.certificate_description,
+                certificate_description: soap_request
+                    .authentication_protocol_data
+                    .certificate_description,
                 required_chat: soap_request.authentication_protocol_data.required_chat,
                 optional_chat: soap_request.authentication_protocol_data.optional_chat,
                 transaction_info: soap_request.authentication_protocol_data.transaction_info,
             },
         };
 
-        // Process request using domain service
-        let response = self.eid_service.handle_did_authenticate(domain_request)?;
+        let response = self
+            .eid_service
+            .handle_did_authenticate(domain_request)
+            .await?;
 
-        // Convert to SOAP response
         let soap_response = self.to_soap_response(response)?;
 
         Ok(SoapResponse {
@@ -250,22 +318,19 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
     }
 }
 
-pub async fn did_authenticate<S: DIDAuthenticate + EIDService + EidService + Send + Sync + 'static>(
+pub async fn did_authenticate<
+    S: DIDAuthenticate + EIDService + EidService + Send + Sync + 'static,
+>(
     State(state): State<AppState<S>>,
     body: String,
 ) -> Result<impl IntoResponse, StatusCode> {
     let handler = DIDAuthenticateHandler::new((*state.eid_service).clone());
 
-    // Process the request using the body directly
     let response = handler
         .handle(&body)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Return the SOAP response with the appropriate status code
-    // Convert the numeric status to StatusCode properly
-    let status_code = StatusCode::from_u16(response.status as u16)
-        .unwrap_or(StatusCode::OK);
-
+    let status_code = StatusCode::from_u16(response.status as u16).unwrap_or(StatusCode::OK);
     Ok((status_code, response.body))
 }

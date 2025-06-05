@@ -34,6 +34,12 @@ pub struct ServerInfo {
     pub additional_info: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SoapResponse {
+    pub body: String,
+    pub status: u16,
+}
+
 /// Document verification rights information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentVerificationRights {
@@ -49,54 +55,54 @@ pub struct DocumentVerificationRights {
 pub enum AuthError {
     #[error("Invalid connection handle: {reason}")]
     InvalidConnection { reason: String },
-    
+
     #[error("Certificate validation failed: {details}")]
     InvalidCertificate { details: String },
-    
+
     #[error("User cancelled authentication")]
     UserCancellation,
-    
+
     #[error("Card communication error: {reason}")]
     CardCommunicationError { reason: String },
-    
+
     #[error("Authentication failed: {reason}")]
     AuthenticationFailed { reason: String },
-    
+
     #[error("Cryptographic operation failed: {operation}")]
     CryptoError { operation: String },
-    
+
     #[error("Protocol violation: {details}")]
     ProtocolError { details: String },
-    
+
     #[error("Timeout occurred during {operation}")]
     TimeoutError { operation: String },
-    
+
     #[error("Internal server error: {message}")]
     InternalError { message: String },
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ConnectionHandle {
-    pub channel_handle: String,
-    pub ifd_name: String,
-    pub slot_index: u32,
-}
-#[derive(Debug)]
-pub struct SoapResponse {
-    pub body: String,
-    pub status: u16,
+    pub channel_handle: Option<String>,
+    pub ifd_name: Option<String>,
+    pub slot_index: Option<u32>,
 }
 
 impl ConnectionHandle {
     pub fn new(channel_handle: String, ifd_name: String, slot_index: u32) -> Self {
         Self {
-            channel_handle,
-            ifd_name,
-            slot_index,
+            channel_handle: Some(channel_handle),
+            ifd_name: Some(ifd_name),
+            slot_index: Some(slot_index),
         }
     }
-    
+
     pub fn is_valid(&self) -> bool {
-        !self.channel_handle.is_empty() && !self.ifd_name.is_empty()
+        self.channel_handle
+            .as_ref()
+            .map_or(false, |ch| !ch.is_empty())
+            && self.ifd_name.as_ref().map_or(false, |ifd| !ifd.is_empty())
+            && self.slot_index.is_some()
     }
 }
 
@@ -143,20 +149,20 @@ impl DIDAuthenticateRequest {
             authentication_protocol_data,
         }
     }
-    
+
     pub fn validate(&self) -> Result<(), AuthError> {
         if !self.connection_handle.is_valid() {
             return Err(AuthError::InvalidConnection {
                 reason: "Connection handle contains invalid data".to_string(),
             });
         }
-        
+
         if self.did_name.is_empty() {
             return Err(AuthError::ProtocolError {
                 details: "DID name cannot be empty".to_string(),
             });
         }
-        
+
         Ok(())
     }
 }
@@ -178,17 +184,17 @@ impl ResponseProtocolData {
             authentication_token: None,
         }
     }
-    
+
     pub fn with_personal_data(mut self, data: String) -> Self {
         self.personal_data = Some(data);
         self
     }
-    
+
     pub fn with_certificate(mut self, cert: String) -> Self {
         self.certificate = Some(cert);
         self
     }
-    
+
     pub fn with_authentication_token(mut self, token: String) -> Self {
         self.authentication_token = Some(token);
         self
@@ -221,7 +227,7 @@ impl DIDAuthenticateResponse {
                 .as_secs(),
         }
     }
-    
+
     pub fn error(error: &AuthError) -> Self {
         let (major, minor) = error.to_result_codes();
         Self {
@@ -234,7 +240,7 @@ impl DIDAuthenticateResponse {
                 .as_secs(),
         }
     }
-    
+
     pub fn is_success(&self) -> bool {
         self.result_major.contains("ok")
     }
@@ -246,19 +252,30 @@ impl AuthError {
         match self {
             AuthError::UserCancellation => (
                 "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
-                Some("http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#cancellationByUser".to_string()),
+                Some(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#cancellationByUser"
+                        .to_string(),
+                ),
             ),
             AuthError::InvalidCertificate { .. } => (
                 "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
-                Some("http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#invalidCertificate".to_string()),
+                Some(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#invalidCertificate"
+                        .to_string(),
+                ),
             ),
             AuthError::AuthenticationFailed { .. } => (
                 "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
-                Some("http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#authenticationFailed".to_string()),
+                Some(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#authenticationFailed"
+                        .to_string(),
+                ),
             ),
             _ => (
                 "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
-                Some("http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#generalError".to_string()),
+                Some(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#generalError".to_string(),
+                ),
             ),
         }
     }

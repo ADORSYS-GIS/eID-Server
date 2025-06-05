@@ -1,21 +1,22 @@
-//! Service layer that provides the business logic of the domain.
-
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
 
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use color_eyre::Result;
 use rand::Rng;
-use tracing::{debug, info, instrument, warn, error};
 use std::default::Default;
+use tracing::{debug, error, info};
 
 use super::certificate::{CardCommunicator, CertificateStore, CryptoProvider};
-use super::models::{AuthError, ConnectionHandle, DIDAuthenticateRequest, DIDAuthenticateResponse, ResponseProtocolData, ServerInfo};
+use super::models::{
+    AuthError, DIDAuthenticateRequest, DIDAuthenticateResponse, ResponseProtocolData, ServerInfo,
+};
 use super::ports::{DIDAuthenticate, EIDService, EidService};
 use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
 };
 use crate::eid::use_id::model::{Psk, UseIDRequest, UseIDResponse};
+use async_trait::async_trait;
 
 // Configuration for the eID Service
 #[derive(Clone, Debug)]
@@ -54,12 +55,12 @@ pub struct UseidService {
     pub sessions: Arc<RwLock<Vec<SessionInfo>>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct DIDAuthenticateService {
     certificate_store: CertificateStore,
     crypto_provider: CryptoProvider,
     card_communicator: CardCommunicator,
-    max_retry_attempts: u32,
+    sessions: Arc<RwLock<Vec<SessionInfo>>>,
 }
 
 impl UseidService {
@@ -241,252 +242,176 @@ impl EidService for UseidService {
 }
 
 impl DIDAuthenticateService {
-    /// Creates a new DIDAuthenticateService with the provided components
     pub fn new(
         certificate_store: CertificateStore,
         crypto_provider: CryptoProvider,
         card_communicator: CardCommunicator,
+        sessions: Arc<RwLock<Vec<SessionInfo>>>,
     ) -> Self {
         Self {
             certificate_store,
             crypto_provider,
             card_communicator,
-            max_retry_attempts: 3,
+            sessions,
         }
     }
-    
-    /// Creates a service with default components for testing/development
-    pub fn new_with_defaults() -> Self {
-        Self::new(
-            CertificateStore::default(),
-            CryptoProvider::default(),
-            CardCommunicator::default(),
-        )
+
+    pub async fn new_with_defaults(sessions: Arc<RwLock<Vec<SessionInfo>>>) -> Self {
+        dotenvy::dotenv().expect("Failed to load .env file");
+        let certificate_store = CertificateStore::new();
+
+        // Load certificate paths from .env
+        let cert_paths = vec![
+            std::env::var("CV_TERM_PATH").expect("CV_TERM_PATH not set in .env"),
+            std::env::var("CV_DV_PATH").expect("CV_DV_PATH not set in .env"),
+            std::env::var("CVCA_PATH").expect("CVCA_PATH not set in .env"),
+        ];
+
+        for cert_path in cert_paths {
+            let cert_data = std::fs::read(&cert_path).unwrap_or_else(|e| {
+                panic!("Failed to read certificate at {}: {}", cert_path, e);
+            });
+            if let Err(e) = certificate_store.add_trusted_root(cert_data).await {
+                tracing::error!("Failed to add trusted root certificate: {:?}", e);
+            }
+        }
+
+        let ausweisapp2_endpoint =
+            std::env::var("AUSWEISAPP2_ENDPOINT").expect("AUSWEISAPP2_ENDPOINT not set in .env");
+
+        Self {
+            certificate_store,
+            crypto_provider: CryptoProvider::default(),
+            card_communicator: CardCommunicator::new(&ausweisapp2_endpoint),
+            sessions,
+        }
     }
-    
-    /// Main entry point for DID authentication
-    #[instrument(skip(self), fields(did_name = %request.did_name))]
+
     pub async fn authenticate(&self, request: DIDAuthenticateRequest) -> DIDAuthenticateResponse {
-        info!("Starting DID authentication process");
-        
-        match self.authenticate_internal(request).await {
+        info!(
+            "Starting DID authentication process for request: {:?}",
+            request
+        );
+
+        match self
+            .authenticate_internal(request, self.sessions.clone())
+            .await
+        {
             Ok(response_data) => {
                 info!("DID authentication completed successfully");
                 DIDAuthenticateResponse::success(response_data)
             }
-            Err(error) => {
-                error!("DID authentication failed: {}", error);
-                DIDAuthenticateResponse::error(&error)
+            Err(e) => {
+                error!("DID authentication failed: {:?}", e);
+                DIDAuthenticateResponse::error(&e)
             }
         }
     }
-    
-    /// Internal authentication logic with proper error handling
-    async fn authenticate_internal(&self, request: DIDAuthenticateRequest) -> Result<ResponseProtocolData, AuthError> {
-        // 1. Validate the request
+
+    async fn authenticate_internal(
+        &self,
+        request: DIDAuthenticateRequest,
+        sessions: Arc<RwLock<Vec<SessionInfo>>>,
+    ) -> Result<ResponseProtocolData, AuthError> {
         request.validate()?;
         debug!("Request validation passed");
-        
-        // 2. Validate connection to card
-        self.validate_connection(&request.connection_handle).await?;
-        debug!("Connection validation passed");
-        
-        // 3. Perform Terminal Authentication
-        let terminal_auth_result = self.perform_terminal_authentication(&request).await?;
-        debug!("Terminal authentication completed");
 
-        // 4. Read identity data
-        let identity_data = self.read_identity_data(&request).await?;
-        debug!("Identity data retrieved");
-        
-        // 5. Build response
-        Ok(ResponseProtocolData::new()
-            .with_personal_data(identity_data)
-            .with_certificate(terminal_auth_result)
-            .with_authentication_token("auth_token_12345".to_string()))
-    }
-    
-    /// Validates the connection to the smart card
-    #[instrument(skip(self))]
-    async fn validate_connection(&self, handle: &ConnectionHandle) -> Result<(), AuthError> {
-        debug!("Validating connection handle");
-        
-        if !handle.is_valid() {
-            return Err(AuthError::InvalidConnection {
-                reason: "Connection handle validation failed".to_string(),
-            });
-        }
-        
-        // Test communication with the card
-        match self.card_communicator.send_apdu(handle, &[0x00, 0xA4, 0x04, 0x00]).await {
-            Ok(response) => {
-                if response.len() < 2 {
-                    return Err(AuthError::CardCommunicationError {
-                        reason: "Unexpected card response length".to_string(),
-                    });
-                }
-                debug!("Card communication test successful");
-                Ok(())
+        // Validate session
+        let session_id = request
+            .connection_handle
+            .channel_handle
+            .as_ref()
+            .ok_or_else(|| AuthError::InvalidConnection {
+                reason: "Missing channel handle".to_string(),
+            })?;
+
+        let _session_info = {
+            let sessions = sessions.read().map_err(|e| AuthError::InternalError {
+                message: format!("Failed to acquire sessions lock: {}", e),
+            })?;
+            let session = sessions
+                .iter()
+                .find(|s| s.id == *session_id)
+                .ok_or_else(|| AuthError::InvalidConnection {
+                    reason: "Invalid or expired session".to_string(),
+                })?;
+            if session.expiry < Utc::now() {
+                return Err(AuthError::TimeoutError {
+                    operation: "Session validation".to_string(),
+                });
             }
-            Err(e) => {
-                warn!("Card communication test failed: {}", e);
-                Err(e)
-            }
-        }
-    }
-    
-    /// Performs Terminal Authentication (TA) phase
-    #[instrument(skip(self))]
-    async fn perform_terminal_authentication(&self, request: &DIDAuthenticateRequest) -> Result<String, AuthError> {
-        info!("Starting Terminal Authentication");
-        
-        let certificate = &request.authentication_protocol_data.certificate_description;
-        
-        // 1. Validate our certificate chain - convert String to Vec<u8>
-        let certificate_der = certificate.as_bytes().to_vec();
-        let is_valid = self.certificate_store.validate_certificate_chain(certificate_der).await?;
+            session.clone()
+        };
+
+        let certificate_der = base64::engine::general_purpose::STANDARD
+            .decode(&request.authentication_protocol_data.certificate_description)
+            .map_err(|e| AuthError::InvalidCertificate {
+                details: format!("Failed to decode certificate: {}", e),
+            })?;
+
+        let is_valid = self
+            .certificate_store
+            .validate_certificate_chain(certificate_der)
+            .await?;
         if !is_valid {
             return Err(AuthError::InvalidCertificate {
                 details: "Certificate chain validation failed".to_string(),
             });
         }
-        
-        // 2. Get certificate permissions - convert String to &[u8]
-        let certificate_bytes = certificate.as_bytes();
-        let permissions = self.certificate_store.get_certificate_permissions(certificate_bytes).await?;
-        debug!("Certificate permissions: {:?}", permissions);
-        
-        // 3. Generate challenge for card verification
-        let challenge = self.crypto_provider.generate_challenge().await?;
-        
-        // 4. Send certificate and challenge to card
-        let mut apdu = vec![0x00, 0x87]; // MSE:Set AT command
-        apdu.extend_from_slice(&challenge);
-        
-        let response = self.card_communicator.send_apdu(&request.connection_handle, &apdu).await?;
-        
-        if response.len() < 2 || response[response.len()-2..] != [0x90, 0x00] {
-            return Err(AuthError::AuthenticationFailed {
-                reason: "Terminal authentication rejected by card".to_string(),
-            });
-        }
-        
-        info!("Terminal Authentication completed successfully");
-        Ok(certificate.clone())
-    }
-    
-    /// Establishes secure channel via Chip Authentication (CA)
-    #[instrument(skip(self))]
-    async fn establish_secure_channel(&self, request: &DIDAuthenticateRequest) -> Result<(Vec<u8>, Vec<u8>), AuthError> {
-        info!("Starting Chip Authentication");
-        
-        // 1. Get card's public key
-        let get_challenge = vec![0x00, 0x84, 0x00, 0x00, 0x08];
-        let card_pubkey_response = self.card_communicator.send_apdu(&request.connection_handle, &get_challenge).await?;
-        
-        if card_pubkey_response.len() < 10 {
-            return Err(AuthError::CryptoError {
-                operation: "Failed to retrieve card public key".to_string(),
-            });
-        }
-        
-        let card_pubkey = &card_pubkey_response[..card_pubkey_response.len()-2];
-        
-        // 2. Generate our ephemeral key pair (mock)
-        let our_private_key = vec![0x12, 0x34, 0x56, 0x78]; // Mock private key
-        let our_public_key = vec![0x87, 0x65, 0x43, 0x21]; // Mock public key
-        
-        // 3. Send our public key to card
-        let mut send_pubkey = vec![0x00, 0x86, 0x00, 0x00];
-        send_pubkey.push(our_public_key.len() as u8);
-        send_pubkey.extend_from_slice(&our_public_key);
-        
-        let pubkey_response = self.card_communicator.send_apdu(&request.connection_handle, &send_pubkey).await?;
-        
-        if pubkey_response.len() < 2 || pubkey_response[pubkey_response.len()-2..] != [0x90, 0x00] {
-            return Err(AuthError::CryptoError {
-                operation: "Card rejected our public key".to_string(),
-            });
-        }
-        
-        // 4. Perform ECDH key exchange
-        let shared_secret = self.crypto_provider.perform_ecdh(&our_private_key, card_pubkey).await?;
-        
-        // 5. Derive session keys
-        let (enc_key, mac_key) = self.crypto_provider.derive_session_keys(&shared_secret).await?;
-        
-        info!("Chip Authentication completed successfully");
-        Ok((enc_key, mac_key))
-    }
-    
-    /// Reads identity data from the card
-    #[instrument(skip(self))]
-    async fn read_identity_data(&self, request: &DIDAuthenticateRequest) -> Result<String, AuthError> {
-        info!("Reading identity data from card");
-        
-        // Extract required permissions from request
-        let required_permissions = vec![request.authentication_protocol_data.required_chat.clone()];
-        
-        let mut all_permissions = required_permissions;
-        if let Some(optional) = &request.authentication_protocol_data.optional_chat {
-            all_permissions.push(optional.clone());
-        }
-        
-        // Read data with retry logic
-        for attempt in 1..=self.max_retry_attempts {
-            match self.card_communicator.read_identity_data(&request.connection_handle, &all_permissions).await {
-                Ok(data) => {
-                    info!("Successfully read identity data on attempt {}", attempt);
-                    return Ok(data);
-                }
-                Err(e) if attempt < self.max_retry_attempts => {
-                    warn!("Attempt {} failed, retrying: {}", attempt, e);
-                    tokio::time::sleep(Duration::from_millis(100 * attempt as u64)).await;
-                }
-                Err(e) => {
-                    error!("Failed to read identity data after {} attempts: {}", self.max_retry_attempts, e);
-                    return Err(e);
-                }
-            }
-        }
-        
-        unreachable!()
+
+        let personal_data = self
+            .card_communicator
+            .send_did_authenticate(
+                &request.connection_handle,
+                &request.did_name,
+                &request.authentication_protocol_data,
+            )
+            .await?;
+
+        // Generate authentication token
+        let auth_token = self
+            .crypto_provider
+            .generate_challenge()
+            .await?
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
+
+        Ok(ResponseProtocolData {
+            challenge: None,
+            certificate: Some(
+                request
+                    .authentication_protocol_data
+                    .certificate_description
+                    .clone(),
+            ),
+            personal_data: Some(personal_data),
+            authentication_token: Some(auth_token),
+        })
     }
 }
+
+#[async_trait]
 impl DIDAuthenticate for UseidService {
-    fn handle_did_authenticate(&self, request: DIDAuthenticateRequest) -> Result<DIDAuthenticateResponse, AuthError> {
-        // Validate the request first
+    async fn handle_did_authenticate(
+        &self,
+        request: DIDAuthenticateRequest,
+    ) -> Result<DIDAuthenticateResponse, AuthError> {
         if let Err(e) = request.validate() {
             return Ok(DIDAuthenticateResponse {
-                result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
-                result_minor: Some(format!("http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/common#parameterError: {}", e)),
+                result_major: String::from(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error",
+                ),
+                result_minor: Some(format!(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/common#parameterError: {}",
+                    e
+                )),
                 authentication_protocol_data: ResponseProtocolData::default(),
                 timestamp: Utc::now().timestamp() as u64,
             });
         }
 
-        // Create DIDAuthenticateService with default components for processing
-        let did_service = DIDAuthenticateService::new_with_defaults();
-        
-        // Since we need to handle this synchronously but the actual authentication is async,
-        // we'll use a runtime to block on the async operation
-        let rt = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt,
-            Err(e) => {
-                error!("Failed to create async runtime: {}", e);
-                return Ok(DIDAuthenticateResponse {
-                    result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
-                    result_minor: Some("http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/common#internalError".to_string()),
-                    authentication_protocol_data: ResponseProtocolData::default(),
-                    timestamp: Utc::now().timestamp() as u64,
-                });
-            }
-        };
-
-        // Execute the authentication process
-        let response = rt.block_on(did_service.authenticate(request));
-        
-        // The DIDAuthenticateService.authenticate method already returns a properly formatted response
-        Ok(response)
+        let did_service = DIDAuthenticateService::new_with_defaults(self.sessions.clone()).await;
+        Ok(did_service.authenticate(request).await)
     }
 }

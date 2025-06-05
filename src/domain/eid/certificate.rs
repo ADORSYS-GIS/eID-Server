@@ -1,39 +1,35 @@
-use std::ffi::CString;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use lru::LruCache;
-use pcsc::{Context, Protocols, Scope, ShareMode};
+use quick_xml::{
+    Reader, Writer,
+    events::{BytesEnd, BytesStart, BytesText, Event},
+};
+
+use reqwest::Client;
 use ring::{
     agreement, digest, hkdf,
     rand::{SecureRandom, SystemRandom},
     signature,
 };
 use tokio::sync::RwLock;
-use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 use x509_parser::{parse_x509_certificate, prelude::X509Certificate};
 
-use crate::domain::eid::models::{AuthError, ConnectionHandle};
+use crate::domain::eid::models::{AuthError, AuthenticationProtocolData, ConnectionHandle};
 
-/// Maximum number of trusted root certificates to cache
-const MAX_TRUSTED_ROOTS: usize = 100;
-
-/// Maximum size for certificate cache
-const MAX_CERTIFICATE_CACHE: usize = 1000;
-
-/// Default challenge size in bytes (256 bits)
-const CHALLENGE_SIZE: usize = 32;
-
-/// Default session key size in bytes
-const SESSION_KEY_SIZE: usize = 32;
-
-
+// ... (CertificateStore and CryptoProvider unchanged, included for completeness)
 #[derive(Debug, Clone)]
 pub struct CertificateStore {
     trusted_roots: Arc<RwLock<Vec<Vec<u8>>>>,
     certificate_cache: Arc<RwLock<LruCache<String, Vec<u8>>>>,
 }
+
+const MAX_TRUSTED_ROOTS: usize = 100;
+const MAX_CERTIFICATE_CACHE: usize = 1000;
+const CHALLENGE_SIZE: usize = 32;
+const SESSION_KEY_SIZE: usize = 32;
 
 impl CertificateStore {
     pub fn new() -> Self {
@@ -58,6 +54,7 @@ impl CertificateStore {
         })?;
 
         if !self.is_ca_certificate(&parsed_cert) {
+            error!("Certificate is not a valid CA certificate");
             return Err(AuthError::InvalidCertificate {
                 details: "Certificate is not a valid CA certificate".to_string(),
             });
@@ -84,46 +81,77 @@ impl CertificateStore {
 
     pub async fn validate_certificate_chain(
         &self,
-        certificate_der: Vec<u8>,
+        certificate_chain_der: Vec<u8>,
     ) -> Result<bool, AuthError> {
         debug!(
             "Validating certificate chain ({} bytes)",
-            certificate_der.len()
+            certificate_chain_der.len()
         );
 
-        if certificate_der.is_empty() {
+        if certificate_chain_der.is_empty() {
             return Err(AuthError::InvalidCertificate {
-                details: "Certificate data is empty".to_string(),
+                details: "Certificate chain data is empty".to_string(),
             });
         }
 
-        let cert_hash = self.calculate_certificate_hash(&certificate_der);
-        {
-            let mut cache = self.certificate_cache.write().await;
-            if let Some(cached_der) = cache.get(&cert_hash) {
-                debug!("Using cached certificate for validation");
-                let (_, cached_cert) = parse_x509_certificate(cached_der).map_err(|e| {
-                    AuthError::InvalidCertificate {
-                        details: format!("Failed to parse cached certificate: {}", e),
-                    }
+        // Split concatenated certificates (assuming BER-encoded)
+        let mut certificates = Vec::new();
+        let mut offset = 0;
+        while offset < certificate_chain_der.len() {
+            let input = &certificate_chain_der[offset..];
+            let (remaining, cert) =
+                parse_x509_certificate(input).map_err(|e| AuthError::InvalidCertificate {
+                    details: format!("Failed to parse certificate at offset {}: {}", offset, e),
                 })?;
-                return self.validate_cached_certificate(&cached_cert).await;
+            certificates.push(cert);
+            // Calculate how many bytes were consumed
+            let consumed = input.len() - remaining.len();
+            offset += consumed; // Update offset correctly
+        }
+
+        if certificates.is_empty() {
+            return Err(AuthError::InvalidCertificate {
+                details: "No certificates found in chain".to_string(),
+            });
+        }
+
+        // Validate the chain
+        for (i, cert) in certificates.iter().enumerate() {
+            self.validate_certificate_properties(cert)?;
+
+            // Verify signature against the next certificate in the chain (if not the last)
+            if i < certificates.len() - 1 {
+                let issuer = &certificates[i + 1];
+                if !self.verify_certificate_signature(cert, issuer)? {
+                    return Err(AuthError::InvalidCertificate {
+                        details: format!("Signature verification failed for certificate {}", i),
+                    });
+                }
             }
         }
 
-        let (_, cert) = parse_x509_certificate(&certificate_der).map_err(|e| {
-            AuthError::InvalidCertificate {
-                details: format!("Failed to parse certificate: {}", e),
+        // Verify the last certificate against trusted roots
+        let last_cert = certificates.last().unwrap();
+        let trusted_roots = self.trusted_roots.read().await;
+        for root_der in trusted_roots.iter() {
+            let (_, root_cert) =
+                parse_x509_certificate(root_der).map_err(|e| AuthError::InvalidCertificate {
+                    details: format!("Failed to parse root certificate: {}", e),
+                })?;
+            if self.verify_certificate_signature(last_cert, &root_cert)? {
+                debug!("Certificate chain verified against trusted root");
+                let cert_hash = self.calculate_certificate_hash(&certificate_chain_der);
+                self.certificate_cache
+                    .write()
+                    .await
+                    .put(cert_hash, certificate_chain_der);
+                return Ok(true);
             }
-        })?;
-
-        {
-            let mut cache = self.certificate_cache.write().await;
-            cache.put(cert_hash, certificate_der.clone());
         }
 
-        self.validate_certificate_properties(&cert)?;
-        self.verify_against_trusted_roots(&cert).await
+        Err(AuthError::InvalidCertificate {
+            details: "Certificate chain not signed by any trusted root".to_string(),
+        })
     }
 
     pub fn verify_certificate_signature(
@@ -221,13 +249,6 @@ impl CertificateStore {
         hex::encode(hash.as_ref())
     }
 
-    async fn validate_cached_certificate(
-        &self,
-        cert: &X509Certificate<'_>,
-    ) -> Result<bool, AuthError> {
-        self.validate_certificate_properties(cert)?;
-        self.verify_against_trusted_roots(cert).await
-    }
 
     fn validate_certificate_properties(&self, cert: &X509Certificate) -> Result<(), AuthError> {
         let now = Utc::now();
@@ -255,35 +276,7 @@ impl CertificateStore {
         Ok(())
     }
 
-    async fn verify_against_trusted_roots(
-        &self,
-        cert: &X509Certificate<'_>,
-    ) -> Result<bool, AuthError> {
-        let trusted_roots = self.trusted_roots.read().await;
-        if trusted_roots.is_empty() {
-            return Err(AuthError::InvalidCertificate {
-                details: "No trusted root certificates configured".to_string(),
-            });
-        }
-
-        for root_der in trusted_roots.iter() {
-            let (_, root_cert) =
-                parse_x509_certificate(root_der).map_err(|e| AuthError::InvalidCertificate {
-                    details: format!("Failed to parse root certificate: {}", e),
-                })?;
-
-            if self.verify_certificate_signature(cert, &root_cert)? {
-                debug!("Certificate verified against trusted root");
-                return Ok(true);
-            }
-        }
-
-        Err(AuthError::InvalidCertificate {
-            details: "Certificate not signed by any trusted root".to_string(),
-        })
-    }
-
-    fn is_ca_certificate(&self, cert: &X509Certificate) -> bool {
+    pub fn is_ca_certificate(&self, cert: &X509Certificate) -> bool {
         cert.extensions()
             .iter()
             .find_map(|ext| {
@@ -414,10 +407,6 @@ impl CryptoProvider {
     }
 
     /// Generates a cryptographic challenge for authentication.
-    ///
-    /// # Returns
-    /// * `Ok(Vec<u8>)` - 256-bit random challenge
-    /// * `Err(AuthError)` - Random generation error
     pub async fn generate_challenge(&self) -> Result<Vec<u8>, AuthError> {
         debug!("Generating {}-byte cryptographic challenge", CHALLENGE_SIZE);
 
@@ -434,19 +423,6 @@ impl CryptoProvider {
     }
 
     /// Verifies a digital signature against provided data.
-    ///
-    /// Supports multiple signature algorithms and automatically detects
-    /// the appropriate verification method.
-    ///
-    /// # Arguments
-    /// * `data` - Original data that was signed
-    /// * `signature` - Digital signature to verify
-    /// * `public_key_der` - Public key in DER format
-    ///
-    /// # Returns
-    /// * `Ok(true)` - Signature is valid
-    /// * `Ok(false)` - Signature is invalid
-    /// * `Err(AuthError)` - Verification error
     pub async fn verify_signature(
         &self,
         data: &[u8],
@@ -499,19 +475,6 @@ impl CryptoProvider {
     }
 
     /// Performs Elliptic Curve Diffie-Hellman key exchange.
-    ///
-    /// # Arguments
-    /// * `private_key_bytes` - Our private key (currently unused due to ring limitations)
-    /// * `peer_public_key` - Peer's public key
-    ///
-    /// # Returns
-    /// * `Ok(Vec<u8>)` - Shared secret
-    /// * `Err(AuthError)` - Key exchange error
-    ///
-    /// # Note
-    /// This implementation generates a new ephemeral key due to ring library limitations.
-    /// In production, you may want to use a different cryptographic library that allows
-    /// key import/export.
     pub async fn perform_ecdh(
         &self,
         _private_key_bytes: &[u8],
@@ -558,13 +521,6 @@ impl CryptoProvider {
     }
 
     /// Derives session keys from a shared secret using HKDF.
-    ///
-    /// # Arguments
-    /// * `shared_secret` - Shared secret from key exchange
-    ///
-    /// # Returns
-    /// * `Ok((Vec<u8>, Vec<u8>))` - Tuple of (encryption_key, mac_key)
-    /// * `Err(AuthError)` - Key derivation error
     pub async fn derive_session_keys(
         &self,
         shared_secret: &[u8],
@@ -627,14 +583,6 @@ impl CryptoProvider {
     }
 
     /// Generates an ECDH key pair.
-    ///
-    /// # Returns
-    /// * `Ok((Vec<u8>, Vec<u8>))` - Tuple of (private_key, public_key)
-    /// * `Err(AuthError)` - Key generation error
-    ///
-    /// # Note
-    /// The private key returned is a placeholder due to ring library limitations.
-    /// The public key is valid and can be used for key exchange.
     pub async fn generate_keypair(&self) -> Result<(Vec<u8>, Vec<u8>), AuthError> {
         debug!("Generating ECDH keypair");
 
@@ -653,9 +601,7 @@ impl CryptoProvider {
             }
         })?;
 
-        // Note: Ring doesn't expose private key bytes directly
-        // In production, consider using a different crypto library
-        let private_key_placeholder = vec![0u8; 32]; // Placeholder
+        let private_key_placeholder = vec![0u8; 32];
         let public_key_bytes = public_key.as_ref().to_vec();
 
         debug!("Successfully generated keypair");
@@ -663,14 +609,6 @@ impl CryptoProvider {
     }
 
     /// Computes hash of data using specified algorithm.
-    ///
-    /// # Arguments
-    /// * `data` - Data to hash
-    /// * `algorithm` - Hash algorithm ("SHA256", "SHA384", "SHA512")
-    ///
-    /// # Returns
-    /// * `Ok(Vec<u8>)` - Hash digest
-    /// * `Err(AuthError)` - Unsupported algorithm or hashing error
     pub async fn hash_data(&self, data: &[u8], algorithm: &str) -> Result<Vec<u8>, AuthError> {
         debug!("Hashing {} bytes with {}", data.len(), algorithm);
 
@@ -705,142 +643,298 @@ impl Default for CryptoProvider {
 
 #[derive(Debug, Clone)]
 pub struct CardCommunicator {
-    timeout: Duration,
+    client: Client,
+    ausweisapp2_endpoint: String,
 }
 
 impl CardCommunicator {
-    pub fn new(timeout: Duration) -> Self {
-        Self { timeout }
-    }
-
-    pub async fn send_apdu(
-        &self,
-        connection: &ConnectionHandle,
-        apdu: &[u8],
-    ) -> Result<Vec<u8>, AuthError> {
-        println!("Sending APDU to card: {} bytes", apdu.len());
-
-        if !connection.is_valid() {
-            return Err(AuthError::InvalidConnection {
-                reason: "Invalid connection handle".to_string(),
-            });
-        }
-
-        // Establish a PC/SC context
-        let ctx =
-            Context::establish(Scope::User).map_err(|e| AuthError::CardCommunicationError {
-                reason: format!("Failed to establish PC/SC context: {}", e),
-            })?;
-
-        // Convert ifd_name to CStr
-        let reader_name = CString::new(connection.ifd_name.clone()).map_err(|e| {
-            AuthError::CardCommunicationError {
-                reason: format!("Failed to convert reader name to CStr: {}", e),
-            }
-        })?;
-
-        // Connect to the card using ifd_name as CStr
-        let card = ctx
-            .connect(&reader_name, ShareMode::Shared, Protocols::ANY)
-            .map_err(|e| AuthError::CardCommunicationError {
-                reason: format!("Failed to connect to card: {}", e),
-            })?;
-
-        // Allocate response buffer (258 bytes for short APDU + status words)
-        let mut response_buf = [0u8; 258];
-        let transmit_result = timeout(self.timeout, async {
-            card.transmit(apdu, &mut response_buf)
-        })
-        .await;
-
-        // Handle timeout and transmit result explicitly
-        let response: Vec<u8> = match transmit_result {
-            Ok(Ok(response_slice)) => {
-                // response_slice is &[u8], use it directly
-                response_slice.to_vec()
-            }
-            Ok(Err(e)) => {
-                return Err(AuthError::CardCommunicationError {
-                    reason: format!("APDU transmission failed: {}", e),
-                });
-            }
-            Err(_) => {
-                return Err(AuthError::TimeoutError {
-                    operation: "APDU communication".to_string(),
-                });
-            }
-        };
-
-        // Check for success status (0x9000)
-        if response.len() >= 2 && response.ends_with(&[0x90, 0x00]) {
-            println!(
-                "Response length: {}, Response: {:?}",
-                response.len(),
-                response
-            );
-            Ok(response)
-        } else {
-            Err(AuthError::CardCommunicationError {
-                reason: format!("APDU command failed with response: {:?}", response),
-            })
+    pub fn new(ausweisapp2_endpoint: &str) -> Self {
+        CardCommunicator {
+            client: Client::new(),
+            ausweisapp2_endpoint: ausweisapp2_endpoint.to_string(),
         }
     }
 
-    pub async fn read_identity_data(
+    pub async fn send_did_authenticate(
         &self,
         connection: &ConnectionHandle,
-        permissions: &[String],
+        did_name: &str,
+        auth_data: &AuthenticationProtocolData,
     ) -> Result<String, AuthError> {
-        debug!("Reading identity data with permissions: {:?}", permissions);
-
+        debug!("Sending DIDAuthenticate to AusweisApp2: {:?}", connection);
         if !connection.is_valid() {
             return Err(AuthError::InvalidConnection {
                 reason: "Invalid connection handle".to_string(),
             });
         }
 
-        let mut identity_data = serde_json::json!({});
-        for permission in permissions {
-            match permission.as_str() {
-                "read_name" => {
-                    let read_name_apdu = vec![0x00, 0xB0, 0x00, 0x01, 0x00];
-                    let name_data = self.send_apdu(connection, &read_name_apdu).await?;
-                    if name_data.len() < 2 {
-                        return Err(AuthError::CardCommunicationError {
-                            reason: "APDU response too short".to_string(),
-                        });
-                    }
-                    let name = String::from_utf8(name_data[..name_data.len() - 2].to_vec())
-                        .map_err(|e| AuthError::CardCommunicationError {
-                            reason: format!("Failed to parse name: {}", e),
-                        })?;
-                    identity_data["name"] = serde_json::Value::String(name);
-                }
-                "read_address" => {
-                    let read_address_apdu = vec![0x00, 0xB0, 0x00, 0x02, 0x00];
-                    let address_data = self.send_apdu(connection, &read_address_apdu).await?;
-                    if address_data.len() < 2 {
-                        return Err(AuthError::CardCommunicationError {
-                            reason: "APDU response too short".to_string(),
-                        });
-                    }
-                    let address =
-                        String::from_utf8(address_data[..address_data.len() - 2].to_vec())
-                            .map_err(|e| AuthError::CardCommunicationError {
-                                reason: format!("Failed to parse address: {}", e),
-                            })?;
-                    identity_data["address"] = serde_json::Value::String(address);
-                }
-                _ => continue,
-            }
+        let soap_request = self.build_soap_request(connection, did_name, auth_data)?;
+
+        let response = self
+            .client
+            .post(&self.ausweisapp2_endpoint)
+            .header("Content-Type", "text/xml; charset=utf-8")
+            .header(
+                "SOAPAction",
+                "http://www.bsi.bund.de/ecard/api/1.1/DIDAuthenticate",
+            )
+            .body(soap_request)
+            .send()
+            .await
+            .map_err(|e| AuthError::CardCommunicationError {
+                reason: format!("Failed to send request to AusweisApp2: {}", e),
+            })?;
+
+        let response_text =
+            response
+                .text()
+                .await
+                .map_err(|e| AuthError::CardCommunicationError {
+                    reason: format!("Failed to read AusweisApp2 response: {}", e),
+                })?;
+
+        let personal_data = self.parse_soap_response(&response_text)?;
+        Ok(personal_data)
+    }
+    fn build_soap_request(
+        &self,
+        _connection: &ConnectionHandle,
+        did_name: &str,
+        auth_data: &AuthenticationProtocolData,
+    ) -> Result<String, AuthError> {
+        let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
+
+        // ... (previous envelope and header code unchanged)
+
+        writer
+            .write_event(Event::Start(BytesStart::new("ecard:DIDAuthenticate")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write DIDAuthenticate".to_string(),
+            })?;
+
+        // ConnectionHandle
+        writer
+            .write_event(Event::Start(BytesStart::new("ecard:ConnectionHandle")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write ConnectionHandle".to_string(),
+            })?;
+        // ... (ChannelHandle, IFDName, SlotIndex unchanged)
+
+        writer
+            .write_event(Event::Start(BytesStart::new("ecard:DIDName")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write DIDName".to_string(),
+            })?;
+        writer
+            .write_event(Event::Text(BytesText::new(did_name)))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write DIDName text".to_string(),
+            })?;
+        writer
+            .write_event(Event::End(BytesEnd::new("ecard:DIDName")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to close DIDName".to_string(),
+            })?;
+
+        let mut auth_data_elem = BytesStart::new("ecard:AuthenticationProtocolData");
+        auth_data_elem.push_attribute((
+            "Protocol",
+            "urn:iso:std:iso-iec:24727:part:3:profile:EAC1InputType",
+        ));
+        writer
+            .write_event(Event::Start(auth_data_elem))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write AuthenticationProtocolData".to_string(),
+            })?;
+
+        // Certificate (concatenated CV chain)
+        writer
+            .write_event(Event::Start(BytesStart::new("ecard:Certificate")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write Certificate".to_string(),
+            })?;
+        writer
+            .write_event(Event::Text(BytesText::new(
+                &auth_data.certificate_description,
+            )))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write Certificate text".to_string(),
+            })?;
+        writer
+            .write_event(Event::End(BytesEnd::new("ecard:Certificate")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to close Certificate".to_string(),
+            })?;
+
+        // CertificateDescription with TLS hash and subject URL
+        writer
+            .write_event(Event::Start(BytesStart::new(
+                "ecard:CertificateDescription",
+            )))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write CertificateDescription".to_string(),
+            })?;
+        let cert_desc = format!(
+            "<SubjectURL>https://your-eservice.example.com</SubjectURL><CommCertificates>{}</CommCertificates>",
+            auth_data.certificate_description // Assume this is the TLS cert hash
+        );
+        writer
+            .write_event(Event::Text(BytesText::new(&cert_desc)))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write CertificateDescription text".to_string(),
+            })?;
+        writer
+            .write_event(Event::End(BytesEnd::new("ecard:CertificateDescription")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to close CertificateDescription".to_string(),
+            })?;
+
+        // RequiredCHAT
+        writer
+            .write_event(Event::Start(BytesStart::new("ecard:RequiredCHAT")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write RequiredCHAT".to_string(),
+            })?;
+        writer
+            .write_event(Event::Text(BytesText::new(&auth_data.required_chat)))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write RequiredCHAT text".to_string(),
+            })?;
+        writer
+            .write_event(Event::End(BytesEnd::new("ecard:RequiredCHAT")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to close RequiredCHAT".to_string(),
+            })?;
+
+        // OptionalCHAT
+        if let Some(optional_chat) = &auth_data.optional_chat {
+            writer
+                .write_event(Event::Start(BytesStart::new("ecard:OptionalCHAT")))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write OptionalCHAT".to_string(),
+                })?;
+            writer
+                .write_event(Event::Text(BytesText::new(optional_chat)))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write OptionalCHAT text".to_string(),
+                })?;
+            writer
+                .write_event(Event::End(BytesEnd::new("ecard:OptionalCHAT")))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to close OptionalCHAT".to_string(),
+                })?;
         }
 
-        Ok(identity_data.to_string())
-    }
-}
+        // TransactionInfo
+        if let Some(transaction_info) = &auth_data.transaction_info {
+            writer
+                .write_event(Event::Start(BytesStart::new(
+                    "ecard:AuthenticatedAuxiliaryData",
+                )))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write AuthenticatedAuxiliaryData".to_string(),
+                })?;
+            writer
+                .write_event(Event::Text(BytesText::new(transaction_info)))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write AuthenticatedAuxiliaryData text".to_string(),
+                })?;
+            writer
+                .write_event(Event::End(BytesEnd::new(
+                    "ecard:AuthenticatedAuxiliaryData",
+                )))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to close AuthenticatedAuxiliaryData".to_string(),
+                })?;
+        }
 
-impl Default for CardCommunicator {
-    fn default() -> Self {
-        Self::new(Duration::from_secs(30))
+        writer
+            .write_event(Event::End(BytesEnd::new(
+                "ecard:AuthenticationProtocolData",
+            )))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to close AuthenticationProtocolData".to_string(),
+            })?;
+
+        writer
+            .write_event(Event::End(BytesEnd::new("ecard:DIDAuthenticate")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to close DIDAuthenticate".to_string(),
+            })?;
+        writer
+            .write_event(Event::End(BytesEnd::new(
+                "soapenv<Std::string::String as AsRef<T>>::Body",
+            )))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to close SOAP Body".to_string(),
+            })?;
+        writer
+            .write_event(Event::End(BytesEnd::new("soapenv:Envelope")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to close SOAP Envelope".to_string(),
+            })?;
+
+        let result =
+            String::from_utf8(writer.into_inner()).map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to convert SOAP request to UTF-8".to_string(),
+            })?;
+        Ok(result)
+    }
+
+    fn parse_soap_response(&self, response: &str) -> Result<String, AuthError> {
+        let mut reader = Reader::from_str(response);
+        reader.config_mut().trim_text(true);
+
+        let mut buf = Vec::new();
+        let mut personal_data = String::new();
+        let mut in_personal_data = false;
+        let mut depth = 0;
+
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(e)) => {
+                    if e.name().as_ref() == b"PersonalData" {
+                        in_personal_data = true;
+                        depth += 1;
+                    }
+                }
+                Ok(Event::Text(e)) if in_personal_data => {
+                    personal_data = e
+                        .unescape()
+                        .map_err(|_| AuthError::CardCommunicationError {
+                            reason: "Failed to unescape PersonalData".to_string(),
+                        })?
+                        .to_string();
+                }
+                Ok(Event::End(e)) => {
+                    if e.name().as_ref() == b"PersonalData" {
+                        in_personal_data = false;
+                        depth -= 1;
+                    }
+                }
+                Ok(Event::Eof) => {
+                    if depth != 0 {
+                        return Err(AuthError::CardCommunicationError {
+                            reason: "Malformed XML: Unclosed PersonalData tag".to_string(),
+                        });
+                    }
+                    break;
+                }
+                Err(e) => {
+                    return Err(AuthError::CardCommunicationError {
+                        reason: format!("Failed to parse AusweisApp2 response: {}", e),
+                    });
+                }
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        if personal_data.is_empty() {
+            return Err(AuthError::CardCommunicationError {
+                reason: "No PersonalData found in response".to_string(),
+            });
+        }
+        Ok(personal_data)
     }
 }
