@@ -3,9 +3,9 @@ use super::{
     result_codes::{MajorCode, MinorCode},
 };
 use quick_xml::{
-    Writer,
     de::from_str,
     events::{BytesEnd, BytesStart, BytesText, Event},
+    Writer,
 };
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;

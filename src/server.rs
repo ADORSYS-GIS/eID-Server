@@ -7,11 +7,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::eid::get_server_info::handler::get_server_info;
-use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
+use axum::{routing::get, Router};
 use color_eyre::eyre::eyre;
 use handlers::health::health_check;
-use handlers::transmit::{ServerApduTransport, transmit_handler};
+use handlers::transmit::{transmit_handler, ServerApduTransport};
 use tokio::net::TcpListener;
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -91,7 +91,7 @@ impl Server {
             .route("/transmit", post(transmit_handler))
             .layer(cors)
             .layer(trace_layer)
-            .with_state(state); 
+            .with_state(state);
 
         let listener = TcpListener::bind(format!("{}:{}", config.host, config.port))
             .await
