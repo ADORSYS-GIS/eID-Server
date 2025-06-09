@@ -1,5 +1,6 @@
 use hex;
 use std::sync::Arc;
+use async_trait::async_trait;
 
 use super::{
     error::TransmitError,
@@ -7,14 +8,16 @@ use super::{
     session::SessionManager,
 };
 
+#[async_trait]
 pub trait ApduTransport: Send + Sync {
-    fn transmit_apdu(&self, apdu: &[u8]) -> Result<Vec<u8>, String>;
+    async fn transmit_apdu(&self, apdu: &[u8]) -> Result<Vec<u8>, String>;
 }
 
 pub struct MockApduTransport;
 
+#[async_trait]
 impl ApduTransport for MockApduTransport {
-    fn transmit_apdu(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
+    async fn transmit_apdu(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
         // Echo the APDU and append 0x90 0x00 (success)
         let mut response = apdu.to_vec();
         response.extend_from_slice(&[0x90, 0x00]);
@@ -130,7 +133,7 @@ impl TransmitChannel {
             Ok(session) => session,
             Err(e) => {
                 let error_result = super::protocol::TransmitResult::error(
-                    super::result_codes::MinorCode::InvalidContext,
+                    super::result_codes::MinorCode::InvalidContext, 
                     Some(format!("Session error: {}", e)),
                 );
                 let error_response = TransmitResponse {
@@ -216,25 +219,21 @@ impl TransmitChannel {
         &self,
         info: &InputAPDUInfo,
     ) -> Result<String, TransmitError> {
-        // Validate APDU format according to ISO 7816-4
         if info.input_apdu.is_empty() {
             return Err(TransmitError::InvalidRequest(
                 "Empty APDU provided".to_string(),
             ));
         }
 
-        // Validate APDU format (should be even-length hexadecimal string)
         if info.input_apdu.len() % 2 != 0 {
             return Err(TransmitError::CardError(
                 "Invalid APDU format: length must be even".to_string(),
             ));
         }
 
-        // Convert hex string to bytes
         let apdu_bytes = hex::decode(&info.input_apdu)
             .map_err(|e| TransmitError::CardError(format!("Invalid APDU hex: {}", e)))?;
 
-        // Validate APDU minimum length (at least CLA, INS, P1, P2 = 4 bytes)
         if apdu_bytes.len() < 4 {
             return Err(TransmitError::InvalidRequest(format!(
                 "APDU too short: {} bytes, minimum 4 bytes required",
@@ -242,41 +241,12 @@ impl TransmitChannel {
             )));
         }
 
-        // If timeout is specified, use it (according to TR-03130)
-        let _timeout_ms = info.timeout.unwrap_or(10000); // Default 10 seconds if not specified
+        let _timeout_ms = info.timeout.unwrap_or(10000);
 
-        // Create a future for transmitting APDU with transport layer
-        let transmit_future = self.apdu_transport.transmit_apdu(&apdu_bytes);
+        let response_bytes = self.apdu_transport.transmit_apdu(&apdu_bytes).await
+            .map_err(|e| TransmitError::CardError(e))?;
 
-        // In real code, we'd implement a proper timeout here
-        // For demonstration, we'll just directly call the transport
-        let response_bytes = transmit_future.map_err(|e| TransmitError::CardError(e))?;
-
-        // Convert response to hex string (uppercase as specified in TR-03130)
         let response_hex = hex::encode_upper(response_bytes);
-
-        // According to TR-03130, we need to validate the status code if specified
-        if let Some(expected_status) = &info.acceptable_status_code {
-            // Ensure response is long enough to have a status code
-            if response_hex.len() < 4 {
-                return Err(TransmitError::CardError(format!(
-                    "Response too short to contain status code: {}",
-                    response_hex
-                )));
-            }
-
-            // Extract the status code (last 2 bytes = 4 hex characters)
-            let actual_status = &response_hex[response_hex.len() - 4..];
-
-            // Validate the status code
-            if actual_status != expected_status {
-                return Err(TransmitError::CardError(format!(
-                    "Status code mismatch: expected {}, got {}",
-                    expected_status, actual_status
-                )));
-            }
-        }
-
         Ok(response_hex)
     }
 }

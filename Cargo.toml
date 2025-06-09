@@ -1,7 +1,7 @@
 [package]
 name = "eid-server"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 # Web server framework
@@ -38,6 +38,11 @@ uuid = { version = "1.7", features = ["v4"] }
 hex = "0.4.3"
 chrono = "0.4.41"
 rand = "0.9.1"
+
+# WebSocket support
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+futures-util = "0.3"
+url = "2.5"
 
 [dev-dependencies]
 http-body-util = "0.1"

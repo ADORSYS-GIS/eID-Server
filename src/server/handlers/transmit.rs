@@ -1,19 +1,48 @@
 use axum::{body::Bytes, extract::State, http::StatusCode, response::IntoResponse};
 use tracing::{debug, error};
-
 use crate::sal::transmit::channel::ApduTransport;
+use crate::sal::transmit::websocket::AusweisAppClient;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use async_trait::async_trait;
 
-/// Mock APDU transport implementation for the server
-/// This will be replaced with a real hardware implementation in production
-pub struct ServerApduTransport;
+/// APDU transport implementation that communicates with the eID-Client (AusweisApp2)
+/// via WebSocket
+pub struct ServerApduTransport {
+    client: Arc<Mutex<Option<AusweisAppClient>>>,
+}
 
+impl ServerApduTransport {
+    pub fn new() -> Self {
+        Self {
+            client: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    async fn ensure_connected(&self) -> Result<(), String> {
+        let mut client = self.client.lock().await;
+        if client.is_none() {
+            *client = Some(AusweisAppClient::new().await?);
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
 impl ApduTransport for ServerApduTransport {
-    fn transmit_apdu(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
-        // For now: echo back the APDU with status code 9000 (success)
-        // This should be replaced with actual card communication
-        debug!("Transmitting APDU: {}", hex::encode(apdu));
-        let mut response = apdu.to_vec();
-        response.extend_from_slice(&[0x90, 0x00]);
+    async fn transmit_apdu(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
+        debug!("Received APDU request: {}", hex::encode(apdu));
+        
+        self.ensure_connected().await?;
+        
+        let client = self.client.lock().await;
+        let response = client
+            .as_ref()
+            .ok_or_else(|| "WebSocket client not available".to_string())?
+            .send_apdu(apdu)
+            .await?;
+
+        debug!("Received APDU response: {}", hex::encode(&response));
         Ok(response)
     }
 }
@@ -27,7 +56,7 @@ pub async fn transmit_handler<S>(
 where
     S: crate::domain::eid::ports::EIDService + crate::domain::eid::ports::EidService,
 {
-    debug!("Received transmit request");
+    debug!("Received transmit request from eID-Client");
     match state.transmit_channel.handle_request(&body).await {
         Ok(response) => {
             debug!("Transmit request processed successfully");
@@ -63,7 +92,7 @@ mod tests {
         let transmit_channel = Arc::new(TransmitChannel::new(
             protocol_handler,
             session_manager,
-            Arc::new(ServerApduTransport),
+            Arc::new(ServerApduTransport::new()),
         ));
 
         let eid_service = Arc::new(UseidService::new(EIDServiceConfig::default()));
