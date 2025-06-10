@@ -1,7 +1,8 @@
+use std::fs;
 use std::sync::{Arc, RwLock};
 
 use base64::Engine;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use color_eyre::Result;
 use rand::Rng;
 use std::default::Default;
@@ -186,10 +187,8 @@ impl EIDService for UseidService {
             None => self.generate_psk(),
         };
 
-        // Calculate session expiry time
-        let expiry = Utc::now() + chrono::Duration::minutes(self.config.session_timeout_minutes);
-
-        // Create session info
+        // Increase timeout to 30 minutes
+        let expiry = Utc::now() + Duration::minutes(30);
         let session_info = SessionInfo {
             id: session_id.clone(),
             expiry,
@@ -260,29 +259,21 @@ impl DIDAuthenticateService {
         dotenvy::dotenv().expect("Failed to load .env file");
         let certificate_store = CertificateStore::new();
 
-        // Load certificate paths from .env
-        let cert_paths = vec![
-            std::env::var("CV_TERM_PATH").expect("CV_TERM_PATH not set in .env"),
-            std::env::var("CV_DV_PATH").expect("CV_DV_PATH not set in .env"),
-            std::env::var("CVCA_PATH").expect("CVCA_PATH not set in .env"),
-        ];
-
-        for cert_path in cert_paths {
-            let cert_data = std::fs::read(&cert_path).unwrap_or_else(|e| {
-                panic!("Failed to read certificate at {}: {}", cert_path, e);
-            });
-            if let Err(e) = certificate_store.add_trusted_root(cert_data).await {
-                tracing::error!("Failed to add trusted root certificate: {:?}", e);
-            }
+        // Load CVCA as trusted root
+        let cvca_path = std::env::var("CVCA_PATH").expect("CVCA_PATH not set in .env");
+        let cvca_data = fs::read(&cvca_path).expect("Failed to read CVCA certificate");
+        if let Err(e) = certificate_store.add_trusted_root(cvca_data).await {
+            tracing::error!("Failed to add trusted root certificate: {:?}", e);
+            panic!("Cannot proceed without trusted CVCA certificate");
         }
 
         let ausweisapp2_endpoint =
             std::env::var("AUSWEISAPP2_ENDPOINT").expect("AUSWEISAPP2_ENDPOINT not set in .env");
 
         Self {
-            certificate_store,
+            certificate_store: certificate_store.clone(),
             crypto_provider: CryptoProvider::default(),
-            card_communicator: CardCommunicator::new(&ausweisapp2_endpoint),
+            card_communicator: CardCommunicator::new(&ausweisapp2_endpoint, certificate_store),
             sessions,
         }
     }
@@ -329,13 +320,21 @@ impl DIDAuthenticateService {
             let sessions = sessions.read().map_err(|e| AuthError::InternalError {
                 message: format!("Failed to acquire sessions lock: {}", e),
             })?;
+            debug!(
+                "Available sessions: {:?}",
+                sessions.iter().map(|s| &s.id).collect::<Vec<_>>()
+            );
             let session = sessions
                 .iter()
                 .find(|s| s.id == *session_id)
-                .ok_or_else(|| AuthError::InvalidConnection {
-                    reason: "Invalid or expired session".to_string(),
+                .ok_or_else(|| {
+                    error!("Session {} not found", session_id);
+                    AuthError::InvalidConnection {
+                        reason: "Invalid or expired session".to_string(),
+                    }
                 })?;
             if session.expiry < Utc::now() {
+                error!("Session {} expired at {}", session_id, session.expiry);
                 return Err(AuthError::TimeoutError {
                     operation: "Session validation".to_string(),
                 });

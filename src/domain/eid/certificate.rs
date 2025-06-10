@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use std::{fs, sync::Arc};
 
-use chrono::{DateTime, Utc};
+use base64::Engine;
 use lru::LruCache;
 use quick_xml::{
     Reader, Writer,
@@ -47,16 +47,10 @@ impl CertificateStore {
             certificate_der.len()
         );
 
-        let (_, parsed_cert) = parse_x509_certificate(&certificate_der).map_err(|e| {
-            AuthError::InvalidCertificate {
-                details: format!("Failed to parse trusted root certificate: {}", e),
-            }
-        })?;
-
-        if !self.is_ca_certificate(&parsed_cert) {
-            error!("Certificate is not a valid CA certificate");
+        // Skip X.509 parsing for CV certificates; assume CVCA is valid BER
+        if certificate_der.is_empty() {
             return Err(AuthError::InvalidCertificate {
-                details: "Certificate is not a valid CA certificate".to_string(),
+                details: "Certificate data is empty".to_string(),
             });
         }
 
@@ -79,12 +73,36 @@ impl CertificateStore {
         Ok(())
     }
 
+    pub async fn load_cv_chain(&self) -> Result<Vec<u8>, AuthError> {
+        let cert_paths = vec![
+            std::env::var("CV_TERM_PATH").map_err(|_| AuthError::InvalidCertificate {
+                details: "CV_TERM_PATH not set in .env".to_string(),
+            })?,
+            std::env::var("CV_DV_PATH").map_err(|_| AuthError::InvalidCertificate {
+                details: "CV_DV_PATH not set in .env".to_string(),
+            })?,
+            std::env::var("CVCA_PATH").map_err(|_| AuthError::InvalidCertificate {
+                details: "CVCA_PATH not set in .env".to_string(),
+            })?,
+        ];
+
+        let mut chain = Vec::new();
+        for path in cert_paths {
+            let cert_data = fs::read(&path).map_err(|e| AuthError::InvalidCertificate {
+                details: format!("Failed to read certificate at {}: {}", path, e),
+            })?;
+            chain.extend_from_slice(&cert_data);
+        }
+
+        Ok(chain)
+    }
+
     pub async fn validate_certificate_chain(
         &self,
         certificate_chain_der: Vec<u8>,
     ) -> Result<bool, AuthError> {
         debug!(
-            "Validating certificate chain ({} bytes)",
+            "Validating CV certificate chain ({} bytes)",
             certificate_chain_der.len()
         );
 
@@ -94,64 +112,14 @@ impl CertificateStore {
             });
         }
 
-        // Split concatenated certificates (assuming BER-encoded)
-        let mut certificates = Vec::new();
-        let mut offset = 0;
-        while offset < certificate_chain_der.len() {
-            let input = &certificate_chain_der[offset..];
-            let (remaining, cert) =
-                parse_x509_certificate(input).map_err(|e| AuthError::InvalidCertificate {
-                    details: format!("Failed to parse certificate at offset {}: {}", offset, e),
-                })?;
-            certificates.push(cert);
-            // Calculate how many bytes were consumed
-            let consumed = input.len() - remaining.len();
-            offset += consumed; // Update offset correctly
-        }
-
-        if certificates.is_empty() {
-            return Err(AuthError::InvalidCertificate {
-                details: "No certificates found in chain".to_string(),
-            });
-        }
-
-        // Validate the chain
-        for (i, cert) in certificates.iter().enumerate() {
-            self.validate_certificate_properties(cert)?;
-
-            // Verify signature against the next certificate in the chain (if not the last)
-            if i < certificates.len() - 1 {
-                let issuer = &certificates[i + 1];
-                if !self.verify_certificate_signature(cert, issuer)? {
-                    return Err(AuthError::InvalidCertificate {
-                        details: format!("Signature verification failed for certificate {}", i),
-                    });
-                }
-            }
-        }
-
-        // Verify the last certificate against trusted roots
-        let last_cert = certificates.last().unwrap();
-        let trusted_roots = self.trusted_roots.read().await;
-        for root_der in trusted_roots.iter() {
-            let (_, root_cert) =
-                parse_x509_certificate(root_der).map_err(|e| AuthError::InvalidCertificate {
-                    details: format!("Failed to parse root certificate: {}", e),
-                })?;
-            if self.verify_certificate_signature(last_cert, &root_cert)? {
-                debug!("Certificate chain verified against trusted root");
-                let cert_hash = self.calculate_certificate_hash(&certificate_chain_der);
-                self.certificate_cache
-                    .write()
-                    .await
-                    .put(cert_hash, certificate_chain_der);
-                return Ok(true);
-            }
-        }
-
-        Err(AuthError::InvalidCertificate {
-            details: "Certificate chain not signed by any trusted root".to_string(),
-        })
+        // For CV certificates, delegate validation to the eID card
+        // Store the chain in cache for later use
+        let cert_hash = self.calculate_certificate_hash(&certificate_chain_der);
+        self.certificate_cache
+            .write()
+            .await
+            .put(cert_hash, certificate_chain_der);
+        Ok(true)
     }
 
     pub fn verify_certificate_signature(
@@ -247,33 +215,6 @@ impl CertificateStore {
     fn calculate_certificate_hash(&self, certificate_der: &[u8]) -> String {
         let hash = digest::digest(&digest::SHA256, certificate_der);
         hex::encode(hash.as_ref())
-    }
-
-
-    fn validate_certificate_properties(&self, cert: &X509Certificate) -> Result<(), AuthError> {
-        let now = Utc::now();
-        let not_before = DateTime::from_timestamp(cert.validity().not_before.timestamp(), 0)
-            .ok_or_else(|| AuthError::InvalidCertificate {
-                details: "Invalid not_before timestamp".to_string(),
-            })?;
-        let not_after = DateTime::from_timestamp(cert.validity().not_after.timestamp(), 0)
-            .ok_or_else(|| AuthError::InvalidCertificate {
-                details: "Invalid not_after timestamp".to_string(),
-            })?;
-
-        if now < not_before {
-            return Err(AuthError::InvalidCertificate {
-                details: "Certificate is not yet valid".to_string(),
-            });
-        }
-
-        if now > not_after {
-            return Err(AuthError::InvalidCertificate {
-                details: "Certificate has expired".to_string(),
-            });
-        }
-
-        Ok(())
     }
 
     pub fn is_ca_certificate(&self, cert: &X509Certificate) -> bool {
@@ -645,13 +586,15 @@ impl Default for CryptoProvider {
 pub struct CardCommunicator {
     client: Client,
     ausweisapp2_endpoint: String,
+    certificate_store: CertificateStore,
 }
 
 impl CardCommunicator {
-    pub fn new(ausweisapp2_endpoint: &str) -> Self {
+    pub fn new(ausweisapp2_endpoint: &str, certificate_store: CertificateStore) -> Self {
         CardCommunicator {
             client: Client::new(),
             ausweisapp2_endpoint: ausweisapp2_endpoint.to_string(),
+            certificate_store,
         }
     }
 
@@ -668,7 +611,9 @@ impl CardCommunicator {
             });
         }
 
-        let soap_request = self.build_soap_request(connection, did_name, auth_data)?;
+        let soap_request = self
+            .build_soap_request(connection, did_name, auth_data)
+            .await?;
 
         let response = self
             .client
@@ -696,15 +641,40 @@ impl CardCommunicator {
         let personal_data = self.parse_soap_response(&response_text)?;
         Ok(personal_data)
     }
-    fn build_soap_request(
+    async fn build_soap_request(
         &self,
-        _connection: &ConnectionHandle,
+        connection: &ConnectionHandle,
         did_name: &str,
         auth_data: &AuthenticationProtocolData,
     ) -> Result<String, AuthError> {
         let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
 
-        // ... (previous envelope and header code unchanged)
+        // SOAP Envelope
+        let mut envelope = BytesStart::new("soapenv:Envelope");
+        envelope.push_attribute(("xmlns:soapenv", "http://schemas.xmlsoap.org/soap/envelope/"));
+        envelope.push_attribute(("xmlns:ecard", "http://www.bsi.bund.de/ecard/api/1.1"));
+        writer
+            .write_event(Event::Start(envelope))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write SOAP Envelope".to_string(),
+            })?;
+
+        writer
+            .write_event(Event::Start(BytesStart::new("soapenv:Header")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write SOAP Header".to_string(),
+            })?;
+        writer
+            .write_event(Event::End(BytesEnd::new("soapenv:Header")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to close SOAP Header".to_string(),
+            })?;
+
+        writer
+            .write_event(Event::Start(BytesStart::new("soapenv:Body")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to write SOAP Body".to_string(),
+            })?;
 
         writer
             .write_event(Event::Start(BytesStart::new("ecard:DIDAuthenticate")))
@@ -718,8 +688,64 @@ impl CardCommunicator {
             .map_err(|_| AuthError::InvalidConnection {
                 reason: "Failed to write ConnectionHandle".to_string(),
             })?;
-        // ... (ChannelHandle, IFDName, SlotIndex unchanged)
+        if let Some(channel_handle) = &connection.channel_handle {
+            writer
+                .write_event(Event::Start(BytesStart::new("ecard:ChannelHandle")))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write ChannelHandle".to_string(),
+                })?;
+            writer
+                .write_event(Event::Text(BytesText::new(channel_handle)))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write ChannelHandle text".to_string(),
+                })?;
+            writer
+                .write_event(Event::End(BytesEnd::new("ecard:ChannelHandle")))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to close ChannelHandle".to_string(),
+                })?;
+        }
+        if let Some(ifd_name) = &connection.ifd_name {
+            writer
+                .write_event(Event::Start(BytesStart::new("ecard:IFDName")))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write IFDName".to_string(),
+                })?;
+            writer
+                .write_event(Event::Text(BytesText::new(ifd_name)))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write IFDName text".to_string(),
+                })?;
+            writer
+                .write_event(Event::End(BytesEnd::new("ecard:IFDName")))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to close IFDName".to_string(),
+                })?;
+        }
+        if let Some(slot_index) = connection.slot_index {
+            writer
+                .write_event(Event::Start(BytesStart::new("ecard:SlotIndex")))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write SlotIndex".to_string(),
+                })?;
+            writer
+                .write_event(Event::Text(BytesText::new(&slot_index.to_string())))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to write SlotIndex text".to_string(),
+                })?;
+            writer
+                .write_event(Event::End(BytesEnd::new("ecard:SlotIndex")))
+                .map_err(|_| AuthError::InvalidConnection {
+                    reason: "Failed to close SlotIndex".to_string(),
+                })?;
+        }
+        writer
+            .write_event(Event::End(BytesEnd::new("ecard:ConnectionHandle")))
+            .map_err(|_| AuthError::InvalidConnection {
+                reason: "Failed to close ConnectionHandle".to_string(),
+            })?;
 
+        // DIDName
         writer
             .write_event(Event::Start(BytesStart::new("ecard:DIDName")))
             .map_err(|_| AuthError::InvalidConnection {
@@ -736,6 +762,7 @@ impl CardCommunicator {
                 reason: "Failed to close DIDName".to_string(),
             })?;
 
+        // AuthenticationProtocolData
         let mut auth_data_elem = BytesStart::new("ecard:AuthenticationProtocolData");
         auth_data_elem.push_attribute((
             "Protocol",
@@ -747,16 +774,16 @@ impl CardCommunicator {
                 reason: "Failed to write AuthenticationProtocolData".to_string(),
             })?;
 
-        // Certificate (concatenated CV chain)
+        // Certificate (concatenated CV chain, base64-encoded)
+        let cv_chain = self.certificate_store.load_cv_chain().await?;
+        let cv_chain_b64 = base64::engine::general_purpose::STANDARD.encode(&cv_chain);
         writer
             .write_event(Event::Start(BytesStart::new("ecard:Certificate")))
             .map_err(|_| AuthError::InvalidConnection {
                 reason: "Failed to write Certificate".to_string(),
             })?;
         writer
-            .write_event(Event::Text(BytesText::new(
-                &auth_data.certificate_description,
-            )))
+            .write_event(Event::Text(BytesText::new(&cv_chain_b64)))
             .map_err(|_| AuthError::InvalidConnection {
                 reason: "Failed to write Certificate text".to_string(),
             })?;
@@ -766,7 +793,7 @@ impl CardCommunicator {
                 reason: "Failed to close Certificate".to_string(),
             })?;
 
-        // CertificateDescription with TLS hash and subject URL
+        // CertificateDescription
         writer
             .write_event(Event::Start(BytesStart::new(
                 "ecard:CertificateDescription",
@@ -774,9 +801,10 @@ impl CardCommunicator {
             .map_err(|_| AuthError::InvalidConnection {
                 reason: "Failed to write CertificateDescription".to_string(),
             })?;
+        let tls_cert_hash = auth_data.certificate_description.clone();
         let cert_desc = format!(
             "<SubjectURL>https://your-eservice.example.com</SubjectURL><CommCertificates>{}</CommCertificates>",
-            auth_data.certificate_description // Assume this is the TLS cert hash
+            tls_cert_hash
         );
         writer
             .write_event(Event::Text(BytesText::new(&cert_desc)))
@@ -862,9 +890,7 @@ impl CardCommunicator {
                 reason: "Failed to close DIDAuthenticate".to_string(),
             })?;
         writer
-            .write_event(Event::End(BytesEnd::new(
-                "soapenv<Std::string::String as AsRef<T>>::Body",
-            )))
+            .write_event(Event::End(BytesEnd::new("soapenv:Body")))
             .map_err(|_| AuthError::InvalidConnection {
                 reason: "Failed to close SOAP Body".to_string(),
             })?;

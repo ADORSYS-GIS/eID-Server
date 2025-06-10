@@ -1,15 +1,4 @@
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ecard="http://www.bsi.bund.de/ecard/api/1.1">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <ecard:DIDAuthenticate>
-      <ecard:ConnectionHandle>
-        <ecard:ChannelHandle>1749555187773228668-PvaSgaJVhSTotu2g</ecard:ChannelHandle>
-        <ecard:IFDName>Terminal</ecard:IFDName>
-        <ecard:SlotIndex>0</ecard:SlotIndex>
-      </ecard:ConnectionHandle>
-      <ecard:DIDName>EAC</ecard:DIDName>
-      <ecard:AuthenticationProtocolData Protocol="urn:iso:std:iso-iec:24727:part:3:profile:EAC1InputType">
-        <ecard:Certificate>fyGCAUh/ToIBAF8pAQBCDkRFRVNURFYxQTAwMDAxf0lPBgoEAH8ABwICAgIDhkEENInsdSNhz9eI
+fyGCAUh/ToIBAF8pAQBCDkRFRVNURFYxQTAwMDAxf0lPBgoEAH8ABwICAgIDhkEENInsdSNhz9eI
 zxhnEA3/zZ5mAczwUKFe8BDbebzM3dByuxOmaqxSwJFIhaUGP4cww00iIO1HfXQWRSbX3P6EUF8g
 EERFRVNUVEVSTTFBMDAwMDF/TBIGCQQAfwAHAwECAlMFPA/z//9fJQYBBgEAAARfJAYCBwAJAQdl
 XnMtBgkEAH8ABwMBAwGAIIhWdbKrl2UA5Lg20dJQAR0QcMAlvI/SBBV5YPlbC1Vpcy0GCQQAfwAH
@@ -27,15 +16,3 @@ nYONcYw5eqO1Yab3kB4OgpdIVqeGQQR4MZvJQ9f6sHryphz8Ghv3EksyP4W087LT9eeVW2kTZXtv
 qnzuSvslhPGgayr3d1N7BcGKSI08F+pzUXpeBSOqhwEBXyAPREVFU1RDVkNBMTAwMDAxf0wSBgkE
 AH8ABwMBAgJTBf4f////XyUGAQYABAABXyQGAwIACQAEXzdAR/9u7Kk+FeiDIrjaCmjBhhxQoUmO
 x1Phg3kzf3xjWLZ2EhveqcEuhDAyE1ssdDEYjgYbbwSu42Lr3Wbo6eoPsQ==
-</ecard:Certificate>
-        <ecard:CertificateDescription>
-          <SubjectURL>https://your-eservice.example.com</SubjectURL>
-          <CommCertificates>SHA256_HASH_OF_TLS_CERT</CommCertificates>
-        </ecard:CertificateDescription>
-        <ecard:RequiredCHAT>HEX_ENCODED_CHAT</ecard:RequiredCHAT>
-        <ecard:OptionalCHAT>HEX_ENCODED_CHAT</ecard:OptionalCHAT>
-        <ecard:AuthenticatedAuxiliaryData>TRANSACTION_INFO</ecard:AuthenticatedAuxiliaryData>
-      </ecard:AuthenticationProtocolData>
-    </ecard:DIDAuthenticate>
-  </soapenv:Body>
-</soapenv:Envelope>
