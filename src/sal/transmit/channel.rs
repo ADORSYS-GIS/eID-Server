@@ -1,6 +1,6 @@
-use async_trait::async_trait;
 use hex;
 use std::sync::Arc;
+use async_trait::async_trait;
 
 use super::{
     error::TransmitError,
@@ -133,7 +133,7 @@ impl TransmitChannel {
             Ok(session) => session,
             Err(e) => {
                 let error_result = super::protocol::TransmitResult::error(
-                    super::result_codes::MinorCode::InvalidContext,
+                    super::result_codes::MinorCode::InvalidContext, 
                     Some(format!("Session error: {}", e)),
                 );
                 let error_response = TransmitResponse {
@@ -243,10 +243,7 @@ impl TransmitChannel {
 
         let _timeout_ms = info.timeout.unwrap_or(10000);
 
-        let response_bytes = self
-            .apdu_transport
-            .transmit_apdu(&apdu_bytes)
-            .await
+        let response_bytes = self.apdu_transport.transmit_apdu(&apdu_bytes).await
             .map_err(|e| TransmitError::CardError(e))?;
 
         let response_hex = hex::encode_upper(response_bytes);
@@ -256,7 +253,7 @@ impl TransmitChannel {
 
 #[cfg(test)]
 mod tests {
-    use super::super::protocol::{ProtocolHandler, ISO24727_3_NS};
+    use super::super::protocol::{ISO24727_3_NS, ProtocolHandler};
     use super::super::session::SessionManager;
     use super::*;
     use tokio::runtime::Runtime;
@@ -344,10 +341,14 @@ mod tests {
             ));
 
             // Verify both APDUs are present with correct responses
-            assert!(response_xml
-                .contains("<OutputAPDU>6F108408A000000167455349A5049F6501FF9000</OutputAPDU>"));
-            assert!(response_xml
-                .contains("<OutputAPDU>0102030405060708090A0B0C0D0E0F109000</OutputAPDU>"));
+            assert!(
+                response_xml
+                    .contains("<OutputAPDU>6F108408A000000167455349A5049F6501FF9000</OutputAPDU>")
+            );
+            assert!(
+                response_xml
+                    .contains("<OutputAPDU>0102030405060708090A0B0C0D0E0F109000</OutputAPDU>")
+            );
         });
     }
 
@@ -486,10 +487,14 @@ mod tests {
             let response_xml = String::from_utf8(response_bytes).expect("Valid UTF-8");
 
             // Should contain all three APDU responses
-            assert!(response_xml
-                .contains("<OutputAPDU>6F108408A000000167455349A5049F6501FF9000</OutputAPDU>"));
-            assert!(response_xml
-                .contains("<OutputAPDU>0102030405060708090A0B0C0D0E0F109000</OutputAPDU>"));
+            assert!(
+                response_xml
+                    .contains("<OutputAPDU>6F108408A000000167455349A5049F6501FF9000</OutputAPDU>")
+            );
+            assert!(
+                response_xml
+                    .contains("<OutputAPDU>0102030405060708090A0B0C0D0E0F109000</OutputAPDU>")
+            );
 
             // Count the number of OutputAPDU elements
             let apdu_count = response_xml.matches("<OutputAPDU>").count();

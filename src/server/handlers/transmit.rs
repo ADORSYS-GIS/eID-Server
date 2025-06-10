@@ -1,10 +1,10 @@
+use axum::{body::Bytes, extract::State, http::StatusCode, response::IntoResponse};
+use tracing::{debug, error};
 use crate::sal::transmit::channel::ApduTransport;
 use crate::sal::transmit::websocket::AusweisAppClient;
-use async_trait::async_trait;
-use axum::{body::Bytes, extract::State, http::StatusCode, response::IntoResponse};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, error};
+use async_trait::async_trait;
 
 /// APDU transport implementation that communicates with the eID-Client (AusweisApp2)
 /// via WebSocket
@@ -32,9 +32,9 @@ impl ServerApduTransport {
 impl ApduTransport for ServerApduTransport {
     async fn transmit_apdu(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
         debug!("Received APDU request: {}", hex::encode(apdu));
-
+        
         self.ensure_connected().await?;
-
+        
         let client = self.client.lock().await;
         let response = client
             .as_ref()

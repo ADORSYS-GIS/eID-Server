@@ -111,7 +111,7 @@ mod tests {
         http::{self, Request, StatusCode},
     };
     use http_body_util;
-    use quick_xml::{events::Event, Reader};
+    use quick_xml::{Reader, events::Event};
     use std::sync::Arc;
 
     fn create_test_service() -> UseidService {
