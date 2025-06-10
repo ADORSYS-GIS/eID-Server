@@ -75,7 +75,7 @@ impl Server {
         let transmit_channel = Arc::new(TransmitChannel::new(
             protocol_handler,
             session_manager,
-            Arc::new(ServerApduTransport::new()),
+            Arc::new(ServerApduTransport),
         ));
 
         let state = AppState {
@@ -91,7 +91,7 @@ impl Server {
             .route("/transmit", post(transmit_handler))
             .layer(cors)
             .layer(trace_layer)
-            .with_state(state); 
+            .with_state(state);
 
         let listener = TcpListener::bind(format!("{}:{}", config.host, config.port))
             .await

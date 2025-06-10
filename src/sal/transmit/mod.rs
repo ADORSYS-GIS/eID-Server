@@ -3,7 +3,6 @@ pub mod error;
 pub mod protocol;
 pub mod result_codes;
 pub mod session;
-pub mod websocket;
 
 pub use channel::TransmitChannel;
 pub use error::TransmitError;
