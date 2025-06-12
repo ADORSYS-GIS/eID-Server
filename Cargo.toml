@@ -38,6 +38,8 @@ uuid = { version = "1.7", features = ["v4"] }
 hex = "0.4.3"
 chrono = "0.4.41"
 rand = "0.9.1"
+reqwest = "0.12"
+futures-util = "0.3.31"
 
 [dev-dependencies]
 http-body-util = "0.1"

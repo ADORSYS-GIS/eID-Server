@@ -2,6 +2,7 @@ use eid_server::{
     config::Config,
     domain::eid::service::{EIDServiceConfig, UseidService},
     server::{Server, ServerConfig},
+    sal::transmit::config::TransmitConfig,
 };
 
 // Helper function to spawn a test server on a random port
@@ -18,6 +19,7 @@ pub async fn spawn_server() -> String {
     let server_config = ServerConfig {
         host: &config.server.host,
         port: config.server.port,
+        transmit: TransmitConfig::default(),
     };
 
     let server = Server::new(eid_service, server_config.clone())

@@ -1,20 +1,24 @@
 use axum::{body::Bytes, extract::State, http::StatusCode, response::IntoResponse};
 use tracing::{debug, error};
+use async_trait::async_trait;
 
-use crate::sal::transmit::channel::ApduTransport;
+use crate::sal::transmit::{
+    channel::{ApduTransport},
+};
 
 /// Mock APDU transport implementation for the server
 /// This will be replaced with a real hardware implementation in production
 pub struct ServerApduTransport;
 
+#[async_trait]
 impl ApduTransport for ServerApduTransport {
-    fn transmit_apdu(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
+    async fn transmit_apdu(&self, apdu: Vec<u8>) -> Result<Vec<u8>, String> {
         // For now: echo back the APDU with status code 9000 (success)
         // This should be replaced with actual card communication
-        debug!("Transmitting APDU: {}", hex::encode(apdu));
-        let mut response = apdu.to_vec();
+        debug!("Transmitting APDU: {}", hex::encode(&apdu));
+        let mut response = apdu;
         response.extend_from_slice(&[0x90, 0x00]);
-        Ok(response)
+        Ok(response) 
     }
 }
 
@@ -24,15 +28,15 @@ pub async fn transmit_handler<S>(
     State(state): State<crate::server::AppState<S>>,
     body: Bytes,
 ) -> impl IntoResponse
-where
+where 
     S: crate::domain::eid::ports::EIDService + crate::domain::eid::ports::EidService,
 {
     debug!("Received transmit request");
-    match state.transmit_channel.handle_request(&body).await {
+    match state.transmit_channel.handle_request(&body).await { 
         Ok(response) => {
             debug!("Transmit request processed successfully");
             (StatusCode::OK, response)
-        }
+        } 
         Err(e) => {
             error!("Error handling transmit request: {}", e);
             (
@@ -49,6 +53,7 @@ mod tests {
     use crate::domain::eid::service::{EIDServiceConfig, UseidService};
     use crate::sal::transmit::{
         channel::TransmitChannel, protocol::ProtocolHandler, session::SessionManager,
+        config::TransmitConfig,
     };
     use crate::server::AppState;
     use axum::http::StatusCode;
@@ -60,10 +65,11 @@ mod tests {
         // Setup
         let protocol_handler = ProtocolHandler::new();
         let session_manager = SessionManager::new(Duration::from_secs(60));
+        let config = TransmitConfig::default();
         let transmit_channel = Arc::new(TransmitChannel::new(
             protocol_handler,
             session_manager,
-            Arc::new(ServerApduTransport),
+            config,
         ));
 
         let eid_service = Arc::new(UseidService::new(EIDServiceConfig::default()));

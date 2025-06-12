@@ -172,7 +172,7 @@ impl ProtocolHandler {
     pub fn parse_transmit(&self, xml: &str) -> Result<Transmit, TransmitError> {
         // Parse XML with namespace awareness
         from_str(xml).map_err(|e| {
-            // Map quick_xml errors to our TransmitError
+            // Map quick_xml errors to our TransmitError 
             TransmitError::InvalidRequest(format!("Malformed XML: {}", e))
         })
     }
@@ -249,12 +249,12 @@ impl ProtocolHandler {
                 .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
         }
 
-        // Close Result element
+        // Write Result element end
         writer
             .write_event(Event::End(BytesEnd::new("Result")))
             .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
 
-        // Write OutputAPDU elements
+        // Write OutputAPDU elements if present
         for apdu in &response.output_apdu {
             writer
                 .write_event(Event::Start(BytesStart::new("OutputAPDU")))
@@ -267,26 +267,28 @@ impl ProtocolHandler {
                 .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
         }
 
-        // Close root element
+        // Write root element end
         writer
             .write_event(Event::End(BytesEnd::new("TransmitResponse")))
             .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
 
-        // Get the resulting XML as a string
-        let result = writer.into_inner().into_inner();
-        String::from_utf8(result)
-            .map_err(|e| TransmitError::ProtocolError(format!("Invalid UTF-8 in XML: {}", e)))
+        // Get the XML string from the writer
+        let xml = writer.into_inner().into_inner();
+
+        // Convert to string
+        String::from_utf8(xml)
+            .map_err(|e| TransmitError::ProtocolError(format!("Invalid UTF-8: {}", e)))
     }
 
     /// Validates the request version against the protocol version
     pub fn validate_version(&self, request_version: &str) -> Result<(), TransmitError> {
         // Version validation according to TR-03130 requirements
         let req_parts: Vec<&str> = request_version.split('.').collect();
-        let our_parts: Vec<&str> = self.protocol_version.split('.').collect();
+        let our_parts: Vec<&str> = self.protocol_version.split('.').collect(); 
 
         // Check major version - must match exactly
         if req_parts.get(0) != our_parts.get(0) {
-            return Err(TransmitError::ProtocolError(format!(
+            return Err(TransmitError::ProtocolError(format!( 
                 "Incompatible protocol major version: {} vs {}",
                 request_version, self.protocol_version
             )));

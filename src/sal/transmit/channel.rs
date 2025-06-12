@@ -1,24 +1,219 @@
 use hex;
 use std::sync::Arc;
+use reqwest::Client;
+use tokio::time::timeout;
+use async_trait::async_trait;
+use quick_xml::de::from_str;
+use serde::Deserialize;
+use tracing::{warn, info, error};
+use crate::sal::transmit::config::TransmitConfig;
+use crate::sal::transmit::session::{TlsSessionInfo, SessionManager};
 
 use super::{
     error::TransmitError,
     protocol::{InputAPDUInfo, ProtocolHandler, TransmitResponse},
-    session::SessionManager,
 };
 
-pub trait ApduTransport: Send + Sync {
-    fn transmit_apdu(&self, apdu: &[u8]) -> Result<Vec<u8>, String>;
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct ClientResponse {
+    #[serde(rename = "OutputAPDU")]
+    output_apdu: String,
 }
 
-pub struct MockApduTransport;
+#[derive(Debug, Clone, Copy)]
+pub enum Platform {
+    Android,
+    IOS,
+    Desktop,
+}
 
-impl ApduTransport for MockApduTransport {
-    fn transmit_apdu(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
-        // Echo the APDU and append 0x90 0x00 (success)
-        let mut response = apdu.to_vec();
-        response.extend_from_slice(&[0x90, 0x00]);
-        Ok(response)
+impl Platform {
+    fn detect() -> Self {
+        // In a real implementation, this would detect the platform
+        // For now, we'll use environment variables for testing
+        match std::env::var("APP_PLATFORM").unwrap_or_default().as_str() {
+            "android" => Self::Android,
+            "ios" => Self::IOS,
+            _ => Self::Desktop,
+        }
+    }
+}
+
+#[async_trait]
+pub trait ApduTransport: Send + Sync {
+    async fn transmit_apdu(&self, apdu: Vec<u8>) -> Result<Vec<u8>, String>;
+}
+
+/// HTTP-based APDU transport implementation
+pub struct HttpApduTransport {
+    client: Client,
+    config: TransmitConfig,
+    platform: Platform,
+    session_manager: SessionManager,
+}
+
+impl HttpApduTransport {
+    pub fn new(config: TransmitConfig) -> Self {
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build() 
+            .expect("Failed to create HTTP client");
+
+        let session_manager = SessionManager::new(config.session_timeout);
+
+        Self { 
+            client, 
+            config,
+            platform: Platform::detect(),
+            session_manager,
+        }
+    }
+
+    async fn extract_tls_info(&self, response: &reqwest::Response) -> Option<TlsSessionInfo> {
+        // Extract TLS session ID from response headers
+        let session_id = response
+            .headers()
+            .get("X-TLS-Session-ID")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        // Extract cipher suite from response headers
+        let cipher_suite = response
+            .headers()
+            .get("X-TLS-Cipher-Suite")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        // If we have both pieces of information, create TlsSessionInfo
+        match (session_id, cipher_suite) {
+            (Some(id), Some(cipher)) => Some(TlsSessionInfo {
+                session_id: id,
+                cipher_suite: cipher,
+            }),
+            _ => None,
+        }
+    }
+
+    async fn handle_mobile_request(&self, apdu: Vec<u8>) -> Result<Vec<u8>, String> {
+        match self.platform {
+            Platform::Android => self.handle_android_request(apdu).await,
+            Platform::IOS => self.handle_ios_request(apdu).await,
+            Platform::Desktop => Err("Invalid platform for mobile request".to_string()),
+        }
+    }
+
+    async fn handle_android_request(&self, apdu: Vec<u8>) -> Result<Vec<u8>, String> {
+        // Convert APDU to hex string
+        let apdu_hex = hex::encode_upper(&apdu);
+        
+        // Create intent URL for Android
+        let _intent_url = format!(
+            "intent://eid-client#Intent;scheme=eid;package=com.android.eid;component=com.android.eid/.MainActivity;S.apdu={};end",
+            apdu_hex
+        );
+
+        // In a real implementation, we would:
+        // 1. Launch the intent using Android's Intent system
+        // 2. Wait for the response from the eID-Client app
+        // 3. Parse the response and return the APDU
+
+        // For now, we'll simulate a response
+        Ok(vec![0x90, 0x00]) // Success response
+    }
+
+    async fn handle_ios_request(&self, apdu: Vec<u8>) -> Result<Vec<u8>, String> {
+        // Convert APDU to hex string
+        let apdu_hex = hex::encode_upper(&apdu);
+        
+        // Create URL scheme for iOS
+        let _url = format!(
+            "eid://eid-client?apdu={}",
+            apdu_hex
+        );
+
+        // In a real implementation, we would:
+        // 1. Open the URL using iOS URL scheme handling
+        // 2. Wait for the response from the eID-Client app
+        // 3. Parse the response and return the APDU
+
+        // For now, we'll simulate a response
+        Ok(vec![0x90, 0x00]) // Success response
+    }
+}
+
+#[async_trait]
+impl ApduTransport for HttpApduTransport {
+    async fn transmit_apdu(&self, apdu: Vec<u8>) -> Result<Vec<u8>, String> {
+        // Get the appropriate client URL based on platform
+        let client_url = self.config.get_client_url();
+        info!("Transmitting APDU to {}", client_url);
+
+        // Handle mobile platforms
+        if client_url.starts_with("eid://") {
+            info!("Using mobile platform transport");
+            return self.handle_mobile_request(apdu).await;
+        }
+
+        // For classical systems, use HTTP POST
+        let apdu_hex = hex::encode_upper(&apdu);
+        let xml_payload = format!(
+            r#"<Transmit><InputAPDU>{}</InputAPDU></Transmit>"#,
+            apdu_hex
+        );
+
+        let response = self.client
+            .post(&client_url)
+            .header("Content-Type", "application/xml")
+            .body(xml_payload)
+            .send()
+            .await
+            .map_err(|e| {
+                error!("HTTP request failed: {}", e);
+                format!("HTTP request failed: {}", e)
+            })?;
+
+        // Check response status
+        if !response.status().is_success() {
+            let status = response.status();
+            error!("HTTP request failed with status: {}", status);
+            return Err(format!(
+                "HTTP request failed with status: {}",
+                status
+            ));
+        }
+
+        // Extract TLS session info if available
+        if let Some(tls_info) = self.extract_tls_info(&response).await {
+            info!("Extracted TLS session info: {:?}", tls_info);
+            // Create or update session with TLS info
+            if let Err(e) = self.session_manager.create_session(tls_info).await {
+                warn!("Failed to create session with TLS info: {}", e);
+            }
+        }
+
+        // Parse response body 
+        let response_text = response 
+            .text()
+            .await
+            .map_err(|e| { 
+                error!("Failed to read response body: {}", e);
+                format!("Failed to read response body: {}", e)
+            })?;
+
+        // Parse XML response using quick-xml
+        let client_response: ClientResponse = from_str(&response_text)
+            .map_err(|e| {
+                error!("Failed to parse XML response: {}", e);
+                format!("Failed to parse XML response: {}", e)
+            })?;
+
+        // Decode the APDU response
+        hex::decode(&client_response.output_apdu)
+            .map_err(|e| {
+                error!("Failed to decode APDU hex: {}", e);
+                format!("Failed to decode APDU hex: {}", e)
+            })
     }
 }
 
@@ -27,6 +222,7 @@ pub struct TransmitChannel {
     protocol_handler: Arc<ProtocolHandler>,
     session_manager: Arc<SessionManager>,
     apdu_transport: Arc<dyn ApduTransport>,
+    config: TransmitConfig,
 }
 
 impl std::fmt::Debug for TransmitChannel {
@@ -35,6 +231,7 @@ impl std::fmt::Debug for TransmitChannel {
             .field("protocol_handler", &self.protocol_handler)
             .field("session_manager", &self.session_manager)
             .field("apdu_transport", &"<ApduTransport>")
+            .field("config", &self.config)
             .finish()
     }
 }
@@ -43,12 +240,18 @@ impl TransmitChannel {
     pub fn new(
         protocol_handler: ProtocolHandler,
         session_manager: SessionManager,
-        apdu_transport: Arc<dyn ApduTransport>,
+        config: TransmitConfig,
     ) -> Self {
+        // Validate configuration
+        config.validate().expect("Invalid transmit configuration");
+
+        let apdu_transport = Arc::new(HttpApduTransport::new(config.clone()));
+
         Self {
             protocol_handler: Arc::new(protocol_handler),
             session_manager: Arc::new(session_manager),
             apdu_transport,
+            config, 
         }
     }
 
@@ -144,8 +347,13 @@ impl TransmitChannel {
             }
         };
 
-        // Process client APDU requests
-        let output_apdu_result = self.process_client_apdus(&transmit.input_apdu_info).await;
+        // Process client APDU requests with timeout
+        let output_apdu_result = timeout(
+            self.config.session_timeout,
+            self.process_client_apdus(&transmit.input_apdu_info),
+        )
+        .await
+        .map_err(|_| TransmitError::SessionError("Request timeout".to_string()))?;
 
         // Handle APDU processing errors according to TR-03130
         let output_apdu = match output_apdu_result {
@@ -234,7 +442,16 @@ impl TransmitChannel {
         let apdu_bytes = hex::decode(&info.input_apdu)
             .map_err(|e| TransmitError::CardError(format!("Invalid APDU hex: {}", e)))?;
 
-        // Validate APDU minimum length (at least CLA, INS, P1, P2 = 4 bytes)
+        // Validate APDU size
+        if apdu_bytes.len() > self.config.max_apdu_size {
+            return Err(TransmitError::InvalidRequest(format!(
+                "APDU too large: {} bytes, maximum {} bytes allowed",
+                apdu_bytes.len(),
+                self.config.max_apdu_size
+            )));
+        }
+
+        // Validate minimum length
         if apdu_bytes.len() < 4 {
             return Err(TransmitError::InvalidRequest(format!(
                 "APDU too short: {} bytes, minimum 4 bytes required",
@@ -242,38 +459,30 @@ impl TransmitChannel {
             )));
         }
 
-        // If timeout is specified, use it (according to TR-03130)
-        let _timeout_ms = info.timeout.unwrap_or(10000); // Default 10 seconds if not specified
+        // Transmit APDU with timeout
+        let timeout_duration = std::time::Duration::from_millis(
+            info.timeout.unwrap_or(10000) as u64
+        );
+        
+        let response_bytes = timeout(
+            timeout_duration,
+            self.apdu_transport.transmit_apdu(apdu_bytes)
+        )
+        .await
+        .map_err(|_| TransmitError::CardError("APDU transmission timeout".to_string()))?
+        .map_err(|e| TransmitError::CardError(e.to_string()))?;
 
-        // Create a future for transmitting APDU with transport layer
-        let transmit_future = self.apdu_transport.transmit_apdu(&apdu_bytes);
-
-        // In real code, we'd implement a proper timeout here
-        // For demonstration, we'll just directly call the transport
-        let response_bytes = transmit_future.map_err(|e| TransmitError::CardError(e))?;
-
-        // Convert response to hex string (uppercase as specified in TR-03130)
+        // Convert response to hex string
         let response_hex = hex::encode_upper(response_bytes);
 
-        // According to TR-03130, we need to validate the status code if specified
+        // Validate status code if specified
         if let Some(expected_status) = &info.acceptable_status_code {
-            // Ensure response is long enough to have a status code
-            if response_hex.len() < 4 {
-                return Err(TransmitError::CardError(format!(
-                    "Response too short to contain status code: {}",
-                    response_hex
-                )));
-            }
-
-            // Extract the status code (last 2 bytes = 4 hex characters)
             let actual_status = &response_hex[response_hex.len() - 4..];
-
-            // Validate the status code
             if actual_status != expected_status {
-                return Err(TransmitError::CardError(format!(
-                    "Status code mismatch: expected {}, got {}",
-                    expected_status, actual_status
-                )));
+                return Err(TransmitError::InvalidStatusCode {
+                    expected: expected_status.clone(),
+                    actual: actual_status.to_string(),
+                });
             }
         }
 
@@ -287,43 +496,27 @@ mod tests {
     use super::super::session::SessionManager;
     use super::*;
     use tokio::runtime::Runtime;
+    use async_trait::async_trait;
 
     /// Create a test transport that responds with fixed APDUs for specific commands
     struct TestApduTransport;
 
+    #[async_trait]
     impl ApduTransport for TestApduTransport {
-        fn transmit_apdu(&self, apdu: &[u8]) -> Result<Vec<u8>, String> {
+        async fn transmit_apdu(&self, apdu: Vec<u8>) -> Result<Vec<u8>, String> {
             // Convert APDU to uppercase hex for easier comparison
-            let apdu_hex = hex::encode_upper(apdu);
-
-            // Simulate specific responses according to TR-03130 test cases
+            let apdu_hex = hex::encode_upper(&apdu);
+            
+            // Return predefined responses for test APDUs
             match apdu_hex.as_str() {
-                // SELECT application command - OK response
-                "00A4040008A000000167455349" => {
-                    // Response with file control info and status word 9000 (OK)
-                    Ok(hex::decode("6F108408A000000167455349A5049F6501FF9000").unwrap())
-                }
-                // READ BINARY command - OK response
-                "00B0000000" | "00B0000010" => {
-                    // Sample data response with status word 9000 (OK)
-                    Ok(hex::decode("0102030405060708090A0B0C0D0E0F109000").unwrap())
-                }
-                // SELECT command with wrong AID - file not found
-                "00A4040008A00000016745XXXX" => {
-                    // Status word 6A82 - file not found
-                    Ok(hex::decode("6A82").unwrap())
-                }
-                // VERIFY PIN command - incorrect PIN
-                "0020000004XXXXXXXX" => {
-                    // Status word 63C2 - verification failed, 2 tries left
-                    Ok(hex::decode("63C2").unwrap())
-                }
-                // Default response: echo back command + OK status
-                _ => {
-                    let mut response = apdu.to_vec();
-                    response.extend_from_slice(&[0x90, 0x00]);
-                    Ok(response)
-                }
+                // SELECT eID application
+                "00A4040008A000000167455349" => Ok(hex::decode("6F108408A000000167455349A5049F6501FF9000").unwrap()),
+                // READ BINARY
+                "00B0000000" => Ok(hex::decode("0102030405060708090A0B0C0D0E0F109000").unwrap()),
+                "00B0000010" => Ok(hex::decode("1112131415161718191A1B1C1D1E1F209000").unwrap()),
+                // SELECT eID.SIGN application
+                "00A4040008A000000167455349474E" => Ok(hex::decode("9000").unwrap()),
+                _ => Err("Unknown test APDU".to_string()),
             }
         }
     }
@@ -335,10 +528,11 @@ mod tests {
         rt.block_on(async {
             let protocol_handler = ProtocolHandler::new();
             let session_manager = SessionManager::new(std::time::Duration::from_secs(60));
+            let config = TransmitConfig::default();
             let channel = TransmitChannel::new(
                 protocol_handler,
                 session_manager,
-                Arc::new(TestApduTransport),
+                config,
             );
 
             // Create a valid XML request according to TR-03130
@@ -388,10 +582,11 @@ mod tests {
         rt.block_on(async {
             let protocol_handler = ProtocolHandler::new();
             let session_manager = SessionManager::new(std::time::Duration::from_secs(60));
+            let config = TransmitConfig::default();
             let channel = TransmitChannel::new(
                 protocol_handler,
                 session_manager,
-                Arc::new(TestApduTransport),
+                config,
             );
 
             // Test 1: Malformed XML should return proper error
@@ -432,15 +627,16 @@ mod tests {
     }
 
     #[test]
-    fn test_transmit_channel_invalid_apdu() {
+    fn test_transmit_channel_invalid_apdu() { 
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
             let protocol_handler = ProtocolHandler::new();
             let session_manager = SessionManager::new(std::time::Duration::from_secs(60));
+            let config = TransmitConfig::default();
             let channel = TransmitChannel::new(
                 protocol_handler,
                 session_manager,
-                Arc::new(TestApduTransport),
+                config,
             );
 
             // Test with invalid APDU format (odd-length hex string)
@@ -451,7 +647,8 @@ mod tests {
                         <InputAPDU>00A4040</InputAPDU>
                     </InputAPDUInfo>
                 </Transmit>
-            "#, ISO24727_3_NS);
+            "#, ISO24727_3_NS
+            );
 
             let response = channel.handle_request(invalid_apdu_xml.as_bytes()).await.unwrap();
             let response_xml = String::from_utf8(response).unwrap();
@@ -484,10 +681,11 @@ mod tests {
         rt.block_on(async {
             let protocol_handler = ProtocolHandler::new();
             let session_manager = SessionManager::new(std::time::Duration::from_secs(60));
+            let config = TransmitConfig::default();
             let channel = TransmitChannel::new(
                 protocol_handler,
                 session_manager,
-                Arc::new(TestApduTransport),
+                config,
             );
 
             // Test with multiple APDUs in sequence (SELECT + READ BINARY)

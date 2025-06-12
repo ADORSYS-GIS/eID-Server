@@ -3,6 +3,7 @@ use eid_server::{
     domain::eid::service::{EIDServiceConfig, UseidService},
     server::{Server, ServerConfig},
     telemetry,
+    sal::transmit::config::TransmitConfig,
 };
 
 #[tokio::main]
@@ -20,7 +21,8 @@ async fn main() -> color_eyre::Result<()> {
     let server_config = ServerConfig {
         host: &config.server.host,
         port: config.server.port,
+        transmit: TransmitConfig::default(),
     };
-    let server = Server::new(eid_service, server_config).await?;
+    let server = Server::new(eid_service, server_config).await?; 
     server.run().await
 }

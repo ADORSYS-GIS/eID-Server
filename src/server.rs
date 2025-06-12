@@ -11,7 +11,7 @@ use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
 use color_eyre::eyre::eyre;
 use handlers::health::health_check;
-use handlers::transmit::{ServerApduTransport, transmit_handler};
+use handlers::transmit::transmit_handler;
 use tokio::net::TcpListener;
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -21,12 +21,14 @@ use tower_http::{
 use crate::domain::eid::ports::{EIDService, EidService};
 use crate::sal::transmit::{
     channel::TransmitChannel, protocol::ProtocolHandler, session::SessionManager,
+    config::TransmitConfig,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ServerConfig<'a> {
     pub host: &'a str,
     pub port: u16,
+    pub transmit: TransmitConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -71,11 +73,11 @@ impl Server {
 
         // Initialize the TransmitChannel components
         let protocol_handler = ProtocolHandler::new();
-        let session_manager = SessionManager::new(Duration::from_secs(60));
+        let session_manager = SessionManager::new(config.transmit.session_timeout);
         let transmit_channel = Arc::new(TransmitChannel::new(
             protocol_handler,
-            session_manager,
-            Arc::new(ServerApduTransport),
+            session_manager, 
+            config.transmit.clone(),
         ));
 
         let state = AppState {
@@ -88,7 +90,7 @@ impl Server {
             .route("/health", get(health_check))
             .route("/eIDService/useID", post(handlers::useid::use_id_handler))
             .route("/eIDService/getServerInfo", get(get_server_info))
-            .route("/transmit", post(transmit_handler))
+            .route("/eIDService/transmit", post(transmit_handler))
             .layer(cors)
             .layer(trace_layer)
             .with_state(state);
@@ -114,5 +116,54 @@ impl Server {
             .await
             .map_err(|err| eyre!("failed to launch server: {:?}", err))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::eid::service::{EIDServiceConfig, UseidService};
+
+    #[tokio::test]
+    async fn test_server_creation() {
+        let config = ServerConfig {
+            host: "127.0.0.1",
+            port: 0, // Use port 0 to get a random available port
+            transmit: TransmitConfig::default(),
+        };
+
+        let eid_service = UseidService::new(EIDServiceConfig::default());
+        let server = Server::new(eid_service, config).await.expect("Failed to create server");
+        
+        // Verify we got a valid port
+        let port = server.port().expect("Failed to get port");
+        assert!(port > 0);
+    }
+
+    #[tokio::test]
+    async fn test_server_with_custom_transmit_config() {
+        let transmit_config = TransmitConfig {
+            max_apdu_size: 8192,
+            session_timeout: Duration::from_secs(600),
+            max_requests_per_minute: 120,
+            allowed_cipher_suites: vec!["TLS_AES_128_GCM_SHA256".to_string()],
+            require_client_certificate: false,
+            min_tls_version: "TLSv1.3".to_string(),
+            client_url: "http://localhost:24727/eID-Client".to_string(),
+            mobile_client_url: "eid://localhost:24727/eID-Client".to_string(),
+        };
+
+        let config = ServerConfig {
+            host: "127.0.0.1",
+            port: 0,
+            transmit: transmit_config,
+        };
+
+        let eid_service = UseidService::new(EIDServiceConfig::default());
+        let server = Server::new(eid_service, config).await.expect("Failed to create server");
+        
+        // Verify we got a valid port
+        let port = server.port().expect("Failed to get port");
+        assert!(port > 0);
     }
 }
