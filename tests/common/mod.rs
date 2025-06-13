@@ -1,17 +1,8 @@
 use eid_server::{
     config::Config,
-    domain::eid::{models::ServerInfo, ports::EidService},
+    domain::eid::service::{EIDServiceConfig, UseidService},
     server::{Server, ServerConfig},
 };
-
-#[derive(Clone)]
-struct MockService;
-
-impl EidService for MockService {
-    fn get_server_info(&self) -> ServerInfo {
-        ServerInfo::default()
-    }
-}
 
 // Helper function to spawn a test server on a random port
 pub async fn spawn_server() -> String {
@@ -22,7 +13,7 @@ pub async fn spawn_server() -> String {
         config.server.port = 0;
         config
     };
-    let eid_service = MockService;
+    let eid_service = UseidService::new(EIDServiceConfig::default());
 
     let server_config = ServerConfig {
         host: &config.server.host,
