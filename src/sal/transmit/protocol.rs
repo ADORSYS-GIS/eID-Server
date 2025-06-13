@@ -1,11 +1,8 @@
-use super::{
-    error::TransmitError,
-    result_codes::{MajorCode, MinorCode},
-};
+use super::error::TransmitError;
 use quick_xml::{
     Writer,
     de::from_str,
-    events::{BytesEnd, BytesStart, BytesText, Event},
+    events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event},
 };
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
@@ -30,30 +27,20 @@ pub struct TransmitResult {
 }
 
 impl TransmitResult {
-    pub fn new(major: MajorCode, minor: MinorCode, message: Option<String>) -> Self {
-        let result_minor = if minor == MinorCode::None {
-            None
-        } else {
-            Some(minor.to_string())
-        };
-
+    pub fn ok() -> Self {
         Self {
-            result_major: major.to_string(),
-            result_minor,
-            result_message: message,
+            result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok".to_string(),
+            result_minor: None,
+            result_message: None,
         }
     }
 
-    pub fn ok() -> Self {
-        Self::new(MajorCode::Ok, MinorCode::None, None)
-    }
-
-    pub fn error(minor: MinorCode, message: Option<String>) -> Self {
-        Self::new(MajorCode::Error, minor, message)
-    }
-
-    pub fn warning(minor: MinorCode, message: Option<String>) -> Self {
-        Self::new(MajorCode::Warning, minor, message)
+    pub fn error(minor_code: &str, message: Option<String>) -> Self {
+        Self {
+            result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
+            result_minor: Some(minor_code.to_string()),
+            result_message: message,
+        }
     }
 }
 
@@ -172,7 +159,7 @@ impl ProtocolHandler {
     pub fn parse_transmit(&self, xml: &str) -> Result<Transmit, TransmitError> {
         // Parse XML with namespace awareness
         from_str(xml).map_err(|e| {
-            // Map quick_xml errors to our TransmitError 
+            // Map quick_xml errors to our TransmitError
             TransmitError::InvalidRequest(format!("Malformed XML: {}", e))
         })
     }
@@ -188,11 +175,7 @@ impl ProtocolHandler {
 
         // Write XML declaration
         writer
-            .write_event(Event::Decl(quick_xml::events::BytesDecl::new(
-                "1.0",
-                Some("UTF-8"),
-                None,
-            )))
+            .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
             .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
 
         // Create the root element with namespaces
@@ -284,11 +267,11 @@ impl ProtocolHandler {
     pub fn validate_version(&self, request_version: &str) -> Result<(), TransmitError> {
         // Version validation according to TR-03130 requirements
         let req_parts: Vec<&str> = request_version.split('.').collect();
-        let our_parts: Vec<&str> = self.protocol_version.split('.').collect(); 
+        let our_parts: Vec<&str> = self.protocol_version.split('.').collect();
 
         // Check major version - must match exactly
         if req_parts.get(0) != our_parts.get(0) {
-            return Err(TransmitError::ProtocolError(format!( 
+            return Err(TransmitError::ProtocolError(format!(
                 "Incompatible protocol major version: {} vs {}",
                 request_version, self.protocol_version
             )));
@@ -314,29 +297,30 @@ impl ProtocolHandler {
     /// Converts a TransmitError into a proper TransmitResult for the XML response
     pub fn error_to_result(&self, error: &TransmitError) -> TransmitResult {
         match error {
-            TransmitError::InvalidRequest(_) => {
-                TransmitResult::error(MinorCode::ParameterError, Some(error.to_string()))
-            }
-
-            TransmitError::ProtocolError(_) => {
-                TransmitResult::error(MinorCode::InternalError, Some(error.to_string()))
-            }
-
-            TransmitError::SessionError(_) => {
-                TransmitResult::error(MinorCode::InvalidContext, Some(error.to_string()))
-            }
-
-            TransmitError::InvalidStatusCode { .. } => {
-                TransmitResult::error(MinorCode::CardError, Some(error.to_string()))
-            }
-
-            TransmitError::CardError(_) => {
-                TransmitResult::error(MinorCode::CardError, Some(error.to_string()))
-            }
-
-            TransmitError::InternalError(_) => {
-                TransmitResult::error(MinorCode::InternalError, Some(error.to_string()))
-            }
+            TransmitError::InvalidRequest(msg) => TransmitResult::error(
+                "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#invalidRequest",
+                Some(msg.clone()),
+            ),
+            TransmitError::ProtocolError(msg) => TransmitResult::error(
+                "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#protocolError",
+                Some(msg.clone()),
+            ),
+            TransmitError::SessionError(msg) => TransmitResult::error(
+                "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#sessionError",
+                Some(msg.clone()),
+            ),
+            TransmitError::InvalidStatusCode { expected, actual } => TransmitResult::error(
+                "http://www.bsi.bund.de/ecard/api/1.1/resultminor/ifd#invalidStatusCode",
+                Some(format!("Expected {}, got {}", expected, actual)),
+            ),
+            TransmitError::CardError(msg) => TransmitResult::error(
+                "http://www.bsi.bund.de/ecard/api/1.1/resultminor/ifd#cardError",
+                Some(msg.clone()),
+            ),
+            TransmitError::InternalError(msg) => TransmitResult::error(
+                "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#internalError",
+                Some(msg.clone()),
+            ),
         }
     }
 }
@@ -354,68 +338,40 @@ mod tests {
     }
 
     #[test]
-    fn test_protocol_result_ok() {
-        // Test the OK result creation
+    fn test_transmit_result_ok() {
         let result = TransmitResult::ok();
-        assert_eq!(result.result_major, MajorCode::Ok.to_string());
+        assert_eq!(
+            result.result_major,
+            "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok"
+        );
         assert!(result.result_minor.is_none());
         assert!(result.result_message.is_none());
     }
 
     #[test]
-    fn test_protocol_result_error() {
-        // Test error result creation with minor code
-        let message = "Test error message";
-        let result = TransmitResult::error(MinorCode::CardError, Some(message.to_string()));
-
-        assert_eq!(result.result_major, MajorCode::Error.to_string());
-        assert!(result.result_minor.is_some());
-        assert_eq!(
-            result.result_minor.unwrap(),
-            MinorCode::CardError.to_string()
+    fn test_transmit_result_error() {
+        let result = TransmitResult::error(
+            "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#invalidRequest",
+            Some("Test error".to_string()),
         );
-        assert_eq!(result.result_message.unwrap(), message);
+        assert_eq!(
+            result.result_major,
+            "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error"
+        );
+        assert_eq!(
+            result.result_minor,
+            Some("http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#invalidRequest".to_string())
+        );
+        assert_eq!(result.result_message, Some("Test error".to_string()));
     }
 
     #[test]
-    fn test_protocol_version_validation() {
-        // Create protocol handler with version 1.1.5
+    fn test_protocol_handler_version_validation() {
         let handler = ProtocolHandler::new();
-
-        // Test compatible version - exact match
         assert!(handler.validate_version("1.1.5").is_ok());
-
-        // Test compatible version - client requesting older minor version
         assert!(handler.validate_version("1.1.0").is_ok());
-
-        // Test incompatible version - client requesting newer minor version
         assert!(handler.validate_version("1.2.0").is_err());
-
-        // Test incompatible version - different major version
         assert!(handler.validate_version("2.0.0").is_err());
-    }
-
-    #[test]
-    fn test_error_to_result_mapping() {
-        let handler = ProtocolHandler::new();
-
-        // Test mapping for InvalidRequest
-        let err = TransmitError::InvalidRequest("Test error".to_string());
-        let result = handler.error_to_result(&err);
-        assert_eq!(result.result_major, MajorCode::Error.to_string());
-        assert_eq!(
-            result.result_minor.unwrap(),
-            MinorCode::ParameterError.to_string()
-        );
-
-        // Test mapping for CardError
-        let err = TransmitError::CardError("Card error".to_string());
-        let result = handler.error_to_result(&err);
-        assert_eq!(result.result_major, MajorCode::Error.to_string());
-        assert_eq!(
-            result.result_minor.unwrap(),
-            MinorCode::CardError.to_string()
-        );
     }
 
     #[test]

@@ -1,13 +1,24 @@
-use config::{Config as ConfigLib, ConfigError, Environment, File};
+use config::{Config as ConfigLib, ConfigError as ExternalConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
 use std::env;
+use thiserror::Error;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Error)]
+pub enum AppConfigError {
+    #[error("Invalid port number: {0}")]
+    InvalidPort(#[from] std::num::ParseIntError),
+    #[error("Environment variable error: {0}")]
+    EnvVar(#[from] std::env::VarError),
+    #[error("Configuration error: {0}")]
+    Config(#[from] ExternalConfigError),
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
@@ -23,7 +34,6 @@ pub struct TransmitConfig {
     pub require_client_certificate: bool,
     pub min_tls_version: String,
     pub client_url: String,
-    pub mobile_client_url: String,
 }
 
 impl Default for TransmitConfig {
@@ -31,9 +41,6 @@ impl Default for TransmitConfig {
         // Read URLs from environment variables with fallback to defaults
         let client_url = env::var("EID_CLIENT_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:24727/eID-Client".to_string());
-        
-        let mobile_client_url = env::var("EID_MOBILE_CLIENT_URL")
-            .unwrap_or_else(|_| "eid://127.0.0.1:24727/eID-Client".to_string());
 
         Self {
             max_apdu_size: 4096,
@@ -46,7 +53,6 @@ impl Default for TransmitConfig {
             require_client_certificate: true,
             min_tls_version: "TLSv1.2".to_string(),
             client_url,
-            mobile_client_url,
         }
     }
 }
@@ -63,9 +69,9 @@ impl Default for ServerConfig {
 
 impl ServerConfig {
     pub fn from_env() -> Self {
-        let host = std::env::var("APP_SERVER_HOST")
-            .unwrap_or_else(|_| "127.0.0.1".to_string());
-        let port = std::env::var("APP_SERVER_PORT")
+        let host = std::env::var("APP_SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+
+        let port = std::env::var("EID_SERVER_PORT")
             .unwrap_or_else(|_| "8080".to_string())
             .parse()
             .unwrap_or(8080);
@@ -96,8 +102,6 @@ impl ServerConfig {
                 .unwrap_or_else(|_| "TLSv1.2".to_string()),
             client_url: std::env::var("EID_CLIENT_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:24727/eID-Client".to_string()),
-            mobile_client_url: std::env::var("EID_MOBILE_CLIENT_URL")
-                .unwrap_or_else(|_| "eid://127.0.0.1:24727/eID-Client".to_string()),
         };
 
         Self {
@@ -109,29 +113,34 @@ impl ServerConfig {
 }
 
 impl Config {
-    pub fn load() -> Result<Self, ConfigError> {
-        // Build the config
-        let config = ConfigLib::builder()
-            // Set default values
-            .set_default("server.host", "localhost")?
-            .set_default("server.port", 3000)?
-            // Set default transmit configuration
-            .set_default("server.transmit.max_apdu_size", 4096)?
-            .set_default("server.transmit.session_timeout_secs", 300)?
-            .set_default("server.transmit.max_requests_per_minute", 60)?
-            .set_default("server.transmit.allowed_cipher_suites", vec!["TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384"])?
-            .set_default("server.transmit.require_client_certificate", true)?
-            .set_default("server.transmit.min_tls_version", "TLSv1.2")?
-            // Add a config file under config/settings.toml
-            // or any other format supported by `config` crate
-            .add_source(File::with_name("config/settings").required(false))
-            // This will allow us to override config values via environment variables
-            // The environment variables should be prefixed with 'APP_'
-            // Example: APP_SERVER_HOST=127.0.0.1
-            .add_source(Environment::with_prefix("APP").separator("_"))
-            .build()?;
+    pub fn load() -> Result<Self, AppConfigError> {
+        // Load configuration from environment variables
+        let client_url = env::var("EID_CLIENT_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:24727/eID-Client".to_string());
 
-        config.try_deserialize()
+        let config = Config {
+            server: ServerConfig {
+                host: env::var("APP_SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
+                port: env::var("EID_SERVER_PORT")
+                    .unwrap_or_else(|_| "8080".to_string())
+                    .parse()?,
+                transmit: TransmitConfig {
+                    client_url,
+                    max_apdu_size: 4096,
+                    max_requests_per_minute: 60,
+                    require_client_certificate: true,
+                    min_tls_version: "TLSv1.2".to_string(),
+                    session_timeout_secs: 30,
+                    allowed_cipher_suites: vec![
+                        "TLS_AES_128_GCM_SHA256".to_string(),
+                        "TLS_AES_256_GCM_SHA384".to_string(),
+                        "TLS_CHACHA20_POLY1305_SHA256".to_string(),
+                    ],
+                },
+            },
+        };
+
+        Ok(config)
     }
 }
 
@@ -157,24 +166,23 @@ mod tests {
         unsafe {
             env::set_var("APP_SERVER_HOST", "0.0.0.0");
             env::set_var("APP_SERVER_PORT", "3001");
-            env::set_var("EID_CLIENT_URL", "http://test:24727/eID-Client");
-            env::set_var("EID_MOBILE_CLIENT_URL", "eid://test:24727/eID-Client");
+            env::set_var("EID_CLIENT_URL", "http://127.0.0.1:24727/eID-Client");
         }
 
         let config = Config::load().expect("Failed to load config");
 
-        // Test with the environment variables set
-        assert_eq!(config.server.host, "0.0.0.0");
-        assert_eq!(config.server.port, 3001);
-        assert_eq!(config.server.transmit.client_url, "http://test:24727/eID-Client");
-        assert_eq!(config.server.transmit.mobile_client_url, "eid://test:24727/eID-Client");
+        let config = Config::load().unwrap();
+        assert_eq!(config.server.port, 3000);
+        assert_eq!(
+            config.server.transmit.client_url,
+            "http://127.0.0.1:24727/eID-Client"
+        );
 
         // Clean up environment variables after test
         unsafe {
             env::remove_var("APP_SERVER_HOST");
             env::remove_var("APP_SERVER_PORT");
             env::remove_var("EID_CLIENT_URL");
-            env::remove_var("EID_MOBILE_CLIENT_URL");
         }
     }
 }

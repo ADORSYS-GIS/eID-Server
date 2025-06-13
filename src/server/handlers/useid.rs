@@ -106,11 +106,11 @@ mod tests {
             use_id::model::{AgeVerificationRequest, PlaceVerificationRequest, UseIDRequest},
         },
         sal::transmit::{
-        channel::{HttpApduTransport, TransmitChannel},
-        protocol::ProtocolHandler,
-        session::SessionManager,
-        config::TransmitConfig,
-    },
+            channel::{HttpApduTransport, TransmitChannel},
+            config::TransmitConfig,
+            protocol::ProtocolHandler,
+            session::SessionManager,
+        },
     };
     use axum::{
         body::Body,
@@ -158,7 +158,7 @@ mod tests {
             _use_operations: OperationsRequester {
                 document_type: AttributeRequester::ALLOWED,
                 issuing_state: AttributeRequester::ALLOWED,
-                date_of_expiry: AttributeRequester::ALLOWED, 
+                date_of_expiry: AttributeRequester::ALLOWED,
                 given_names: AttributeRequester::ALLOWED,
                 family_names: AttributeRequester::ALLOWED,
                 artistic_name: AttributeRequester::ALLOWED,

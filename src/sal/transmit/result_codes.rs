@@ -24,7 +24,7 @@ impl fmt::Display for MajorCode {
 /// Minor result codes as defined in TR-03112 Part 1, Section A.2
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MinorCode {
-    // AL - General errors 
+    // AL - General errors
     NoPermission,
     InternalError,
     ParameterError,

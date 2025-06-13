@@ -1,10 +1,8 @@
+use async_trait::async_trait;
 use axum::{body::Bytes, extract::State, http::StatusCode, response::IntoResponse};
 use tracing::{debug, error};
-use async_trait::async_trait;
 
-use crate::sal::transmit::{
-    channel::{ApduTransport},
-};
+use crate::sal::transmit::channel::ApduTransport;
 
 /// Mock APDU transport implementation for the server
 /// This will be replaced with a real hardware implementation in production
@@ -18,7 +16,7 @@ impl ApduTransport for ServerApduTransport {
         debug!("Transmitting APDU: {}", hex::encode(&apdu));
         let mut response = apdu;
         response.extend_from_slice(&[0x90, 0x00]);
-        Ok(response) 
+        Ok(response)
     }
 }
 
@@ -28,15 +26,15 @@ pub async fn transmit_handler<S>(
     State(state): State<crate::server::AppState<S>>,
     body: Bytes,
 ) -> impl IntoResponse
-where 
+where
     S: crate::domain::eid::ports::EIDService + crate::domain::eid::ports::EidService,
 {
     debug!("Received transmit request");
-    match state.transmit_channel.handle_request(&body).await { 
+    match state.transmit_channel.handle_request(&body).await {
         Ok(response) => {
             debug!("Transmit request processed successfully");
             (StatusCode::OK, response)
-        } 
+        }
         Err(e) => {
             error!("Error handling transmit request: {}", e);
             (
@@ -52,8 +50,8 @@ mod tests {
     use super::*;
     use crate::domain::eid::service::{EIDServiceConfig, UseidService};
     use crate::sal::transmit::{
-        channel::TransmitChannel, protocol::ProtocolHandler, session::SessionManager,
-        config::TransmitConfig,
+        channel::TransmitChannel, config::TransmitConfig, protocol::ProtocolHandler,
+        session::SessionManager,
     };
     use crate::server::AppState;
     use axum::http::StatusCode;

@@ -1,8 +1,8 @@
 use eid_server::{
     config::Config,
     domain::eid::service::{EIDServiceConfig, UseidService},
-    server::{Server, ServerConfig},
     sal::transmit::config::TransmitConfig,
+    server::{Server, ServerConfig},
 };
 
 // Helper function to spawn a test server on a random port

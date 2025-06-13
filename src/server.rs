@@ -20,8 +20,8 @@ use tower_http::{
 
 use crate::domain::eid::ports::{EIDService, EidService};
 use crate::sal::transmit::{
-    channel::TransmitChannel, protocol::ProtocolHandler, session::SessionManager,
-    config::TransmitConfig,
+    channel::TransmitChannel, config::TransmitConfig, protocol::ProtocolHandler,
+    session::SessionManager,
 };
 
 #[derive(Debug, Clone)]
@@ -73,10 +73,12 @@ impl Server {
 
         // Initialize the TransmitChannel components
         let protocol_handler = ProtocolHandler::new();
-        let session_manager = SessionManager::new(config.transmit.session_timeout);
+        let session_manager = SessionManager::new(Duration::from_secs(
+            config.transmit.session_timeout_secs as u64,
+        ));
         let transmit_channel = Arc::new(TransmitChannel::new(
             protocol_handler,
-            session_manager, 
+            session_manager,
             config.transmit.clone(),
         ));
 
@@ -129,12 +131,23 @@ mod tests {
         let config = ServerConfig {
             host: "127.0.0.1",
             port: 0, // Use port 0 to get a random available port
-            transmit: TransmitConfig::default(),
+            transmit: TransmitConfig {
+                client_url: "http://127.0.0.1:24727/eID-Client".to_string(),
+                max_apdu_size: 4096,
+                session_timeout_secs: 30,
+                allowed_cipher_suites: vec![
+                    "TLS_AES_128_GCM_SHA256".to_string(),
+                    "TLS_AES_256_GCM_SHA384".to_string(),
+                    "TLS_CHACHA20_POLY1305_SHA256".to_string(),
+                ],
+            },
         };
 
         let eid_service = UseidService::new(EIDServiceConfig::default());
-        let server = Server::new(eid_service, config).await.expect("Failed to create server");
-        
+        let server = Server::new(eid_service, config)
+            .await
+            .expect("Failed to create server");
+
         // Verify we got a valid port
         let port = server.port().expect("Failed to get port");
         assert!(port > 0);
@@ -144,13 +157,9 @@ mod tests {
     async fn test_server_with_custom_transmit_config() {
         let transmit_config = TransmitConfig {
             max_apdu_size: 8192,
-            session_timeout: Duration::from_secs(600),
-            max_requests_per_minute: 120,
+            session_timeout_secs: 600,
             allowed_cipher_suites: vec!["TLS_AES_128_GCM_SHA256".to_string()],
-            require_client_certificate: false,
-            min_tls_version: "TLSv1.3".to_string(),
             client_url: "http://localhost:24727/eID-Client".to_string(),
-            mobile_client_url: "eid://localhost:24727/eID-Client".to_string(),
         };
 
         let config = ServerConfig {
@@ -160,8 +169,10 @@ mod tests {
         };
 
         let eid_service = UseidService::new(EIDServiceConfig::default());
-        let server = Server::new(eid_service, config).await.expect("Failed to create server");
-        
+        let server = Server::new(eid_service, config)
+            .await
+            .expect("Failed to create server");
+
         // Verify we got a valid port
         let port = server.port().expect("Failed to get port");
         assert!(port > 0);
