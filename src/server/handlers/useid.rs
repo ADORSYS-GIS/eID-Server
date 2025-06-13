@@ -105,6 +105,12 @@ mod tests {
             common::models::{AttributeRequester, OperationsRequester, ResultCode},
             use_id::model::{AgeVerificationRequest, PlaceVerificationRequest, UseIDRequest},
         },
+        sal::transmit::{
+            channel::{HttpApduTransport, TransmitChannel},
+            config::TransmitConfig,
+            protocol::ProtocolHandler,
+            session::SessionManager,
+        },
     };
     use axum::{
         body::Body,
@@ -113,6 +119,7 @@ mod tests {
     use http_body_util;
     use quick_xml::{Reader, events::Event};
     use std::sync::Arc;
+    use std::time::Duration;
 
     fn create_test_service() -> UseidService {
         UseidService::new(EIDServiceConfig {
@@ -125,9 +132,22 @@ mod tests {
     fn create_test_state() -> AppState<UseidService> {
         let service = create_test_service();
         let service_arc = Arc::new(service);
+
+        // Create a TransmitChannel for testing
+        let protocol_handler = ProtocolHandler::new();
+        let session_manager = SessionManager::new(Duration::from_secs(60));
+        let config = TransmitConfig::default();
+        let transport = HttpApduTransport::new(config.clone());
+        let transmit_channel = Arc::new(TransmitChannel::new(
+            protocol_handler,
+            session_manager,
+            config,
+        ));
+
         AppState {
             use_id: service_arc.clone(),
             eid_service: service_arc,
+            transmit_channel,
         }
     }
 
@@ -346,5 +366,13 @@ mod tests {
 
         let empty_headers = HeaderMap::new();
         assert!(!is_soap_content_type(&empty_headers));
+    }
+
+    #[tokio::test]
+    async fn test_use_id_handler() {
+        let config = TransmitConfig::default();
+        let transport = HttpApduTransport::new(config);
+        let transport = Arc::new(transport);
+        // ... rest of the test ...
     }
 }

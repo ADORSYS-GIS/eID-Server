@@ -1,6 +1,7 @@
 use eid_server::{
     config::Config,
     domain::eid::service::{EIDServiceConfig, UseidService},
+    sal::transmit::config::TransmitConfig,
     server::{Server, ServerConfig},
 };
 
@@ -18,6 +19,7 @@ pub async fn spawn_server() -> String {
     let server_config = ServerConfig {
         host: &config.server.host,
         port: config.server.port,
+        transmit: TransmitConfig::default(),
     };
 
     let server = Server::new(eid_service, server_config.clone())
