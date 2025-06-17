@@ -16,20 +16,34 @@ pub async fn use_id_handler<S: EIDService + EidService + >(
     headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
+    // Log the incoming request details
+    tracing::info!("=== useID Handler Called ===");
+    tracing::info!("Request body length: {} bytes", body.len());
+    tracing::info!("Request body preview: {}", body.chars().take(200).collect::<String>());
+    tracing::info!("Headers: {:?}", headers);
+    
     // Check content type
+    tracing::info!("Checking content type...");
     if !is_soap_content_type(&headers) {
+        tracing::warn!("Invalid content type - expected SOAP XML content type");
         return (
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "Expected SOAP XML content type".to_string(),
         )
             .into_response();
     }
+    tracing::info!("Content type validation passed");
 
     // Parse the SOAP request
+    tracing::info!("Attempting to parse SOAP request...");
     let use_id_request = match parse_use_id_request(&body) {
-        Ok(request) => request,
+        Ok(request) => {
+            tracing::info!("SOAP request parsed successfully");
+            request
+        },
         Err(err) => {
             error!("Failed to parse SOAP request: {}", err);
+            tracing::error!("Parse error details: {:?}", err);
             return (
                 StatusCode::BAD_REQUEST,
                 format!("Failed to parse SOAP request: {err}"),
@@ -39,10 +53,16 @@ pub async fn use_id_handler<S: EIDService + EidService + >(
     };
 
     // Process the request
+    tracing::info!("Processing useID request with service...");
     let response = match state.use_id.handle_use_id(use_id_request) {
-        Ok(response) => response,
+        Ok(response) => {
+            tracing::info!("useID request processed successfully");
+            tracing::debug!("Response: {:?}", response);
+            response
+        },
         Err(err) => {
             error!("Error processing useID request: {}", err);
+            tracing::error!("Service error details: {:?}", err);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal server error".to_string(),
@@ -52,9 +72,12 @@ pub async fn use_id_handler<S: EIDService + EidService + >(
     };
 
     // Serialize the response
+    tracing::info!("Serializing SOAP response...");
     match build_use_id_response(&response) {
         Ok(soap_response) => {
             debug!("Successfully generated SOAP response");
+            tracing::info!("Response serialized successfully, length: {} bytes", soap_response.len());
+            tracing::debug!("Response preview: {}", soap_response.chars().take(200).collect::<String>());
             (
                 StatusCode::OK,
                 create_soap_response_headers(),
@@ -64,6 +87,7 @@ pub async fn use_id_handler<S: EIDService + EidService + >(
         }
         Err(err) => {
             error!("Failed to serialize SOAP response: {}", err);
+            tracing::error!("Serialization error details: {:?}", err);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Failed to create SOAP response".to_string(),

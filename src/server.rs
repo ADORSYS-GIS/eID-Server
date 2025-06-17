@@ -71,6 +71,7 @@ impl Server {
         let router = axum::Router::new()
             .route("/health", get(health_check))
             .route("/eIDService/useID", post(handlers::useid::use_id_handler))
+            .route("/eIDService/useID", get(handlers::useid::use_id_handler))
             .route("/eIDService/getServerInfo", get(get_server_info))
             .route("/did-authenticate", post(did_authenticate)) 
             .layer(cors)
