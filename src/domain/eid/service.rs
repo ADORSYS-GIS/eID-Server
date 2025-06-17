@@ -41,20 +41,33 @@ pub struct SessionInfo {
     pub expiry: DateTime<Utc>,
     pub psk: Option<String>,
     pub operations: Vec<String>,
+    pub connection_handles: Vec<ConnectionHandle>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConnectionHandle {
+    pub connection_handle: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct SessionManager {
+    pub sessions: Vec<SessionInfo>,
 }
 
 /// Main service for handling useID requests
 #[derive(Clone, Debug)]
 pub struct UseidService {
     pub config: EIDServiceConfig,
-    pub sessions: Arc<RwLock<Vec<SessionInfo>>>,
+    pub session_manager: Arc<RwLock<SessionManager>>,
 }
 
 impl UseidService {
     pub fn new(config: EIDServiceConfig) -> Self {
         Self {
             config,
-            sessions: Arc::new(RwLock::new(Vec::new())),
+            session_manager: Arc::new(RwLock::new(SessionManager {
+                sessions: Vec::new(),
+            })),
         }
     }
 
@@ -132,6 +145,30 @@ impl UseidService {
 
 // Implement the EIDService trait for UseidService
 impl EIDService for UseidService {
+    fn get_config(&self) -> EIDServiceConfig {
+        self.config.clone()
+    }
+
+    fn get_session_manager(&self) -> Arc<std::sync::RwLock<SessionManager>> {
+        self.session_manager.clone()
+    }
+
+    /// Returns a clone of the UseidService instance
+    /// This is useful for passing the service around without ownership issues
+    fn get_use_id_service(&self) -> Self {
+        self.clone()
+    }
+
+    /// Check if a session is valid by its ID
+    fn is_session_valid(&self, session_id: &str) -> Result<bool> {
+        match self.session_manager.read() {
+            Ok(mgr) => Ok(mgr.sessions.iter().any(|s| s.id == session_id)),
+            Err(e) => Err(color_eyre::eyre::eyre!(
+                "Session manager lock poisoned: {}",
+                e
+            )),
+        }
+    }
     fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse> {
         // Validate the request: Check if any operations are REQUIRED
         let required_operations = Self::get_required_operations(&request._use_operations);
@@ -145,7 +182,7 @@ impl EIDService for UseidService {
         }
 
         // Check if we've reached the maximum number of sessions
-        if self.sessions.read().unwrap().len() >= self.config.max_sessions {
+        if self.session_manager.read().unwrap().sessions.len() >= self.config.max_sessions {
             return Ok(UseIDResponse {
                 ..Default::default()
             });
@@ -182,11 +219,12 @@ impl EIDService for UseidService {
             expiry,
             psk: Some(psk.clone()),
             operations: required_operations,
+            connection_handles: Vec::new(),
         };
 
         // Store the session
         {
-            let mut sessions = self.sessions.write().unwrap();
+            let mut sessions = self.session_manager.write().unwrap().sessions.clone();
 
             // Remove expired sessions first
             let now = Utc::now();
