@@ -1,11 +1,10 @@
 //! This module contains the HTTP server implementation.
 
-mod handlers;
-mod responses;
-
 use std::sync::Arc;
 
 use crate::eid::get_server_info::handler::get_server_info;
+use crate::web::handlers;
+use crate::web::handlers::sal::paos::paos_handler;
 use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
 use color_eyre::eyre::eyre;
@@ -66,11 +65,17 @@ impl Server {
             use_id: eid_service_arc.clone(),
             eid_service: eid_service_arc,
         };
+        let ecard_server_address = state
+            .use_id
+            .get_config()
+            .ecard_server_address
+            .unwrap_or("/eIDService/paos".to_owned());
 
         let router = axum::Router::new()
             .route("/health", get(health_check))
             .route("/eIDService/useID", post(handlers::useid::use_id_handler))
             .route("/eIDService/getServerInfo", get(get_server_info))
+            .route(&ecard_server_address, post(paos_handler))
             .layer(cors)
             .layer(trace_layer)
             .with_state(state);
