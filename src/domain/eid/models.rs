@@ -1,9 +1,8 @@
-//! Canonical data structures comprising the domain.
-
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
 /// ServerInfo model according to TR-03130 specification
 /// This structure represents the information returned by the getServerInfo endpoint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +50,7 @@ pub struct DocumentVerificationRights {
     #[serde(rename = "Version", skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 }
+
 #[derive(Debug, Error)]
 pub enum AuthError {
     #[error("Invalid connection handle: {reason}")]
@@ -106,7 +106,7 @@ impl ConnectionHandle {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AuthenticationProtocolData {
     pub certificate_description: String,
     pub required_chat: String,

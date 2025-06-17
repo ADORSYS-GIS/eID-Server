@@ -29,11 +29,11 @@ AH8ABwMBAgJTBf4f////XyUGAQYABAABXyQGAwIACQAEXzdAR/9u7Kk+FeiDIrjaCmjBhhxQoUmO
 x1Phg3kzf3xjWLZ2EhveqcEuhDAyE1ssdDEYjgYbbwSu42Lr3Wbo6eoPsQ==
 </ecard:Certificate>
         <ecard:CertificateDescription>
-          <SubjectURL>https://your-eservice.example.com</SubjectURL>
+          <SubjectURL>https://eservice.example.com</SubjectURL>
           <CommCertificates>SHA256_HASH_OF_TLS_CERT</CommCertificates>
         </ecard:CertificateDescription>
-        <ecard:RequiredCHAT>HEX_ENCODED_CHAT</ecard:RequiredCHAT>
-        <ecard:OptionalCHAT>HEX_ENCODED_CHAT</ecard:OptionalCHAT>
+        <ecard:RequiredCHAT>7f4c12060904007f00070301020253053c0ff3ffff</ecard:RequiredCHAT>
+        <ecard:OptionalCHAT>7f4c12060904007f00070301020253053c0ff3ffff</ecard:OptionalCHAT>
         <ecard:AuthenticatedAuxiliaryData>TRANSACTION_INFO</ecard:AuthenticatedAuxiliaryData>
       </ecard:AuthenticationProtocolData>
     </ecard:DIDAuthenticate>

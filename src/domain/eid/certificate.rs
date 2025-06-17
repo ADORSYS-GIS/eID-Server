@@ -803,7 +803,7 @@ impl CardCommunicator {
             })?;
         let tls_cert_hash = auth_data.certificate_description.clone();
         let cert_desc = format!(
-            "<SubjectURL>https://your-eservice.example.com</SubjectURL><CommCertificates>{}</CommCertificates>",
+            "<SubjectURL>https://eservice.example.com</SubjectURL><CommCertificates>{}</CommCertificates>",
             tls_cert_hash
         );
         writer
