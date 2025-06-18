@@ -42,6 +42,8 @@ base64 = "0.22.1"
 rand = "0.9.1"
 async-trait = "0.1"
 reqwest = { version = "0.12", features = ["json"] }
+urlencoding = "2.1"
+flate2 = "1.0"
 
 # cryptographic dependencies
 ring = "0.17"                   
