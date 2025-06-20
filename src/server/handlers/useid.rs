@@ -6,12 +6,12 @@ use axum::{
 use base64::Engine;
 use flate2::bufread::DeflateDecoder;
 use quick_xml::{
-    NsReader,
-    events::Event,
+    NsReader, Writer,
+    events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event},
     name::{Namespace, ResolveResult},
 };
 use serde::Deserialize;
-use std::io::Read;
+use std::io::{Cursor, Read};
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -19,8 +19,9 @@ use crate::{
     eid::{
         common::models::{AttributeRequester, LevelOfAssurance, OperationsRequester},
         use_id::{
-            builder::build_use_id_response,
-            model::{AgeVerificationRequest, PlaceVerificationRequest, UseIDRequest},
+            model::{
+                AgeVerificationRequest, PlaceVerificationRequest, UseIDRequest, UseIDResponse,
+            },
             parser::parse_use_id_request,
         },
     },
@@ -105,6 +106,7 @@ pub async fn use_id_handler<S: EIDService + EidService>(
         let use_id_request = match parse_saml_to_use_id_request(&saml_xml) {
             Ok(request) => {
                 info!("SAML request parsed successfully");
+                debug!("Parsed UseIDRequest: {:?}", request);
                 request
             }
             Err(err) => {
@@ -122,6 +124,14 @@ pub async fn use_id_handler<S: EIDService + EidService>(
             Ok(response) => {
                 info!("useID request processed successfully");
                 debug!("Response: {:?}", response);
+                // Add detailed logging
+                debug!(
+                    "Response details: session_id={}, psk_id={}, psk_key={}, ecard_server_address={:?}",
+                    response.session.id,
+                    response.psk.id,
+                    response.psk.key,
+                    response.ecard_server_address
+                );
                 response
             }
             Err(err) => {
@@ -135,8 +145,9 @@ pub async fn use_id_handler<S: EIDService + EidService>(
         };
 
         // Serialize to SOAP response
-        match build_use_id_response(&response) {
+        match build_use_id_response_local(&response) {
             Ok(soap_response) => {
+                info!("SOAP response: {}", soap_response);
                 info!(
                     "Response serialized successfully, length: {} bytes",
                     soap_response.len()
@@ -207,7 +218,7 @@ pub async fn use_id_handler<S: EIDService + EidService>(
             }
         };
 
-        match build_use_id_response(&response) {
+        match build_use_id_response_local(&response) {
             Ok(soap_response) => {
                 info!(
                     "Response serialized successfully, length: {} bytes",
@@ -272,6 +283,7 @@ fn parse_saml_to_use_id_request(saml_xml: &str) -> Result<UseIDRequest, String> 
     let mut in_authn_request = false;
     let mut in_attribute = false;
     let mut current_attribute = String::new();
+    let mut is_required = false; // Declare is_required at function scope
     let mut depth = 0;
     let mut root_element: Option<String> = None;
 
@@ -310,6 +322,7 @@ fn parse_saml_to_use_id_request(saml_xml: &str) -> Result<UseIDRequest, String> 
                     && local_name.as_ref() == b"Attribute"
                 {
                     in_attribute = true;
+                    is_required = false; // Reset is_required for new attribute
                     for attr in e.attributes() {
                         let attr = attr.map_err(|e| format!("Invalid attribute: {}", e))?;
                         let (attr_ns_result, attr_local_name) = reader.resolve_attribute(attr.key);
@@ -331,6 +344,13 @@ fn parse_saml_to_use_id_request(saml_xml: &str) -> Result<UseIDRequest, String> 
                                 .map_err(|e| format!("Invalid attribute name: {}", e))?
                                 .into_owned();
                             debug!("Current attribute name: {}", current_attribute);
+                        } else if attr_local_name.as_ref() == b"isRequired" {
+                            is_required = attr
+                                .unescape_value()
+                                .map_err(|e| format!("Invalid isRequired value: {}", e))?
+                                .to_lowercase()
+                                == "true";
+                            debug!("Attribute isRequired: {}", is_required);
                         }
                     }
                 }
@@ -354,6 +374,7 @@ fn parse_saml_to_use_id_request(saml_xml: &str) -> Result<UseIDRequest, String> 
                 if namespace == SAML_ASSERTION_NS && local_name.as_ref() == b"Attribute" {
                     in_attribute = false;
                     current_attribute.clear();
+                    is_required = false; // Reset is_required when leaving attribute
                 } else if local_name.as_ref() == b"AuthnRequest" {
                     in_authn_request = false;
                     debug!("Closed AuthnRequest");
@@ -365,24 +386,27 @@ fn parse_saml_to_use_id_request(saml_xml: &str) -> Result<UseIDRequest, String> 
                     .map_err(|e| format!("Failed to unescape attribute value: {}", e))?
                     .into_owned();
                 debug!("Text value for attribute {}: {}", current_attribute, value);
+                let attribute_status = if is_required {
+                    AttributeRequester::REQUIRED
+                } else {
+                    AttributeRequester::ALLOWED
+                };
                 match current_attribute.as_str() {
-                    "documentType" => operations.document_type = AttributeRequester::ALLOWED,
-                    "issuingState" => operations.issuing_state = AttributeRequester::ALLOWED,
-                    "dateOfExpiry" => operations.date_of_expiry = AttributeRequester::ALLOWED,
-                    "givenNames" => operations.given_names = AttributeRequester::ALLOWED,
-                    "familyNames" => operations.family_names = AttributeRequester::ALLOWED,
-                    "artisticName" => operations.artistic_name = AttributeRequester::ALLOWED,
-                    "academicTitle" => operations.academic_title = AttributeRequester::ALLOWED,
-                    "dateOfBirth" => operations.date_of_birth = AttributeRequester::ALLOWED,
-                    "placeOfBirth" => operations.place_of_birth = AttributeRequester::ALLOWED,
-                    "nationality" => operations.nationality = AttributeRequester::ALLOWED,
-                    "birthName" => operations.birth_name = AttributeRequester::ALLOWED,
-                    "placeOfResidence" => {
-                        operations.place_of_residence = AttributeRequester::ALLOWED
-                    }
-                    "restrictedId" => operations.restricted_id = AttributeRequester::ALLOWED,
+                    "documentType" => operations.document_type = attribute_status,
+                    "issuingState" => operations.issuing_state = attribute_status,
+                    "dateOfExpiry" => operations.date_of_expiry = attribute_status,
+                    "givenNames" => operations.given_names = attribute_status,
+                    "familyNames" => operations.family_names = attribute_status,
+                    "artisticName" => operations.artistic_name = attribute_status,
+                    "academicTitle" => operations.academic_title = attribute_status,
+                    "dateOfBirth" => operations.date_of_birth = attribute_status,
+                    "placeOfBirth" => operations.place_of_birth = attribute_status,
+                    "nationality" => operations.nationality = attribute_status,
+                    "birthName" => operations.birth_name = attribute_status,
+                    "placeOfResidence" => operations.place_of_residence = attribute_status,
+                    "restrictedId" => operations.restricted_id = attribute_status,
                     "ageVerification" => {
-                        operations.age_verification = AttributeRequester::ALLOWED;
+                        operations.age_verification = attribute_status;
                         if let Ok(age) = value.parse::<u32>() {
                             match age.try_into() {
                                 Ok(age_u8) => age_verification._age = age_u8,
@@ -393,7 +417,7 @@ fn parse_saml_to_use_id_request(saml_xml: &str) -> Result<UseIDRequest, String> 
                         }
                     }
                     "placeVerification" => {
-                        operations.place_verification = AttributeRequester::ALLOWED;
+                        operations.place_verification = attribute_status;
                         place_verification._community_id = value;
                     }
                     "levelOfAssurance" => {
@@ -483,12 +507,167 @@ fn create_soap_response_headers() -> HeaderMap {
     headers
 }
 
+/// Builds a SOAP response from a UseIDResponse struct (local implementation).
+fn build_use_id_response_local(response: &UseIDResponse) -> Result<String, String> {
+    debug!(
+        "Building SOAP response with: session.id={}, ecard_server_address={:?}, psk.id={}, psk.key={}, result_major={}",
+        response.session.id,
+        response.ecard_server_address,
+        response.psk.id,
+        response.psk.key,
+        response.result.result_major
+    );
+
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+
+    // Write XML declaration
+    let decl = BytesDecl::new("1.0", Some("UTF-8"), None);
+    writer
+        .write_event(Event::Decl(decl))
+        .map_err(|e| e.to_string())?;
+
+    // Start Envelope
+    let mut envelope = BytesStart::new("soapenv:Envelope");
+    envelope.push_attribute(("xmlns:soapenv", "http://schemas.xmlsoap.org/soap/envelope/"));
+    envelope.push_attribute(("xmlns:eid", "http://bsi.bund.de/eID/"));
+    envelope.push_attribute(("xmlns:dss", "urn:oasis:names:tc:dss:1.0:core:schema"));
+    writer
+        .write_event(Event::Start(envelope))
+        .map_err(|e| e.to_string())?;
+
+    // Start Body
+    let mut body = BytesStart::new("soapenv:Body");
+    writer
+        .write_event(Event::Start(body))
+        .map_err(|e| e.to_string())?;
+
+    // Start useIDResponse
+    let mut use_id_response = BytesStart::new("eid:useIDResponse");
+    writer
+        .write_event(Event::Start(use_id_response))
+        .map_err(|e| e.to_string())?;
+
+    // Serialize Session
+    let mut session = BytesStart::new("eid:Session");
+    writer
+        .write_event(Event::Start(session))
+        .map_err(|e| e.to_string())?;
+    let mut id = BytesStart::new("eid:ID");
+    id.push_attribute(("xmlns:eid", "http://bsi.bund.de/eID/"));
+    writer
+        .write_event(Event::Start(id))
+        .map_err(|e| e.to_string())?;
+    if response.session.id.is_empty() {
+        error!("Session ID is empty in response");
+        return Err("Session ID is empty".to_string());
+    }
+    writer
+        .write_event(Event::Text(BytesText::from_escaped(&response.session.id)))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("eid:ID")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("eid:Session")))
+        .map_err(|e| e.to_string())?;
+
+    // Serialize eCardServerAddress
+    if let Some(addr) = &response.ecard_server_address {
+        let mut ecard_addr = BytesStart::new("eid:eCardServerAddress");
+        writer
+            .write_event(Event::Start(ecard_addr))
+            .map_err(|e| e.to_string())?;
+        writer
+            .write_event(Event::Text(BytesText::from_escaped(addr)))
+            .map_err(|e| e.to_string())?;
+        writer
+            .write_event(Event::End(BytesEnd::new("eid:eCardServerAddress")))
+            .map_err(|e| e.to_string())?;
+    }
+
+    // Serialize PSK
+    let mut psk = BytesStart::new("eid:PSK");
+    writer
+        .write_event(Event::Start(psk))
+        .map_err(|e| e.to_string())?;
+    let mut psk_id = BytesStart::new("eid:ID");
+    writer
+        .write_event(Event::Start(psk_id))
+        .map_err(|e| e.to_string())?;
+    if response.psk.id.is_empty() {
+        error!("PSK ID is empty in response");
+        return Err("PSK ID is empty".to_string());
+    }
+    writer
+        .write_event(Event::Text(BytesText::from_escaped(&response.psk.id)))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("eid:ID")))
+        .map_err(|e| e.to_string())?;
+    let mut psk_key = BytesStart::new("eid:Key");
+    writer
+        .write_event(Event::Start(psk_key))
+        .map_err(|e| e.to_string())?;
+    if response.psk.key.is_empty() {
+        error!("PSK Key is empty in response");
+        return Err("PSK Key is empty".to_string());
+    }
+    writer
+        .write_event(Event::Text(BytesText::from_escaped(&response.psk.key)))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("eid:Key")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("eid:PSK")))
+        .map_err(|e| e.to_string())?;
+
+    // Serialize Result
+    let mut result = BytesStart::new("dss:Result");
+    writer
+        .write_event(Event::Start(result))
+        .map_err(|e| e.to_string())?;
+    let mut result_major = BytesStart::new("ResultMajor");
+    writer
+        .write_event(Event::Start(result_major))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::Text(BytesText::from_escaped(
+            &response.result.result_major,
+        )))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("ResultMajor")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("dss:Result")))
+        .map_err(|e| e.to_string())?;
+
+    // End useIDResponse
+    writer
+        .write_event(Event::End(BytesEnd::new("eid:useIDResponse")))
+        .map_err(|e| e.to_string())?;
+
+    // End Body
+    writer
+        .write_event(Event::End(BytesEnd::new("soapenv:Body")))
+        .map_err(|e| e.to_string())?;
+
+    // End Envelope
+    writer
+        .write_event(Event::End(BytesEnd::new("soapenv:Envelope")))
+        .map_err(|e| e.to_string())?;
+
+    let result = writer.into_inner().into_inner();
+    let response_str = String::from_utf8(result).map_err(|e| e.to_string())?;
+    debug!("Generated SOAP response: {}", response_str);
+    Ok(response_str)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        domain::eid::service::{EIDServiceConfig, UseidService},
-    };
+    use crate::domain::eid::service::{EIDServiceConfig, UseidService};
     use axum::{
         body::Body,
         http::{self, Request, StatusCode},
@@ -513,22 +692,22 @@ mod tests {
     async fn test_use_id_handler_saml_request() {
         let state = create_test_state();
         let saml_request = r#"
-            <samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
-                                xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
-                                ID="id123" Version="2.0" IssueInstant="2025-06-18T12:33:00Z">
-                <saml:Issuer>https://localhost:8443/realms/master</saml:Issuer>
-                <samlp:RequestedAuthnContext>
-                    <saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:Smartcard</saml:AuthnContextClassRef>
-                </samlp:RequestedAuthnContext>
-                <saml:AttributeStatement>
-                    <saml:Attribute Name="givenNames"><saml:AttributeValue>ALLOWED</saml:AttributeValue></saml:Attribute>
-                    <saml:Attribute Name="familyNames"><saml:AttributeValue>ALLOWED</saml:AttributeValue></saml:Attribute>
-                    <saml:Attribute Name="ageVerification"><saml:AttributeValue>18</saml:AttributeValue></saml:Attribute>
-                    <saml:Attribute Name="placeVerification"><saml:AttributeValue>DE123</saml:AttributeValue></saml:Attribute>
-                    <saml:Attribute Name="levelOfAssurance"><saml:AttributeValue>substantial</saml:AttributeValue></saml:Attribute>
-                </saml:AttributeStatement>
-            </samlp:AuthnRequest>
-        "#;
+        <samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                            xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+                            ID="id123" Version="2.0" IssueInstant="2025-06-18T12:33:00Z">
+            <saml:Issuer>https://localhost:8443/realms/master</saml:Issuer>
+            <samlp:RequestedAuthnContext>
+                <saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:Smartcard</saml:AuthnContextClassRef>
+            </samlp:RequestedAuthnContext>
+            <saml:AttributeStatement>
+                <saml:Attribute Name="givenNames" isRequired="true"><saml:AttributeValue>ALLOWED</saml:AttributeValue></saml:Attribute>
+                <saml:Attribute Name="familyNames" isRequired="true"><saml:AttributeValue>ALLOWED</saml:AttributeValue></saml:Attribute>
+                <saml:Attribute Name="ageVerification"><saml:AttributeValue>18</saml:AttributeValue></saml:Attribute>
+                <saml:Attribute Name="placeVerification"><saml:AttributeValue>DE123</saml:AttributeValue></saml:Attribute>
+                <saml:Attribute Name="levelOfAssurance"><saml:AttributeValue>substantial</saml:AttributeValue></saml:Attribute>
+            </saml:AttributeStatement>
+        </samlp:AuthnRequest>
+    "#;
         let compressed_saml = {
             let mut encoder =
                 flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
@@ -562,6 +741,10 @@ mod tests {
         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
         let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
         assert!(body_str.contains("http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok"));
+        assert!(body_str.contains("<eid:ID>")); // Ensure session ID is present
+        assert!(body_str.contains("<eid:Key>")); // Ensure PSK key is present
+        assert!(!body_str.contains("<eid:ID></eid:ID>")); // Ensure session ID is not empty
+        assert!(!body_str.contains("<eid:Key></eid:Key>")); // Ensure PSK key is not empty
     }
 
     #[tokio::test]
