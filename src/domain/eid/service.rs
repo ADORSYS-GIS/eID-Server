@@ -4,10 +4,12 @@ use std::sync::{Arc, RwLock};
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use color_eyre::Result;
+use quick_xml::escape::escape;
 use rand::Rng;
 use rand::distr::Alphanumeric;
 use std::default::Default;
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 use super::certificate::{CardCommunicator, CertificateStore, CryptoProvider};
 use super::models::{
@@ -72,6 +74,19 @@ impl UseidService {
             config,
             sessions: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    /// Generate a random session ID
+    pub fn generate_session_id(&self) -> String {
+        let timestamp = Utc::now()
+            .timestamp_nanos_opt()
+            .expect("System time out of range for timestamp_nanos_opt()");
+        let _random_part: String = rand::rng()
+            .sample_iter(&Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect();
+        format!("{timestamp}-{}", Uuid::new_v4().to_string())
     }
 
     /// Generate a random PSK for secure communication
@@ -158,18 +173,7 @@ impl EIDService for UseidService {
         }
 
         // Generate session ID
-        let session_id = {
-            let timestamp = Utc::now()
-                .timestamp_nanos_opt()
-                .expect("System time out of range for timestamp_nanos_opt()");
-            let random_part: String = rand::thread_rng()
-                .sample_iter(&Alphanumeric)
-                .take(16)
-                .map(char::from)
-                .collect();
-
-            format!("{timestamp}-{random_part}")
-        };
+        let session_id = self.generate_session_id();
         if session_id.is_empty() {
             error!("Generated empty session ID");
             return Err(color_eyre::eyre::eyre!("Failed to generate session ID"));
@@ -179,11 +183,7 @@ impl EIDService for UseidService {
         // Generate or use provided PSK
         let psk = match &request._psk {
             Some(psk) => psk.key.clone(),
-            None => rand::thread_rng()
-                .sample_iter(&Alphanumeric)
-                .take(32)
-                .map(char::from)
-                .collect(),
+            None => self.generate_psk(),
         };
         if psk.is_empty() {
             error!("Generated empty PSK");
@@ -220,6 +220,10 @@ impl EIDService for UseidService {
                 urlencoding::encode(&session_id)
             )
         });
+        debug!(
+            "Config ecard_server_address: {:?}",
+            self.config.ecard_server_address
+        );
         debug!("Constructed tc_token_url: {:?}", tc_token_url);
 
         // Validate TcTokenURL
@@ -228,7 +232,7 @@ impl EIDService for UseidService {
             color_eyre::eyre::eyre!("eCard server address not configured")
         })?;
 
-        debug!("Constructed tc_token_url: {}", tc_token_url);
+        debug!("Validated tc_token_url: {}", tc_token_url);
         if !tc_token_url.starts_with("https://") {
             warn!("TcTokenURL is not HTTPS: {}", tc_token_url);
         }

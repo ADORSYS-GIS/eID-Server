@@ -6,9 +6,7 @@ use axum::{
 use base64::Engine;
 use flate2::bufread::DeflateDecoder;
 use quick_xml::{
-    NsReader, Writer,
-    events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event},
-    name::{Namespace, ResolveResult},
+    escape::escape, events::{BytesCData, BytesDecl, BytesEnd, BytesStart, BytesText, Event}, name::{Namespace, ResolveResult}, NsReader, Writer
 };
 use serde::Deserialize;
 use std::io::{Cursor, Read};
@@ -510,7 +508,7 @@ fn create_soap_response_headers() -> HeaderMap {
 /// Builds a SOAP response from a UseIDResponse struct (local implementation).
 fn build_use_id_response_local(response: &UseIDResponse) -> Result<String, String> {
     debug!(
-        "Building SOAP response with: session.id={}, ecard_server_address={:?}, psk.id={}, psk.key={}, result_major={}",
+        "Building SOAP response with: session_id={}, ecard_server_address={:?}, psk_id={}, psk_key={}, result_major={}",
         response.session.id,
         response.ecard_server_address,
         response.psk.id,
@@ -519,147 +517,71 @@ fn build_use_id_response_local(response: &UseIDResponse) -> Result<String, Strin
     );
 
     let mut writer = Writer::new(Cursor::new(Vec::new()));
-
-    // Write XML declaration
     let decl = BytesDecl::new("1.0", Some("UTF-8"), None);
-    writer
-        .write_event(Event::Decl(decl))
-        .map_err(|e| e.to_string())?;
+    writer.write_event(Event::Decl(decl)).map_err(|e| e.to_string())?;
 
-    // Start Envelope
     let mut envelope = BytesStart::new("soapenv:Envelope");
     envelope.push_attribute(("xmlns:soapenv", "http://schemas.xmlsoap.org/soap/envelope/"));
     envelope.push_attribute(("xmlns:eid", "http://bsi.bund.de/eID/"));
     envelope.push_attribute(("xmlns:dss", "urn:oasis:names:tc:dss:1.0:core:schema"));
-    writer
-        .write_event(Event::Start(envelope))
-        .map_err(|e| e.to_string())?;
+    writer.write_event(Event::Start(envelope)).map_err(|e| e.to_string())?;
 
-    // Start Body
-    let mut body = BytesStart::new("soapenv:Body");
-    writer
-        .write_event(Event::Start(body))
-        .map_err(|e| e.to_string())?;
+    writer.write_event(Event::Start(BytesStart::new("soapenv:Body"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::Start(BytesStart::new("eid:useIDResponse"))).map_err(|e| e.to_string())?;
 
-    // Start useIDResponse
-    let mut use_id_response = BytesStart::new("eid:useIDResponse");
-    writer
-        .write_event(Event::Start(use_id_response))
-        .map_err(|e| e.to_string())?;
+    // CommunicationErrorAddress (use CDATA)
+    writer.write_event(Event::Start(BytesStart::new("eid:CommunicationErrorAddress"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::CData(BytesCData::new("https://localhost:3000/error"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::End(BytesEnd::new("eid:CommunicationErrorAddress"))).map_err(|e| e.to_string())?;
 
-    // Serialize Session
-    let mut session = BytesStart::new("eid:Session");
-    writer
-        .write_event(Event::Start(session))
-        .map_err(|e| e.to_string())?;
-    let mut id = BytesStart::new("eid:ID");
-    id.push_attribute(("xmlns:eid", "http://bsi.bund.de/eID/"));
-    writer
-        .write_event(Event::Start(id))
-        .map_err(|e| e.to_string())?;
-    if response.session.id.is_empty() {
-        error!("Session ID is empty in response");
-        return Err("Session ID is empty".to_string());
-    }
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(&response.session.id)))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("eid:ID")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("eid:Session")))
-        .map_err(|e| e.to_string())?;
+    // Session
+    writer.write_event(Event::Start(BytesStart::new("eid:Session"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::Start(BytesStart::new("eid:ID"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::Text(BytesText::from_escaped(&response.session.id))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::End(BytesEnd::new("eid:ID"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::End(BytesEnd::new("eid:Session"))).map_err(|e| e.to_string())?;
 
-    // Serialize eCardServerAddress
-    if let Some(addr) = &response.ecard_server_address {
-        let mut ecard_addr = BytesStart::new("eid:eCardServerAddress");
-        writer
-            .write_event(Event::Start(ecard_addr))
-            .map_err(|e| e.to_string())?;
-        writer
-            .write_event(Event::Text(BytesText::from_escaped(addr)))
-            .map_err(|e| e.to_string())?;
-        writer
-            .write_event(Event::End(BytesEnd::new("eid:eCardServerAddress")))
-            .map_err(|e| e.to_string())?;
-    }
+    // eCardServerAddress (use escaped text)
+    let ecard_url = response.ecard_server_address.as_ref().ok_or_else(|| {
+        error!("eCard server address not provided in response");
+        "eCard server address not provided".to_string()
+    })?;
+    writer.write_event(Event::Start(BytesStart::new("eid:eCardServerAddress"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::Text(BytesText::from_escaped(escape(ecard_url)))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::End(BytesEnd::new("eid:eCardServerAddress"))).map_err(|e| e.to_string())?;
 
-    // Serialize PSK
-    let mut psk = BytesStart::new("eid:PSK");
-    writer
-        .write_event(Event::Start(psk))
-        .map_err(|e| e.to_string())?;
-    let mut psk_id = BytesStart::new("eid:ID");
-    writer
-        .write_event(Event::Start(psk_id))
-        .map_err(|e| e.to_string())?;
-    if response.psk.id.is_empty() {
-        error!("PSK ID is empty in response");
-        return Err("PSK ID is empty".to_string());
-    }
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(&response.psk.id)))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("eid:ID")))
-        .map_err(|e| e.to_string())?;
-    let mut psk_key = BytesStart::new("eid:Key");
-    writer
-        .write_event(Event::Start(psk_key))
-        .map_err(|e| e.to_string())?;
-    if response.psk.key.is_empty() {
-        error!("PSK Key is empty in response");
-        return Err("PSK Key is empty".to_string());
-    }
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(&response.psk.key)))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("eid:Key")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("eid:PSK")))
-        .map_err(|e| e.to_string())?;
+    // RefreshAddress (use CDATA)
+    writer.write_event(Event::Start(BytesStart::new("eid:RefreshAddress"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::CData(BytesCData::new("https://localhost:3000/refresh"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::End(BytesEnd::new("eid:RefreshAddress"))).map_err(|e| e.to_string())?;
 
-    // Serialize Result
-    let mut result = BytesStart::new("dss:Result");
-    writer
-        .write_event(Event::Start(result))
-        .map_err(|e| e.to_string())?;
-    let mut result_major = BytesStart::new("ResultMajor");
-    writer
-        .write_event(Event::Start(result_major))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(
-            &response.result.result_major,
-        )))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("ResultMajor")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("dss:Result")))
-        .map_err(|e| e.to_string())?;
+    // PSK
+    writer.write_event(Event::Start(BytesStart::new("eid:PSK"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::Start(BytesStart::new("eid:ID"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::Text(BytesText::from_escaped(&response.psk.id))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::End(BytesEnd::new("eid:ID"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::Start(BytesStart::new("eid:Key"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::Text(BytesText::from_escaped(&response.psk.key))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::End(BytesEnd::new("eid:Key"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::End(BytesEnd::new("eid:PSK"))).map_err(|e| e.to_string())?;
 
-    // End useIDResponse
-    writer
-        .write_event(Event::End(BytesEnd::new("eid:useIDResponse")))
-        .map_err(|e| e.to_string())?;
+    // Result
+    writer.write_event(Event::Start(BytesStart::new("dss:Result"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::Start(BytesStart::new("dss:ResultMajor"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::Text(BytesText::from_escaped(&response.result.result_major))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::End(BytesEnd::new("dss:ResultMajor"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::End(BytesEnd::new("dss:Result"))).map_err(|e| e.to_string())?;
 
-    // End Body
-    writer
-        .write_event(Event::End(BytesEnd::new("soapenv:Body")))
-        .map_err(|e| e.to_string())?;
-
-    // End Envelope
-    writer
-        .write_event(Event::End(BytesEnd::new("soapenv:Envelope")))
-        .map_err(|e| e.to_string())?;
+    writer.write_event(Event::End(BytesEnd::new("eid:useIDResponse"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::End(BytesEnd::new("soapenv:Body"))).map_err(|e| e.to_string())?;
+    writer.write_event(Event::End(BytesEnd::new("soapenv:Envelope"))).map_err(|e| e.to_string())?;
 
     let result = writer.into_inner().into_inner();
-    let response_str = String::from_utf8(result).map_err(|e| e.to_string())?;
+    debug!("Raw response bytes (length: {}): {:?}", result.len(), result);
+    let response_str = String::from_utf8(result).map_err(|e| {
+        error!("Failed to convert response to UTF-8: {}", e);
+        e.to_string()
+    })?;
     debug!("Generated SOAP response: {}", response_str);
     Ok(response_str)
 }
@@ -741,10 +663,10 @@ mod tests {
         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
         let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
         assert!(body_str.contains("http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok"));
-        assert!(body_str.contains("<eid:ID>")); // Ensure session ID is present
-        assert!(body_str.contains("<eid:Key>")); // Ensure PSK key is present
-        assert!(!body_str.contains("<eid:ID></eid:ID>")); // Ensure session ID is not empty
-        assert!(!body_str.contains("<eid:Key></eid:Key>")); // Ensure PSK key is not empty
+        assert!(body_str.contains("<eid:ID>")); 
+        assert!(body_str.contains("<eid:Key>")); 
+        assert!(!body_str.contains("<eid:ID></eid:ID>")); 
+        assert!(!body_str.contains("<eid:Key></eid:Key>"));
     }
 
     #[tokio::test]
