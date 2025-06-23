@@ -270,7 +270,7 @@ impl ProtocolHandler {
         let our_parts: Vec<&str> = self.protocol_version.split('.').collect();
 
         // Check major version - must match exactly
-        if req_parts.get(0) != our_parts.get(0) {
+        if req_parts.first() != our_parts.first() {
             return Err(TransmitError::ProtocolError(format!(
                 "Incompatible protocol major version: {} vs {}",
                 request_version, self.protocol_version
@@ -322,6 +322,12 @@ impl ProtocolHandler {
                 Some(msg.clone()),
             ),
         }
+    }
+}
+
+impl Default for ProtocolHandler {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

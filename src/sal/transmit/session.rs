@@ -38,13 +38,13 @@ impl Session {
     }
 
     pub fn can_transition_to(&self, new_state: &SessionState) -> bool {
-        match (&self.state, new_state) {
-            (SessionState::Created, SessionState::Active) => true,
-            (SessionState::Active, SessionState::Suspended) => true,
-            (SessionState::Suspended, SessionState::Active) => true,
-            (_, SessionState::Terminated) => true,
-            _ => false,
-        }
+        matches!(
+            (&self.state, new_state),
+            (SessionState::Created, SessionState::Active)
+                | (SessionState::Active, SessionState::Suspended)
+                | (SessionState::Suspended, SessionState::Active)
+                | (_, SessionState::Terminated)
+        )
     }
 }
 
