@@ -64,9 +64,11 @@ mod tests {
         let protocol_handler = ProtocolHandler::new();
         let session_manager = SessionManager::new(Duration::from_secs(60));
         let config = TransmitConfig::default();
+        let apdu_transport = Arc::new(crate::sal::transmit::channel::TestApduTransport);
         let transmit_channel = Arc::new(TransmitChannel::new(
             protocol_handler,
             session_manager,
+            apdu_transport,
             config,
         ));
 

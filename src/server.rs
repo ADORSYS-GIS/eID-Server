@@ -19,6 +19,7 @@ use tower_http::{
 };
 
 use crate::domain::eid::ports::{EIDService, EidService};
+use crate::sal::transmit::HttpApduTransport;
 use crate::sal::transmit::{
     channel::TransmitChannel, config::TransmitConfig, protocol::ProtocolHandler,
     session::SessionManager,
@@ -76,9 +77,11 @@ impl Server {
         let session_manager = SessionManager::new(Duration::from_secs(
             config.transmit.session_timeout_secs as u64,
         ));
+        let apdu_transport = Arc::new(HttpApduTransport::new(config.transmit.clone()));
         let transmit_channel = Arc::new(TransmitChannel::new(
             protocol_handler,
             session_manager,
+            apdu_transport,
             config.transmit.clone(),
         ));
 

@@ -137,10 +137,11 @@ mod tests {
         let protocol_handler = ProtocolHandler::new();
         let session_manager = SessionManager::new(Duration::from_secs(60));
         let config = TransmitConfig::default();
-        let transport = HttpApduTransport::new(config.clone());
+        let apdu_transport = Arc::new(crate::sal::transmit::channel::TestApduTransport);
         let transmit_channel = Arc::new(TransmitChannel::new(
             protocol_handler,
             session_manager,
+            apdu_transport,
             config,
         ));
 
@@ -371,8 +372,8 @@ mod tests {
     #[tokio::test]
     async fn test_use_id_handler() {
         let config = TransmitConfig::default();
+        let _apdu_transport = Arc::new(crate::sal::transmit::channel::TestApduTransport);
         let transport = HttpApduTransport::new(config);
-        let transport = Arc::new(transport);
-        // ... rest of the test ...
+        let _transport = Arc::new(transport);
     }
 }

@@ -5,6 +5,7 @@ pub mod protocol;
 pub mod result_codes;
 pub mod session;
 
+pub use channel::HttpApduTransport;
 pub use channel::TransmitChannel;
 pub use error::TransmitError;
 pub use protocol::{InputAPDUInfo, ProtocolHandler, Transmit, TransmitResponse};

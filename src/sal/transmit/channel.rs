@@ -7,7 +7,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::time::timeout;
-use tracing::{error, info};
+use tracing::error;
 
 use super::{
     error::TransmitError,
@@ -68,9 +68,6 @@ impl ApduTransport for HttpApduTransport {
             apdu_hex
         );
 
-        // Log request for debugging
-        info!("Sending APDU request to eID-Client: {}", apdu_hex);
-
         // Send request with retries
         let mut retries = 0;
         let max_retries = 3;
@@ -119,10 +116,6 @@ impl ApduTransport for HttpApduTransport {
                     // Decode the APDU response
                     match hex::decode(&client_response.output_apdu) {
                         Ok(apdu_response) => {
-                            info!(
-                                "Received APDU response: {}",
-                                hex::encode_upper(&apdu_response)
-                            );
                             return Ok(apdu_response);
                         }
                         Err(e) => {
@@ -170,13 +163,11 @@ impl TransmitChannel {
     pub fn new(
         protocol_handler: ProtocolHandler,
         session_manager: SessionManager,
+        apdu_transport: Arc<dyn ApduTransport>,
         config: TransmitConfig,
     ) -> Self {
         // Validate configuration
         config.validate().expect("Invalid transmit configuration");
-
-        // Use HttpApduTransport for production
-        let apdu_transport = Arc::new(HttpApduTransport::new(config.clone()));
 
         Self {
             protocol_handler: Arc::new(protocol_handler),
@@ -199,12 +190,8 @@ impl TransmitChannel {
     /// * `Ok(Vec<u8>)` - The XML response to be sent back to the eID-Client
     /// * `Err(TransmitError)` - If the request cannot be processed
     pub async fn handle_request(&self, request: &[u8]) -> Result<Vec<u8>, TransmitError> {
-        // Parse XML Transmit request from eID-Client with proper namespace handling
         let xml_str = std::str::from_utf8(request)
             .map_err(|e| TransmitError::InvalidRequest(format!("Invalid UTF-8: {}", e)))?;
-
-        // Log incoming request for debugging
-        tracing::debug!("Received XML request: {}", xml_str);
 
         // Parse the Transmit request
         let transmit = match self.protocol_handler.parse_transmit(xml_str) {
@@ -299,13 +286,10 @@ impl TransmitChannel {
             Ok(apdus) => apdus,
             Err(e) => {
                 // Suspend session on error
-                if let Err(session_err) = self
+                let _ = self
                     .session_manager
                     .update_session_state(&session.id, super::session::SessionState::Suspended)
-                    .await
-                {
-                    tracing::error!("Failed to suspend session: {}", session_err);
-                }
+                    .await;
 
                 let error_result = self.protocol_handler.error_to_result(&e);
                 let error_response = TransmitResponse {
@@ -468,205 +452,229 @@ mod tests {
     use super::super::protocol::{ISO24727_3_NS, ProtocolHandler};
     use super::super::session::SessionManager;
     use super::*;
-    use tokio::runtime::Runtime;
 
     #[tokio::test]
     async fn test_transmit_channel_basic_flow() {
-        let rt = Runtime::new().unwrap();
-        rt.block_on(async {
-            let protocol_handler = ProtocolHandler::new();
-            let session_manager = SessionManager::new(std::time::Duration::from_secs(60));
-            let config = TransmitConfig::default();
-            let channel = TransmitChannel::new(protocol_handler, session_manager, config);
+        let protocol_handler = ProtocolHandler::new();
+        let session_manager = SessionManager::new(std::time::Duration::from_secs(60));
+        let config = TransmitConfig::default();
+        let apdu_transport = Arc::new(TestApduTransport);
+        let channel =
+            TransmitChannel::new(protocol_handler, session_manager, apdu_transport, config);
 
-            // Create a valid XML request according to TR-03130
-            let xml = format!(
-                r#"
-                <Transmit xmlns="{0}">
-                    <SlotHandle>slot-1</SlotHandle>
-                    <InputAPDUInfo>
-                        <InputAPDU>00A4040008A000000167455349</InputAPDU>
-                        <AcceptableStatusCode>9000</AcceptableStatusCode>
-                    </InputAPDUInfo>
-                    <InputAPDUInfo>
-                        <InputAPDU>00B0000000</InputAPDU>
-                    </InputAPDUInfo>
-                </Transmit>
-            "#,
-                ISO24727_3_NS
-            );
+        // Create a valid XML request according to TR-03130
+        let xml = format!(
+            r#"
+            <Transmit xmlns="{0}">
+                <SlotHandle>slot-1</SlotHandle>
+                <InputAPDUInfo>
+                    <InputAPDU>00A4040008A000000167455349</InputAPDU>
+                    <AcceptableStatusCode>9000</AcceptableStatusCode>
+                </InputAPDUInfo>
+                <InputAPDUInfo>
+                    <InputAPDU>00B0000000</InputAPDU>
+                </InputAPDUInfo>
+            </Transmit>
+        "#,
+            ISO24727_3_NS
+        );
 
-            let response_bytes = channel
-                .handle_request(xml.as_bytes())
-                .await
-                .expect("XML flow should succeed");
+        let response_bytes = channel
+            .handle_request(xml.as_bytes())
+            .await
+            .expect("XML flow should succeed");
 
-            let response_xml = String::from_utf8(response_bytes).expect("Valid UTF-8");
+        let response_xml = String::from_utf8(response_bytes).expect("Valid UTF-8");
 
-            // Verify result is OK
-            assert!(response_xml.contains(
-                "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ResultMajor>"
-            ));
+        // Verify result is OK
+        assert!(response_xml.contains(
+            "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ResultMajor>"
+        ));
 
-            // Verify both APDUs are present with correct responses
-            assert!(
-                response_xml
-                    .contains("<OutputAPDU>6F108408A000000167455349A5049F6501FF9000</OutputAPDU>")
-            );
-            assert!(
-                response_xml
-                    .contains("<OutputAPDU>0102030405060708090A0B0C0D0E0F109000</OutputAPDU>")
-            );
-        });
+        // Verify both APDUs are present with correct responses
+        assert!(
+            response_xml
+                .contains("<OutputAPDU>6F108408A000000167455349A5049F6501FF9000</OutputAPDU>")
+        );
+        assert!(
+            response_xml.contains("<OutputAPDU>0102030405060708090A0B0C0D0E0F109000</OutputAPDU>")
+        );
     }
 
-    #[test]
-    fn test_transmit_channel_error_handling() {
-        let rt = Runtime::new().unwrap();
-        rt.block_on(async {
-            let protocol_handler = ProtocolHandler::new();
-            let session_manager = SessionManager::new(std::time::Duration::from_secs(60));
-            let config = TransmitConfig::default();
-            let channel = TransmitChannel::new(
-                protocol_handler,
-                session_manager,
-                config,
-            );
+    #[tokio::test]
+    async fn test_transmit_channel_error_handling() {
+        let protocol_handler = ProtocolHandler::new();
+        let session_manager = SessionManager::new(std::time::Duration::from_secs(60));
+        let config = TransmitConfig::default();
+        let apdu_transport = Arc::new(TestApduTransport);
+        let channel =
+            TransmitChannel::new(protocol_handler, session_manager, apdu_transport, config);
 
-            // Test 1: Malformed XML should return proper error
-            let malformed_xml = "<Transmit><SlotHandle>slot-1</SlotHandle><InvalidTag></InvalidTag></Transmit>";
-            let response = channel.handle_request(malformed_xml.as_bytes()).await.unwrap();
-            let response_xml = String::from_utf8(response).unwrap();
-            // Should contain error result
-            assert!(response_xml.contains("<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"));
-            assert!(response_xml.contains("<ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#"));
+        // Test 1: Malformed XML should return proper error
+        let malformed_xml =
+            "<Transmit><SlotHandle>slot-1</SlotHandle><InvalidTag></InvalidTag></Transmit>";
+        let response = channel
+            .handle_request(malformed_xml.as_bytes())
+            .await
+            .unwrap();
+        let response_xml = String::from_utf8(response).unwrap();
+        // Should contain error result
+        assert!(response_xml.contains(
+            "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"
+        ));
+        assert!(
+            response_xml
+                .contains("<ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#")
+        );
 
-            // Test 2: Missing SlotHandle should return proper error
-            let missing_slot = format!(r#"<Transmit xmlns="{0}"><InputAPDUInfo><InputAPDU>00A4040008A000000167455349</InputAPDU></InputAPDUInfo></Transmit>"#,
-                ISO24727_3_NS);
+        // Test 2: Missing SlotHandle should return proper error
+        let missing_slot = format!(
+            r#"<Transmit xmlns="{0}"><InputAPDUInfo><InputAPDU>00A4040008A000000167455349</InputAPDU></InputAPDUInfo></Transmit>"#,
+            ISO24727_3_NS
+        );
 
-            let response = channel.handle_request(missing_slot.as_bytes()).await.unwrap();
-            let response_xml = String::from_utf8(response).unwrap();
-            // Should contain error result for missing SlotHandle
-            assert!(response_xml.contains("<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"));
+        let response = channel
+            .handle_request(missing_slot.as_bytes())
+            .await
+            .unwrap();
+        let response_xml = String::from_utf8(response).unwrap();
+        // Should contain error result for missing SlotHandle
+        assert!(response_xml.contains(
+            "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"
+        ));
 
-            // Test 3: Status code verification failure
-            let wrong_status_xml = format!(r#"
-                <Transmit xmlns="{0}">
-                    <SlotHandle>slot-1</SlotHandle>
-                    <InputAPDUInfo>
-                        <InputAPDU>00A4040008A00000016745XXXX</InputAPDU>
-                        <AcceptableStatusCode>9000</AcceptableStatusCode>
-                    </InputAPDUInfo>
-                </Transmit>
-            "#, ISO24727_3_NS);
+        // Test 3: Status code verification failure
+        let wrong_status_xml = format!(
+            r#"
+            <Transmit xmlns="{0}">
+                <SlotHandle>slot-1</SlotHandle>
+                <InputAPDUInfo>
+                    <InputAPDU>00A4040008A00000016745XXXX</InputAPDU>
+                    <AcceptableStatusCode>9000</AcceptableStatusCode>
+                </InputAPDUInfo>
+            </Transmit>
+        "#,
+            ISO24727_3_NS
+        );
 
-            let response = channel.handle_request(wrong_status_xml.as_bytes()).await.unwrap();
-            let response_xml = String::from_utf8(response).unwrap();
+        let response = channel
+            .handle_request(wrong_status_xml.as_bytes())
+            .await
+            .unwrap();
+        let response_xml = String::from_utf8(response).unwrap();
 
-            // Should contain error for status code mismatch
-            assert!(response_xml.contains("<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"));
-            assert!(response_xml.contains("<ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/ifd#cardError</ResultMinor>"));
-        });
+        // Should contain error for status code mismatch
+        assert!(response_xml.contains(
+            "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"
+        ));
+        assert!(response_xml.contains("<ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/ifd#cardError</ResultMinor>"));
     }
 
-    #[test]
-    fn test_transmit_channel_invalid_apdu() {
-        let rt = Runtime::new().unwrap();
-        rt.block_on(async {
-            let protocol_handler = ProtocolHandler::new();
-            let session_manager = SessionManager::new(std::time::Duration::from_secs(60));
-            let config = TransmitConfig::default();
-            let channel = TransmitChannel::new(
-                protocol_handler,
-                session_manager,
-                config,
-            );
+    #[tokio::test]
+    async fn test_transmit_channel_invalid_apdu() {
+        let protocol_handler = ProtocolHandler::new();
+        let session_manager = SessionManager::new(std::time::Duration::from_secs(60));
+        let config = TransmitConfig::default();
+        let apdu_transport = Arc::new(TestApduTransport);
+        let channel =
+            TransmitChannel::new(protocol_handler, session_manager, apdu_transport, config);
 
-            // Test with invalid APDU format (odd-length hex string)
-            let invalid_apdu_xml = format!(r#"
-                <Transmit xmlns="{0}">
-                    <SlotHandle>slot-1</SlotHandle>
-                    <InputAPDUInfo>
-                        <InputAPDU>00A4040</InputAPDU>
-                    </InputAPDUInfo>
-                </Transmit>
-            "#, ISO24727_3_NS
-            );
+        // Test with invalid APDU format (odd-length hex string)
+        let invalid_apdu_xml = format!(
+            r#"
+            <Transmit xmlns="{0}">
+                <SlotHandle>slot-1</SlotHandle>
+                <InputAPDUInfo>
+                    <InputAPDU>00A4040</InputAPDU>
+                </InputAPDUInfo>
+            </Transmit>
+        "#,
+            ISO24727_3_NS
+        );
 
-            let response = channel.handle_request(invalid_apdu_xml.as_bytes()).await.unwrap();
-            let response_xml = String::from_utf8(response).unwrap();
+        let response = channel
+            .handle_request(invalid_apdu_xml.as_bytes())
+            .await
+            .unwrap();
+        let response_xml = String::from_utf8(response).unwrap();
 
-            // Should contain error for invalid APDU
-            assert!(response_xml.contains("<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"));
-            assert!(response_xml.contains("<ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/ifd#cardError</ResultMinor>"));
+        // Should contain error for invalid APDU
+        assert!(response_xml.contains(
+            "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"
+        ));
+        assert!(response_xml.contains("<ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/ifd#cardError</ResultMinor>"));
 
-            // Test with empty APDU
-            let empty_apdu_xml = format!(r#"
-                <Transmit xmlns="{0}">
-                    <SlotHandle>slot-1</SlotHandle>
-                    <InputAPDUInfo>
-                        <InputAPDU></InputAPDU>
-                    </InputAPDUInfo>
-                </Transmit>
-            "#, ISO24727_3_NS);
+        // Test with empty APDU
+        let empty_apdu_xml = format!(
+            r#"
+            <Transmit xmlns="{0}">
+                <SlotHandle>slot-1</SlotHandle>
+                <InputAPDUInfo>
+                    <InputAPDU></InputAPDU>
+                </InputAPDUInfo>
+            </Transmit>
+        "#,
+            ISO24727_3_NS
+        );
 
-            let response = channel.handle_request(empty_apdu_xml.as_bytes()).await.unwrap();
-            let response_xml = String::from_utf8(response).unwrap();
+        let response = channel
+            .handle_request(empty_apdu_xml.as_bytes())
+            .await
+            .unwrap();
+        let response_xml = String::from_utf8(response).unwrap();
 
-            // Should contain error for empty APDU
-            assert!(response_xml.contains("<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"));
-        });
+        // Should contain error for empty APDU
+        assert!(response_xml.contains(
+            "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"
+        ));
     }
 
-    #[test]
-    fn test_transmit_channel_multiple_apdus() {
-        let rt = Runtime::new().unwrap();
-        rt.block_on(async {
-            let protocol_handler = ProtocolHandler::new();
-            let session_manager = SessionManager::new(std::time::Duration::from_secs(60));
-            let config = TransmitConfig::default();
-            let channel = TransmitChannel::new(protocol_handler, session_manager, config);
+    #[tokio::test]
+    async fn test_transmit_channel_multiple_apdus() {
+        let protocol_handler = ProtocolHandler::new();
+        let session_manager = SessionManager::new(std::time::Duration::from_secs(60));
+        let config = TransmitConfig::default();
+        let apdu_transport = Arc::new(TestApduTransport);
+        let channel =
+            TransmitChannel::new(protocol_handler, session_manager, apdu_transport, config);
 
-            // Test with multiple APDUs in sequence (SELECT + READ BINARY)
-            let multi_apdu_xml = format!(
-                r#"
-                <Transmit xmlns="{0}">
-                    <SlotHandle>slot-1</SlotHandle>
-                    <InputAPDUInfo>
-                        <InputAPDU>00A4040008A000000167455349</InputAPDU>
-                    </InputAPDUInfo>
-                    <InputAPDUInfo>
-                        <InputAPDU>00B0000000</InputAPDU>
-                    </InputAPDUInfo>
-                    <InputAPDUInfo>
-                        <InputAPDU>00B0000010</InputAPDU>
-                    </InputAPDUInfo>
-                </Transmit>
-            "#,
-                ISO24727_3_NS
-            );
+        // Test with multiple APDUs in sequence (SELECT + READ BINARY)
+        let multi_apdu_xml = format!(
+            r#"
+            <Transmit xmlns="{0}">
+                <SlotHandle>slot-1</SlotHandle>
+                <InputAPDUInfo>
+                    <InputAPDU>00A4040008A000000167455349</InputAPDU>
+                </InputAPDUInfo>
+                <InputAPDUInfo>
+                    <InputAPDU>00B0000000</InputAPDU>
+                </InputAPDUInfo>
+                <InputAPDUInfo>
+                    <InputAPDU>00B0000010</InputAPDU>
+                </InputAPDUInfo>
+            </Transmit>
+        "#,
+            ISO24727_3_NS
+        );
 
-            let response_bytes = channel
-                .handle_request(multi_apdu_xml.as_bytes())
-                .await
-                .expect("XML flow should succeed");
+        let response_bytes = channel
+            .handle_request(multi_apdu_xml.as_bytes())
+            .await
+            .expect("XML flow should succeed");
 
-            let response_xml = String::from_utf8(response_bytes).expect("Valid UTF-8");
+        let response_xml = String::from_utf8(response_bytes).expect("Valid UTF-8");
 
-            // Should contain all three APDU responses
-            assert!(
-                response_xml
-                    .contains("<OutputAPDU>6F108408A000000167455349A5049F6501FF9000</OutputAPDU>")
-            );
-            assert!(
-                response_xml
-                    .contains("<OutputAPDU>0102030405060708090A0B0C0D0E0F109000</OutputAPDU>")
-            );
+        // Should contain all three APDU responses
+        assert!(
+            response_xml
+                .contains("<OutputAPDU>6F108408A000000167455349A5049F6501FF9000</OutputAPDU>")
+        );
+        assert!(
+            response_xml.contains("<OutputAPDU>0102030405060708090A0B0C0D0E0F109000</OutputAPDU>")
+        );
 
-            // Count the number of OutputAPDU elements
-            let apdu_count = response_xml.matches("<OutputAPDU>").count();
-            assert_eq!(apdu_count, 3, "Should have 3 APDU responses");
-        });
+        // Count the number of OutputAPDU elements
+        let apdu_count = response_xml.matches("<OutputAPDU>").count();
+        assert_eq!(apdu_count, 3, "Should have 3 APDU responses");
     }
 }
