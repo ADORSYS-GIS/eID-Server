@@ -1,11 +1,6 @@
 use super::error::TransmitError;
-use quick_xml::{
-    Writer,
-    de::from_str,
-    events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event},
-};
+use quick_xml::{de::from_str, se::to_string as to_xml_string};
 use serde::{Deserialize, Serialize};
-use std::io::Cursor;
 
 /// Namespace constants according to ISO 24727-3 and eCard-API Framework
 pub const ISO24727_3_NS: &str = "urn:iso:std:iso-iec:24727:tech:schema";
@@ -170,97 +165,22 @@ impl ProtocolHandler {
         &self,
         response: &TransmitResponse,
     ) -> Result<String, TransmitError> {
-        // Create a new XML writer with a cursor as output
-        let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
-
-        // Write XML declaration
-        writer
-            .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
-            .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-
-        // Create the root element with namespaces
-        let mut root = BytesStart::new("TransmitResponse");
-        root.push_attribute(("xmlns", self.namespace.as_str()));
-        root.push_attribute(("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance"));
-        root.push_attribute(("xsi:schemaLocation", self.schema_location.as_str()));
-
-        // Write root element start
-        writer
-            .write_event(Event::Start(root))
-            .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-
-        // Write Result element
-        let result_start = BytesStart::new("Result");
-        writer
-            .write_event(Event::Start(result_start))
-            .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-
-        // Write ResultMajor
-        writer
-            .write_event(Event::Start(BytesStart::new("ResultMajor")))
-            .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-        writer
-            .write_event(Event::Text(BytesText::new(&response.result.result_major)))
-            .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-        writer
-            .write_event(Event::End(BytesEnd::new("ResultMajor")))
-            .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-
-        // Write ResultMinor if present
-        if let Some(minor) = &response.result.result_minor {
-            writer
-                .write_event(Event::Start(BytesStart::new("ResultMinor")))
-                .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-            writer
-                .write_event(Event::Text(BytesText::new(minor)))
-                .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-            writer
-                .write_event(Event::End(BytesEnd::new("ResultMinor")))
-                .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-        }
-
-        // Write ResultMessage if present
-        if let Some(message) = &response.result.result_message {
-            writer
-                .write_event(Event::Start(BytesStart::new("ResultMessage")))
-                .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-            writer
-                .write_event(Event::Text(BytesText::new(message)))
-                .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-            writer
-                .write_event(Event::End(BytesEnd::new("ResultMessage")))
-                .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-        }
-
-        // Write Result element end
-        writer
-            .write_event(Event::End(BytesEnd::new("Result")))
-            .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-
-        // Write OutputAPDU elements if present
-        for apdu in &response.output_apdu {
-            writer
-                .write_event(Event::Start(BytesStart::new("OutputAPDU")))
-                .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-            writer
-                .write_event(Event::Text(BytesText::new(apdu)))
-                .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-            writer
-                .write_event(Event::End(BytesEnd::new("OutputAPDU")))
-                .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-        }
-
-        // Write root element end
-        writer
-            .write_event(Event::End(BytesEnd::new("TransmitResponse")))
-            .map_err(|e| TransmitError::ProtocolError(format!("XML writing error: {}", e)))?;
-
-        // Get the XML string from the writer
-        let xml = writer.into_inner().into_inner();
-
-        // Convert to string
-        String::from_utf8(xml)
-            .map_err(|e| TransmitError::ProtocolError(format!("Invalid UTF-8: {}", e)))
+        // Serialize the main body with Serde
+        let mut xml = to_xml_string(response)
+            .map_err(|e| TransmitError::ProtocolError(format!("XML serialization error: {}", e)))?;
+        // Inject namespaces and schema location into the root tag
+        xml = xml.replacen(
+            "<TransmitResponse>",
+            &format!(
+                "<TransmitResponse xmlns=\"{}\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:schemaLocation=\"{}\">",
+                self.namespace, self.schema_location
+            ),
+            1,
+        );
+        // Prepend XML declaration
+        let mut result = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        result.push_str(&xml);
+        Ok(result)
     }
 
     /// Validates the request version against the protocol version
