@@ -4,8 +4,7 @@ use std::sync::{Arc, RwLock};
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use color_eyre::Result;
-use quick_xml::escape::escape;
-use rand::Rng;
+use rand::{Rng, RngCore};
 use rand::distr::Alphanumeric;
 use std::default::Default;
 use tracing::{debug, error, info, warn};
@@ -21,7 +20,6 @@ use crate::eid::common::models::{
 };
 use crate::eid::use_id::model::{Psk, UseIDRequest, UseIDResponse};
 use async_trait::async_trait;
-use urlencoding;
 
 // Configuration for the eID Service
 #[derive(Clone, Debug)]
@@ -49,8 +47,19 @@ impl Default for EIDServiceConfig {
 pub struct SessionInfo {
     pub id: String,
     pub expiry: DateTime<Utc>,
-    pub psk: Option<String>,
+    pub psk: String,
     pub operations: Vec<String>,
+}
+
+impl SessionInfo {
+    pub fn new(id: String, psk: String, operations: Vec<String>, timeout_minutes: i64) -> Self {
+        SessionInfo {
+            id,
+            expiry: Utc::now() + Duration::minutes(timeout_minutes),
+            psk,
+            operations,
+        }
+    }
 }
 
 /// Main service for handling useID requests
@@ -81,7 +90,7 @@ impl UseidService {
         let timestamp = Utc::now()
             .timestamp_nanos_opt()
             .expect("System time out of range for timestamp_nanos_opt()");
-        let random_part: String = rand::thread_rng()
+        let _random_part: String = rand::rng()
             .sample_iter(&Alphanumeric)
             .take(16)
             .map(char::from)
@@ -91,11 +100,9 @@ impl UseidService {
 
     /// Generate a random PSK for secure communication
     pub fn generate_psk(&self) -> String {
-        rand::thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(32)
-            .map(char::from)
-            .collect()
+        let mut bytes = [0u8; 32];
+        rand::rng().fill_bytes(&mut bytes);
+        bytes.iter().map(|b| format!("{:02x}", b)).collect()
     }
 
     /// Helper function to extract required operations from OperationsRequester
@@ -191,14 +198,13 @@ impl EIDService for UseidService {
         }
         debug!("Generated PSK: {}", psk);
 
-        // Increase timeout to 30 minutes
-        let expiry = Utc::now() + Duration::minutes(30);
-        let session_info = SessionInfo {
-            id: session_id.clone(),
-            expiry,
-            psk: Some(psk.clone()),
-            operations: required_operations.clone(),
-        };
+        // Store session with PSK
+        let session_info = SessionInfo::new(
+            session_id.clone(),
+            psk.clone(),
+            required_operations.clone(),
+            30, 
+        );
 
         // Store the session
         {
@@ -208,7 +214,7 @@ impl EIDService for UseidService {
             sessions.push(session_info.clone());
             info!(
                 "Created new session: {}, expires: {}, operations: {:?}",
-                session_id, expiry, session_info.operations
+                session_id, session_info.expiry, session_info.operations
             );
         }
 
@@ -217,7 +223,7 @@ impl EIDService for UseidService {
             format!(
                 "{}?sessionId={}&binding=urn:liberty:paos:2006-08",
                 addr.trim_end_matches('/'),
-                session_id // Use raw session_id without URL encoding
+                session_id
             )
         });
         debug!(
@@ -319,7 +325,8 @@ impl DIDAuthenticateService {
 
     pub async fn authenticate(&self, request: DIDAuthenticateRequest) -> DIDAuthenticateResponse {
         info!(
-            "Starting DID authentication process for request: {:?}", request
+            "Starting DID authentication process for request: {:?}",
+            request
         );
 
         match self
@@ -359,7 +366,8 @@ impl DIDAuthenticateService {
                 message: format!("Failed to acquire sessions lock: {}", e),
             })?;
             debug!(
-                "Available sessions: {:?}", sessions.iter().map(|s| &s.id).collect::<Vec<_>>()
+                "Available sessions: {:?}",
+                sessions.iter().map(|s| &s.id).collect::<Vec<_>>()
             );
             let session = sessions
                 .iter()

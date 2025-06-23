@@ -30,22 +30,15 @@ use crate::{
 };
 
 /// SAML query parameters for HTTP-Redirect binding
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct SamlQueryParams {
     #[serde(rename = "SAMLRequest")]
     saml_request: Option<String>,
-    #[serde(rename = "RelayState")]
-    relay_state: Option<String>,
-    #[serde(rename = "SigAlg")]
-    sig_alg: Option<String>,
-    #[serde(rename = "Signature")]
-    signature: Option<String>,
 }
 
 /// Handles incoming useID requests, supporting both SAML HTTP-Redirect (GET) and SOAP (POST) bindings.
 /// For SAML requests, decodes and parses the SAMLRequest query parameter into a UseIDRequest.
 /// For SOAP requests, parses the request body as SOAP XML.
-/// Processes the request using the EIDService and returns a SOAP response.
 pub async fn use_id_handler<S: EIDService + EidService>(
     State(state): State<AppState<S>>,
     headers: HeaderMap,
@@ -145,26 +138,21 @@ pub async fn use_id_handler<S: EIDService + EidService>(
             }
         };
 
-        // Serialize to SOAP response
-        match build_use_id_response_local(&response) {
-            Ok(soap_response) => {
-                info!("SOAP response: {}", soap_response);
+        // For SAML binding, return TCToken XML instead of SOAP
+        match build_tc_token(&response) {
+            Ok(tc_token) => {
+                info!("TCToken XML: {}", tc_token);
                 info!(
-                    "Response serialized successfully, length: {} bytes",
-                    soap_response.len()
+                    "TCToken serialized successfully, length: {} bytes",
+                    tc_token.len()
                 );
-                (
-                    StatusCode::OK,
-                    create_soap_response_headers(),
-                    soap_response,
-                )
-                    .into_response()
+                (StatusCode::OK, create_xml_response_headers(), tc_token).into_response()
             }
             Err(err) => {
-                error!("Failed to serialize SOAP response: {}", err);
+                error!("Failed to serialize TCToken: {}", err);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "Failed to create SOAP response".to_string(),
+                    "Failed to create TCToken".to_string(),
                 )
                     .into_response()
             }
@@ -244,11 +232,126 @@ pub async fn use_id_handler<S: EIDService + EidService>(
     }
 }
 
+/// Builds TCTokenType XML from UseIDResponse, matching the Governikus format
+pub fn build_tc_token(response: &UseIDResponse) -> Result<String, String> {
+    let server_address = response
+        .ecard_server_address
+        .as_ref()
+        .and_then(|url| url.split('?').next())
+        .ok_or("No ecard_server_address")?;
+
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    writer
+        .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
+        .map_err(|e| e.to_string())?;
+
+    // Add namespace to TCTokenType
+    let mut root = BytesStart::new("TCTokenType");
+    root.push_attribute(("xmlns", "http://www.bsi.bund.de/ecard/api/1.1"));
+    writer
+        .write_event(Event::Start(root))
+        .map_err(|e| e.to_string())?;
+
+    // ServerAddress
+    writer
+        .write_event(Event::Start(BytesStart::new("ServerAddress")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::Text(BytesText::from_escaped(server_address)))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("ServerAddress")))
+        .map_err(|e| e.to_string())?;
+
+    // SessionIdentifier
+    writer
+        .write_event(Event::Start(BytesStart::new("SessionIdentifier")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::Text(BytesText::from_escaped(&response.session.id)))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("SessionIdentifier")))
+        .map_err(|e| e.to_string())?;
+
+    // RefreshAddress
+    writer
+        .write_event(Event::Start(BytesStart::new("RefreshAddress")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::Text(BytesText::from_escaped(
+            "https://localhost:3000/refresh",
+        )))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("RefreshAddress")))
+        .map_err(|e| e.to_string())?;
+
+    // Binding
+    writer
+        .write_event(Event::Start(BytesStart::new("Binding")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::Text(BytesText::from_escaped(
+            "urn:liberty:paos:2006-08",
+        )))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("Binding")))
+        .map_err(|e| e.to_string())?;
+
+    // PathSecurity-Protocol
+    writer
+        .write_event(Event::Start(BytesStart::new("PathSecurity-Protocol")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::Text(BytesText::from_escaped("urn:ietf:rfc:4279")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("PathSecurity-Protocol")))
+        .map_err(|e| e.to_string())?;
+
+    // PathSecurity-Parameters
+    writer
+        .write_event(Event::Start(BytesStart::new("PathSecurity-Parameters")))
+        .map_err(|e| e.to_string())?;
+
+    // PSK
+    writer
+        .write_event(Event::Start(BytesStart::new("PSK")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::Text(BytesText::from_escaped(&response.psk.key)))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("PSK")))
+        .map_err(|e| e.to_string())?;
+
+    // Close PathSecurity-Parameters
+    writer
+        .write_event(Event::End(BytesEnd::new("PathSecurity-Parameters")))
+        .map_err(|e| e.to_string())?;
+
+    // Close TCTokenType
+    writer
+        .write_event(Event::End(BytesEnd::new("TCTokenType")))
+        .map_err(|e| e.to_string())?;
+
+    let result = writer.into_inner().into_inner();
+    String::from_utf8(result).map_err(|e| e.to_string())
+}
+
+/// Creates headers for XML response
+fn create_xml_response_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "Content-Type",
+        "application/xml; charset=utf-8".parse().unwrap(),
+    );
+    headers
+}
+
 /// Parses a SAML AuthnRequest XML string into a UseIDRequest struct.
-/// Extracts requested attributes, age verification, and place verification details
-/// from the SAML request, mapping them to the appropriate UseIDRequest fields.
-/// Returns an error if the XML is malformed or missing required elements.
-/// Compatible with older quick_xml versions (e.g., 0.22) using NsReader.
 fn parse_saml_to_use_id_request(saml_xml: &str) -> Result<UseIDRequest, String> {
     const SAML_PROTOCOL_NS: &str = "urn:oasis:names:tc:SAML:2.0:protocol";
     const SAML_ASSERTION_NS: &str = "urn:oasis:names:tc:SAML:2.0:assertion";
@@ -284,7 +387,7 @@ fn parse_saml_to_use_id_request(saml_xml: &str) -> Result<UseIDRequest, String> 
     let mut in_authn_request = false;
     let mut in_attribute = false;
     let mut current_attribute = String::new();
-    let mut is_required = false; // Declare is_required at function scope
+    let mut is_required = false;
     let mut depth = 0;
     let mut root_element: Option<String> = None;
 
@@ -323,7 +426,7 @@ fn parse_saml_to_use_id_request(saml_xml: &str) -> Result<UseIDRequest, String> 
                     && local_name.as_ref() == b"Attribute"
                 {
                     in_attribute = true;
-                    is_required = false; // Reset is_required for new attribute
+                    is_required = false;
                     for attr in e.attributes() {
                         let attr = attr.map_err(|e| format!("Invalid attribute: {}", e))?;
                         let (attr_ns_result, attr_local_name) = reader.resolve_attribute(attr.key);
@@ -375,7 +478,7 @@ fn parse_saml_to_use_id_request(saml_xml: &str) -> Result<UseIDRequest, String> 
                 if namespace == SAML_ASSERTION_NS && local_name.as_ref() == b"Attribute" {
                     in_attribute = false;
                     current_attribute.clear();
-                    is_required = false; // Reset is_required when leaving attribute
+                    is_required = false;
                 } else if local_name.as_ref() == b"AuthnRequest" {
                     in_authn_request = false;
                     debug!("Closed AuthnRequest");
@@ -408,6 +511,11 @@ fn parse_saml_to_use_id_request(saml_xml: &str) -> Result<UseIDRequest, String> 
                     "restrictedId" => operations.restricted_id = attribute_status,
                     "ageVerification" => {
                         operations.age_verification = attribute_status;
+                        if value.is_empty() {
+                            return Err(
+                                "Age verification requested but no valid age provided".to_string()
+                            );
+                        }
                         if let Ok(age) = value.parse::<u32>() {
                             match age.try_into() {
                                 Ok(age_u8) => age_verification._age = age_u8,
@@ -415,10 +523,18 @@ fn parse_saml_to_use_id_request(saml_xml: &str) -> Result<UseIDRequest, String> 
                                     return Err("Age value exceeds u8 range (0-255)".to_string());
                                 }
                             }
+                        } else {
+                            return Err("Invalid age value provided".to_string());
                         }
                     }
                     "placeVerification" => {
                         operations.place_verification = attribute_status;
+                        if value.is_empty() {
+                            return Err(
+                                "Place verification requested but no community ID provided"
+                                    .to_string(),
+                            );
+                        }
                         place_verification._community_id = value;
                     }
                     "levelOfAssurance" => {
@@ -519,7 +635,7 @@ fn build_use_id_response_local(response: &UseIDResponse) -> Result<String, Strin
         response.result.result_major
     );
 
-    let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 0); // Minimize indentation
+    let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 0);
     let decl = BytesDecl::new("1.0", Some("UTF-8"), None);
     writer
         .write_event(Event::Decl(decl))
@@ -672,10 +788,16 @@ fn build_use_id_response_local(response: &UseIDResponse) -> Result<String, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::eid::service::{EIDServiceConfig, UseidService};
+    use crate::{
+        domain::eid::service::{EIDServiceConfig, UseidService},
+        eid::{
+            common::models::{ResultMajor, SessionResponse},
+            use_id::model::Psk,
+        },
+    };
     use axum::{
         body::Body,
-        http::{self, Request, StatusCode},
+        http::{self, HeaderValue, Request, StatusCode},
     };
     use http_body_util::BodyExt;
     use std::{io::Write, sync::Arc};
@@ -693,6 +815,17 @@ mod tests {
         }
     }
 
+    fn create_saml_request(saml_xml: &str) -> String {
+        let compressed_saml = {
+            let mut encoder =
+                flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+            encoder.write_all(saml_xml.as_bytes()).unwrap();
+            encoder.finish().unwrap()
+        };
+        let base64_encoded = base64::engine::general_purpose::STANDARD.encode(&compressed_saml);
+        urlencoding::encode(&base64_encoded).into_owned()
+    }
+
     #[tokio::test]
     async fn test_use_id_handler_saml_request() {
         let state = create_test_state();
@@ -705,22 +838,15 @@ mod tests {
                 <saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:Smartcard</saml:AuthnContextClassRef>
             </samlp:RequestedAuthnContext>
             <saml:AttributeStatement>
-                <saml:Attribute Name="givenNames" isRequired="true"><saml:AttributeValue>ALLOWED</saml:AttributeValue></saml:Attribute>
-                <saml:Attribute Name="familyNames" isRequired="true"><saml:AttributeValue>ALLOWED</saml:AttributeValue></saml:Attribute>
+                <saml:Attribute Name="givenNames" isRequired="true"></saml:Attribute>
+                <saml:Attribute Name="familyNames" isRequired="true"></saml:Attribute>
                 <saml:Attribute Name="ageVerification"><saml:AttributeValue>18</saml:AttributeValue></saml:Attribute>
                 <saml:Attribute Name="placeVerification"><saml:AttributeValue>DE123</saml:AttributeValue></saml:Attribute>
                 <saml:Attribute Name="levelOfAssurance"><saml:AttributeValue>substantial</saml:AttributeValue></saml:Attribute>
             </saml:AttributeStatement>
         </samlp:AuthnRequest>
-    "#;
-        let compressed_saml = {
-            let mut encoder =
-                flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
-            encoder.write_all(saml_request.as_bytes()).unwrap();
-            encoder.finish().unwrap()
-        };
-        let base64_encoded = base64::engine::general_purpose::STANDARD.encode(&compressed_saml);
-        let encoded_saml = urlencoding::encode(&base64_encoded);
+        "#;
+        let encoded_saml = create_saml_request(saml_request);
 
         let request = Request::builder()
             .method(http::Method::GET)
@@ -732,10 +858,7 @@ mod tests {
             State(state),
             request.headers().clone(),
             Query(SamlQueryParams {
-                saml_request: Some(encoded_saml.into_owned()),
-                relay_state: None,
-                sig_alg: None,
-                signature: None,
+                saml_request: Some(encoded_saml),
             }),
             String::new(),
         )
@@ -743,27 +866,47 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
+        let headers = response.headers();
+        assert_eq!(
+            headers.get("content-type"),
+            Some(&HeaderValue::from_static("application/xml; charset=utf-8"))
+        );
+
         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
         let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
-        assert!(body_str.contains("http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok"));
-        assert!(body_str.contains("<eid:ID>"));
-        assert!(body_str.contains("<eid:Key>"));
-        assert!(!body_str.contains("<eid:ID></eid:ID>"));
-        assert!(!body_str.contains("<eid:Key></eid:Key>"));
+
+        // Verify TCToken structure
+        assert!(body_str.contains("<TCTokenType"));
+        assert!(
+            body_str.contains("<ServerAddress>https://test.eid.example.com/ecard</ServerAddress>")
+        );
+        assert!(body_str.contains("<SessionIdentifier>"));
+        assert!(
+            body_str.contains("<RefreshAddress>https://localhost:3000/refresh</RefreshAddress>")
+        );
+        assert!(body_str.contains("<Binding>urn:liberty:paos:2006-08</Binding>"));
+        assert!(
+            body_str.contains("<PathSecurity-Protocol>urn:ietf:rfc:4279</PathSecurity-Protocol>")
+        );
+        assert!(body_str.contains("<PathSecurity-Parameters>"));
+        assert!(body_str.contains("<PSK>"));
+
+        // Verify PSK is valid hexBinary (64 characters, 0-9 and a-f)
+        let psk_start = body_str.find("<PSK>").unwrap() + 5;
+        let psk_end = body_str.find("</PSK>").unwrap();
+        let psk = &body_str[psk_start..psk_end];
+        assert_eq!(psk.len(), 64, "PSK must be 64 characters long");
+        assert!(
+            psk.chars().all(|c| c.is_digit(16)),
+            "PSK must be valid hexadecimal"
+        );
     }
 
     #[tokio::test]
     async fn test_use_id_handler_invalid_saml() {
         let state = create_test_state();
         let invalid_saml = "<invalid>xml</invalid>";
-        let compressed_saml = {
-            let mut encoder =
-                flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
-            encoder.write_all(invalid_saml.as_bytes()).unwrap();
-            encoder.finish().unwrap()
-        };
-        let base64_encoded = base64::engine::general_purpose::STANDARD.encode(&compressed_saml);
-        let encoded_saml = urlencoding::encode(&base64_encoded);
+        let encoded_saml = create_saml_request(invalid_saml);
 
         let request = Request::builder()
             .method(http::Method::GET)
@@ -775,10 +918,7 @@ mod tests {
             State(state),
             request.headers().clone(),
             Query(SamlQueryParams {
-                saml_request: Some(encoded_saml.into_owned()),
-                relay_state: None,
-                sig_alg: None,
-                signature: None,
+                saml_request: Some(encoded_saml),
             }),
             String::new(),
         )
@@ -789,5 +929,166 @@ mod tests {
         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
         let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
         assert!(body_str.contains("No AuthnRequest found"));
+    }
+
+    #[tokio::test]
+    async fn test_use_id_handler_missing_saml_request() {
+        let state = create_test_state();
+        let request = Request::builder()
+            .method(http::Method::GET)
+            .uri("/eIDService/useID")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = use_id_handler(
+            State(state),
+            request.headers().clone(),
+            Query(SamlQueryParams { saml_request: None }),
+            String::new(),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(body_str.contains("Expected SOAP XML content type"));
+    }
+
+    #[tokio::test]
+    async fn test_use_id_handler_invalid_soap_content_type() {
+        let state = create_test_state();
+        let soap_request = r#"
+        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:eid="http://bsi.bund.de/eID/">
+            <soapenv:Body>
+                <eid:useIDRequest>
+                    <eid:useOperations>
+                        <eid:givenNames>REQUIRED</eid:givenNames>
+                    </eid:useOperations>
+                </eid:useIDRequest>
+            </soapenv:Body>
+        </soapenv:Envelope>
+        "#;
+
+        let request = Request::builder()
+            .method(http::Method::POST)
+            .uri("/eIDService/useID")
+            .header("content-type", "text/plain")
+            .body(Body::from(soap_request.to_string()))
+            .unwrap();
+
+        let response = use_id_handler(
+            State(state),
+            request.headers().clone(),
+            Query(SamlQueryParams { saml_request: None }),
+            soap_request.to_string(),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(body_str.contains("Expected SOAP XML content type"));
+    }
+
+    #[tokio::test]
+    async fn test_use_id_handler_malformed_soap_request() {
+        let state = create_test_state();
+        let malformed_soap = "<invalid>soap</invalid>";
+
+        let request = Request::builder()
+            .method(http::Method::POST)
+            .uri("/eIDService/useID")
+            .header("content-type", "application/soap+xml; charset=utf-8")
+            .body(Body::from(malformed_soap.to_string()))
+            .unwrap();
+
+        let response = use_id_handler(
+            State(state),
+            request.headers().clone(),
+            Query(SamlQueryParams { saml_request: None }),
+            malformed_soap.to_string(),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(body_str.contains("Failed to parse SOAP request"));
+    }
+
+    #[tokio::test]
+    async fn test_parse_saml_to_use_id_request_invalid_attribute() {
+        let saml_request = r#"
+        <samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                            xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+                            ID="id123" Version="2.0" IssueInstant="2025-06-18T12:33:00Z">
+            <saml:Issuer>https://localhost:8443/realms/master</saml:Issuer>
+            <saml:AttributeStatement>
+                <saml:Attribute Name="levelOfAssurance"><saml:AttributeValue>invalid</saml:AttributeValue></saml:Attribute>
+            </saml:AttributeStatement>
+        </samlp:AuthnRequest>
+        "#;
+
+        let result = parse_saml_to_use_id_request(saml_request);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid level of assurance"));
+    }
+
+    #[tokio::test]
+    async fn test_build_tc_token() {
+        let response = UseIDResponse {
+            result: ResultMajor {
+                result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok".to_string(),
+            },
+            session: SessionResponse {
+                id: "test-session-id".to_string(),
+            },
+            ecard_server_address: Some("https://test.eid.example.com/ecard".to_string()),
+            psk: Psk {
+                id: "test-session-id".to_string(),
+                key: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2".to_string(),
+            },
+        };
+
+        let tc_token = build_tc_token(&response).unwrap();
+        assert!(tc_token.contains("<TCTokenType xmlns=\"http://www.bsi.bund.de/ecard/api/1.1\">"));
+        assert!(
+            tc_token.contains("<ServerAddress>https://test.eid.example.com/ecard</ServerAddress>")
+        );
+        assert!(tc_token.contains("<SessionIdentifier>test-session-id</SessionIdentifier>"));
+        assert!(
+            tc_token.contains("<RefreshAddress>https://localhost:3000/refresh</RefreshAddress>")
+        );
+        assert!(tc_token.contains("<Binding>urn:liberty:paos:2006-08</Binding>"));
+        assert!(
+            tc_token.contains("<PathSecurity-Protocol>urn:ietf:rfc:4279</PathSecurity-Protocol>")
+        );
+        assert!(tc_token.contains(
+            "<PSK>a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2</PSK>"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_build_tc_token_missing_ecard_address() {
+        let response = UseIDResponse {
+            result: ResultMajor {
+                result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok".to_string(),
+            },
+            session: SessionResponse {
+                id: "test-session-id".to_string(),
+            },
+            ecard_server_address: None,
+            psk: Psk {
+                id: "test-session-id".to_string(),
+                key: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2".to_string(),
+            },
+        };
+
+        let result = build_tc_token(&response);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "No ecard_server_address");
     }
 }
