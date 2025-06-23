@@ -81,7 +81,7 @@ impl UseidService {
         let timestamp = Utc::now()
             .timestamp_nanos_opt()
             .expect("System time out of range for timestamp_nanos_opt()");
-        let _random_part: String = rand::rng()
+        let random_part: String = rand::thread_rng()
             .sample_iter(&Alphanumeric)
             .take(16)
             .map(char::from)
@@ -91,7 +91,7 @@ impl UseidService {
 
     /// Generate a random PSK for secure communication
     pub fn generate_psk(&self) -> String {
-        rand::rng()
+        rand::thread_rng()
             .sample_iter(&Alphanumeric)
             .take(32)
             .map(char::from)
@@ -217,7 +217,7 @@ impl EIDService for UseidService {
             format!(
                 "{}?sessionId={}&binding=urn:liberty:paos:2006-08",
                 addr.trim_end_matches('/'),
-                urlencoding::encode(&session_id)
+                session_id // Use raw session_id without URL encoding
             )
         });
         debug!(
@@ -231,8 +231,9 @@ impl EIDService for UseidService {
             error!("eCard server address not configured");
             color_eyre::eyre::eyre!("eCard server address not configured")
         })?;
+        // Remove XML escaping since CDATA will handle raw characters
+        debug!("Raw tc_token_url: {}", tc_token_url);
 
-        debug!("Validated tc_token_url: {}", tc_token_url);
         if !tc_token_url.starts_with("https://") {
             warn!("TcTokenURL is not HTTPS: {}", tc_token_url);
         }
@@ -318,8 +319,7 @@ impl DIDAuthenticateService {
 
     pub async fn authenticate(&self, request: DIDAuthenticateRequest) -> DIDAuthenticateResponse {
         info!(
-            "Starting DID authentication process for request: {:?}",
-            request
+            "Starting DID authentication process for request: {:?}", request
         );
 
         match self
@@ -359,8 +359,7 @@ impl DIDAuthenticateService {
                 message: format!("Failed to acquire sessions lock: {}", e),
             })?;
             debug!(
-                "Available sessions: {:?}",
-                sessions.iter().map(|s| &s.id).collect::<Vec<_>>()
+                "Available sessions: {:?}", sessions.iter().map(|s| &s.id).collect::<Vec<_>>()
             );
             let session = sessions
                 .iter()
