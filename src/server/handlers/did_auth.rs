@@ -357,7 +357,7 @@ pub async fn did_authenticate<
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let status_code = StatusCode::from_u16(response.status as u16).unwrap_or(StatusCode::OK);
+    let status_code = StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
     Ok((status_code, response.body))
 }
 

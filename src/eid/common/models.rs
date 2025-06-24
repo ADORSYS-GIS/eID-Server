@@ -218,6 +218,7 @@ pub enum AttributeRequester {
     REQUIRED,
     ALLOWED,
     NotRequested,
+    PROHIBITED,
 }
 
 #[derive(Serialize, Clone)]
@@ -351,6 +352,7 @@ impl Display for AttributeRequester {
             AttributeRequester::ALLOWED => "ALLOWED",
             AttributeRequester::NotRequested => "PROHIBITED",
             AttributeRequester::REQUIRED => "REQUIRED",
+            AttributeRequester::PROHIBITED => "PROHIBITED",
         };
         write!(f, "{text}")
     }
