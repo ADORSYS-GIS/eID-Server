@@ -8,15 +8,11 @@ async fn test_health_check_works() {
 
     // Create a custom client that ignores invalid certificates
     let client = Client::builder()
-        .danger_accept_invalid_certs(true)  
+        .danger_accept_invalid_certs(true)
         .build()
         .unwrap();
 
-    let response = client
-        .get(format!("{addr}/health"))
-        .send()
-        .await
-        .unwrap();
+    let response = client.get(format!("{addr}/health")).send().await.unwrap();
 
     // Verify the response
     assert!(response.status().is_success());
