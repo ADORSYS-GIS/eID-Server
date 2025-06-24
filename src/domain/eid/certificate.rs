@@ -89,7 +89,7 @@ impl CertificateStore {
         let mut chain = Vec::new();
         for path in cert_paths {
             let cert_data = fs::read(&path).map_err(|e| AuthError::InvalidCertificate {
-                details: format!("Failed to read certificate at {}: {}", path, e),
+                details: format!("Failed to read certificate at {path}: {e}"),
             })?;
             chain.extend_from_slice(&cert_data);
         }
@@ -133,7 +133,7 @@ impl CertificateStore {
         let signature = cert.signature_value.data.as_ref();
         let tbs_certificate = cert.tbs_certificate.as_ref();
 
-        let algorithm_result = match cert.signature_algorithm.algorithm.to_string().as_str() {
+        match cert.signature_algorithm.algorithm.to_string().as_str() {
             "1.2.840.113549.1.1.11" => self.verify_rsa_signature(
                 tbs_certificate,
                 signature,
@@ -166,13 +166,11 @@ impl CertificateStore {
             ),
             oid => {
                 warn!("Unsupported signature algorithm: {}", oid);
-                return Err(AuthError::InvalidCertificate {
-                    details: format!("Unsupported signature algorithm: {}", oid),
-                });
+                Err(AuthError::InvalidCertificate {
+                    details: format!("Unsupported signature algorithm: {oid}"),
+                })
             }
-        };
-
-        algorithm_result
+        }
     }
 
     pub async fn get_certificate_permissions(
@@ -183,7 +181,7 @@ impl CertificateStore {
 
         let (_, cert) =
             parse_x509_certificate(certificate_der).map_err(|e| AuthError::InvalidCertificate {
-                details: format!("Failed to parse certificate: {}", e),
+                details: format!("Failed to parse certificate: {e}"),
             })?;
 
         let mut permissions = Vec::new();
@@ -458,7 +456,7 @@ impl CryptoProvider {
             })?;
 
         debug!("ECDH key exchange completed successfully");
-        Ok(shared_secret?)
+        shared_secret
     }
 
     /// Derives session keys from a shared secret using HKDF.
@@ -559,7 +557,7 @@ impl CryptoProvider {
             "SHA512" => &digest::SHA512,
             _ => {
                 return Err(AuthError::CryptoError {
-                    operation: format!("Unsupported hash algorithm: {}", algorithm),
+                    operation: format!("Unsupported hash algorithm: {algorithm}"),
                 });
             }
         };
@@ -627,7 +625,7 @@ impl CardCommunicator {
             .send()
             .await
             .map_err(|e| AuthError::CardCommunicationError {
-                reason: format!("Failed to send request to AusweisApp2: {}", e),
+                reason: format!("Failed to send request to AusweisApp2: {e}"),
             })?;
 
         let response_text =
@@ -635,7 +633,7 @@ impl CardCommunicator {
                 .text()
                 .await
                 .map_err(|e| AuthError::CardCommunicationError {
-                    reason: format!("Failed to read AusweisApp2 response: {}", e),
+                    reason: format!("Failed to read AusweisApp2 response: {e}"),
                 })?;
 
         let personal_data = self.parse_soap_response(&response_text)?;
@@ -801,13 +799,9 @@ impl CardCommunicator {
             .map_err(|_| AuthError::InvalidConnection {
                 reason: "Failed to write CertificateDescription".to_string(),
             })?;
-        let tls_cert_hash = auth_data.certificate_description.clone();
-        let cert_desc = format!(
-            "<SubjectURL>https://eservice.example.com</SubjectURL><CommCertificates>{}</CommCertificates>",
-            tls_cert_hash
-        );
+        let cert_desc = "<SubjectURL>https://eservice.example.com</SubjectURL><CommCertificates>{tls_cert_hash}</CommCertificates>";
         writer
-            .write_event(Event::Text(BytesText::new(&cert_desc)))
+            .write_event(Event::Text(BytesText::new(cert_desc)))
             .map_err(|_| AuthError::InvalidConnection {
                 reason: "Failed to write CertificateDescription text".to_string(),
             })?;
@@ -948,7 +942,7 @@ impl CardCommunicator {
                 }
                 Err(e) => {
                     return Err(AuthError::CardCommunicationError {
-                        reason: format!("Failed to parse AusweisApp2 response: {}", e),
+                        reason: format!("Failed to parse AusweisApp2 response: {e}"),
                     });
                 }
                 _ => {}

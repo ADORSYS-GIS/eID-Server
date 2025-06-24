@@ -49,7 +49,7 @@ use quick_xml::de::from_str;
 /// ```
 pub fn parse_get_result_request(xml: &str) -> Result<GetResultRequest, GetResultError> {
     let env: GetResultRequestEnvelope = from_str(xml)
-        .map_err(|e| GetResultError::GenericError(format!("XML deserialization failed: {}", e)))?;
+        .map_err(|e| GetResultError::GenericError(format!("XML deserialization failed: {e}")))?;
 
     let req = env.body.request;
     Ok(GetResultRequest {

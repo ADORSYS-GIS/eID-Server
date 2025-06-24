@@ -318,7 +318,7 @@ impl DIDAuthenticateService {
 
         let _session_info = {
             let sessions = sessions.read().map_err(|e| AuthError::InternalError {
-                message: format!("Failed to acquire sessions lock: {}", e),
+                message: format!("Failed to acquire sessions lock: {e}"),
             })?;
             debug!(
                 "Available sessions: {:?}",
@@ -345,7 +345,7 @@ impl DIDAuthenticateService {
         let certificate_der = base64::engine::general_purpose::STANDARD
             .decode(&request.authentication_protocol_data.certificate_description)
             .map_err(|e| AuthError::InvalidCertificate {
-                details: format!("Failed to decode certificate: {}", e),
+                details: format!("Failed to decode certificate: {e}"),
             })?;
 
         let is_valid = self
@@ -373,7 +373,7 @@ impl DIDAuthenticateService {
             .generate_challenge()
             .await?
             .iter()
-            .map(|b| format!("{:02x}", b))
+            .map(|b| format!("{b:02x}"))
             .collect::<String>();
 
         Ok(ResponseProtocolData {
@@ -402,8 +402,7 @@ impl DIDAuthenticate for UseidService {
                     "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error",
                 ),
                 result_minor: Some(format!(
-                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/common#parameterError: {}",
-                    e
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/common#parameterError: {e}"
                 )),
                 authentication_protocol_data: ResponseProtocolData::default(),
                 timestamp: Utc::now().timestamp() as u64,

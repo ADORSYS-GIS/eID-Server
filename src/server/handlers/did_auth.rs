@@ -125,7 +125,7 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
                 }
                 Err(e) => {
                     return Err(AuthError::InvalidConnection {
-                        reason: format!("Failed to parse XML request: {}", e),
+                        reason: format!("Failed to parse XML request: {e}"),
                     });
                 }
                 _ => {}
@@ -468,8 +468,7 @@ mod tests {
         let soap_request = std::fs::read_to_string("test_data/did_auth_request.xml")
             .unwrap_or_else(|e| {
                 eprintln!(
-                    "Failed to read test SOAP request XML: {}. Using fallback.",
-                    e
+                    "Failed to read test SOAP request XML: {e}. Using fallback."
                 );
                 create_minimal_valid_soap_request()
             });
@@ -477,8 +476,7 @@ mod tests {
         let result = handler.parse_request(&soap_request);
         assert!(
             result.is_ok(),
-            "Failed to parse realistic SOAP request: {:?}",
-            result
+            "Failed to parse realistic SOAP request: {result:?}"
         );
 
         let parsed = result.unwrap();
@@ -519,8 +517,7 @@ mod tests {
         let result = handler.handle(&soap_request).await;
         assert!(
             result.is_ok(),
-            "Expected successful authentication: {:?}",
-            result
+            "Expected successful authentication: {result:?}"
         );
 
         let soap_response = result.unwrap();
@@ -561,8 +558,7 @@ mod tests {
 
         assert!(
             soap_xml.is_ok(),
-            "Failed to generate SOAP response: {:?}",
-            soap_xml
+            "Failed to generate SOAP response: {soap_xml:?}"
         );
 
         let xml_string = soap_xml.unwrap();
@@ -625,8 +621,7 @@ mod tests {
         if let Err(AuthError::InvalidConnection { reason }) = result {
             assert!(
                 reason.contains("Failed to parse XML request") || reason.contains("Invalid XML"),
-                "Unexpected error reason: {}",
-                reason
+                "Unexpected error reason: {reason}"
             );
         }
     }

@@ -304,7 +304,7 @@ impl fmt::Display for LevelOfAssurance {
             LevelOfAssurance::High => "http://eidas.europa.eu/LoA/high",
             LevelOfAssurance::Low => "http://eidas.europa.eu/LoA/low",
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 

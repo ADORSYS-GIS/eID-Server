@@ -100,8 +100,8 @@ impl ConnectionHandle {
     pub fn is_valid(&self) -> bool {
         self.channel_handle
             .as_ref()
-            .map_or(false, |ch| !ch.is_empty())
-            && self.ifd_name.as_ref().map_or(false, |ifd| !ifd.is_empty())
+            .is_some_and(|ch| !ch.is_empty())
+            && self.ifd_name.as_ref().is_some_and(|ifd| !ifd.is_empty())
             && self.slot_index.is_some()
     }
 }
