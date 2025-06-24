@@ -9,8 +9,8 @@ use crate::eid::get_server_info::handler::get_server_info;
 use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
 use color_eyre::eyre::eyre;
-use handlers::health::health_check;
 use handlers::did_auth::did_authenticate;
+use handlers::health::health_check;
 use tokio::net::TcpListener;
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -72,7 +72,7 @@ impl Server {
             .route("/health", get(health_check))
             .route("/eIDService/useID", post(handlers::useid::use_id_handler))
             .route("/eIDService/getServerInfo", get(get_server_info))
-            .route("/did-authenticate", post(did_authenticate)) 
+            .route("/did-authenticate", post(did_authenticate))
             .layer(cors)
             .layer(trace_layer)
             .with_state(state);
