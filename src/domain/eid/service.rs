@@ -4,9 +4,11 @@ use std::sync::{Arc, RwLock};
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use color_eyre::Result;
-use rand::Rng;
+use rand::distr::Alphanumeric;
+use rand::{Rng, RngCore};
 use std::default::Default;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 use super::certificate::{CardCommunicator, CertificateStore, CryptoProvider};
 use super::models::{
@@ -35,7 +37,7 @@ impl Default for EIDServiceConfig {
         Self {
             max_sessions: 1000,
             session_timeout_minutes: 5,
-            ecard_server_address: None,
+            ecard_server_address: Some("https://localhost:8443".to_string()),
         }
     }
 }
@@ -45,8 +47,19 @@ impl Default for EIDServiceConfig {
 pub struct SessionInfo {
     pub id: String,
     pub expiry: DateTime<Utc>,
-    pub psk: Option<String>,
+    pub psk: String,
     pub operations: Vec<String>,
+}
+
+impl SessionInfo {
+    pub fn new(id: String, psk: String, operations: Vec<String>, timeout_minutes: i64) -> Self {
+        SessionInfo {
+            id,
+            expiry: Utc::now() + Duration::minutes(timeout_minutes),
+            psk,
+            operations,
+        }
+    }
 }
 
 /// Main service for handling useID requests
@@ -72,14 +85,24 @@ impl UseidService {
         }
     }
 
+    /// Generate a random session ID
+    pub fn generate_session_id(&self) -> String {
+        let timestamp = Utc::now()
+            .timestamp_nanos_opt()
+            .expect("System time out of range for timestamp_nanos_opt()");
+        let _random_part: String = rand::rng()
+            .sample_iter(&Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect();
+        format!("{timestamp}-{}", Uuid::new_v4())
+    }
+
     /// Generate a random PSK for secure communication
     pub fn generate_psk(&self) -> String {
-        // Generate a 32-character random PSK
-        rand::rng()
-            .sample_iter(&rand::distr::Alphanumeric)
-            .take(32)
-            .map(char::from)
-            .collect()
+        let mut bytes = [0u8; 32];
+        rand::rng().fill_bytes(&mut bytes);
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
     /// Helper function to extract required operations from OperationsRequester
@@ -149,93 +172,115 @@ impl EIDService for UseidService {
     fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse> {
         // Validate the request: Check if any operations are REQUIRED
         let required_operations = Self::get_required_operations(&request._use_operations);
-        if required_operations.is_empty() {
-            return Ok(UseIDResponse {
-                result: ResultMajor {
-                    result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok".to_string(),
-                },
-                ..Default::default()
-            });
-        }
+        debug!("Required operations: {:?}", required_operations);
 
         // Check if we've reached the maximum number of sessions
         if self.sessions.read().unwrap().len() >= self.config.max_sessions {
-            return Ok(UseIDResponse {
-                ..Default::default()
-            });
+            return Err(color_eyre::eyre::eyre!("Maximum session limit reached"));
         }
 
-        fn generate_session_id() -> String {
-            let timestamp = Utc::now()
-                .timestamp_nanos_opt()
-                .expect("System time out of range for timestamp_nanos_opt()");
-
-            let random_part: String = rand::rng()
-                .sample_iter(&rand::distr::Alphanumeric)
-                .take(16)
-                .map(char::from)
-                .collect();
-
-            format!("{timestamp}-{random_part}")
+        // Generate session ID
+        let session_id = self.generate_session_id();
+        if session_id.is_empty() {
+            error!("Generated empty session ID");
+            return Err(color_eyre::eyre::eyre!("Failed to generate session ID"));
         }
-
-        let session_id = generate_session_id();
+        debug!("Generated session_id: {}", session_id);
 
         // Generate or use provided PSK
         let psk = match &request._psk {
             Some(psk) => psk.key.clone(),
             None => self.generate_psk(),
         };
+        if psk.is_empty() {
+            error!("Generated empty PSK");
+            return Err(color_eyre::eyre::eyre!("Failed to generate PSK"));
+        }
+        debug!("Generated PSK: {}", psk);
 
-        // Increase timeout to 30 minutes
-        let expiry = Utc::now() + Duration::minutes(30);
-        let session_info = SessionInfo {
-            id: session_id.clone(),
-            expiry,
-            psk: Some(psk.clone()),
-            operations: required_operations,
-        };
+        // Store session with PSK
+        let session_info = SessionInfo::new(
+            session_id.clone(),
+            psk.clone(),
+            required_operations.clone(),
+            30,
+        );
 
         // Store the session
         {
             let mut sessions = self.sessions.write().unwrap();
-
-            // Remove expired sessions first
             let now = Utc::now();
             sessions.retain(|session| session.expiry > now);
-
-            // Add new session
             sessions.push(session_info.clone());
-
-            tracing::info!(
+            info!(
                 "Created new session: {}, expires: {}, operations: {:?}",
-                session_id,
-                expiry,
-                session_info.operations
+                session_id, session_info.expiry, session_info.operations
             );
         }
 
+        // Construct TcTokenURL
+        let tc_token_url = self.config.ecard_server_address.clone().map(|addr| {
+            format!(
+                "{}?sessionId={}&binding=urn:liberty:paos:2006-08",
+                addr.trim_end_matches('/'),
+                session_id
+            )
+        });
+        debug!(
+            "Config ecard_server_address: {:?}",
+            self.config.ecard_server_address
+        );
+        debug!("Constructed tc_token_url: {:?}", tc_token_url);
+
+        // Validate TcTokenURL
+        let tc_token_url = tc_token_url.ok_or_else(|| {
+            error!("eCard server address not configured");
+            color_eyre::eyre::eyre!("eCard server address not configured")
+        })?;
+        // Remove XML escaping since CDATA will handle raw characters
+        debug!("Raw tc_token_url: {}", tc_token_url);
+
+        if !tc_token_url.starts_with("https://") {
+            warn!("TcTokenURL is not HTTPS: {}", tc_token_url);
+        }
+
         // Build response
-        Ok(UseIDResponse {
+        let response = UseIDResponse {
             result: ResultMajor {
                 result_major: ResultCode::Ok.to_string(),
             },
             session: SessionResponse {
                 id: session_id.clone(),
             },
-            ecard_server_address: self.config.ecard_server_address.clone(),
+            ecard_server_address: Some(tc_token_url),
             psk: Psk {
                 id: session_id,
                 key: psk,
             },
-        })
+        };
+        debug!("Response before return: {:?}", response);
+
+        // Validate response
+        if response.session.id.is_empty() {
+            error!("Response contains empty session ID");
+            return Err(color_eyre::eyre::eyre!(
+                "Response contains empty session ID"
+            ));
+        }
+        if response.psk.id.is_empty() || response.psk.key.is_empty() {
+            error!("Response contains empty PSK fields");
+            return Err(color_eyre::eyre::eyre!(
+                "Response contains empty PSK fields"
+            ));
+        }
+
+        Ok(response)
     }
 }
 
 // Implement the EidService trait for UseidService
 impl EidService for UseidService {
     fn get_server_info(&self) -> ServerInfo {
-        // Return default ServerInfo which contains the basic implementation details
         ServerInfo::default()
     }
 }

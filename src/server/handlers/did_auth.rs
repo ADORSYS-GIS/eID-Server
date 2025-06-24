@@ -467,9 +467,7 @@ mod tests {
         // Try to read the file, or use a fallback SOAP request
         let soap_request = std::fs::read_to_string("test_data/did_auth_request.xml")
             .unwrap_or_else(|e| {
-                eprintln!(
-                    "Failed to read test SOAP request XML: {e}. Using fallback."
-                );
+                eprintln!("Failed to read test SOAP request XML: {e}. Using fallback.");
                 create_minimal_valid_soap_request()
             });
 
