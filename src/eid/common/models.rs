@@ -217,7 +217,7 @@ pub struct PlaceType {
 pub enum AttributeRequester {
     REQUIRED,
     ALLOWED,
-    NOT_REQUESTED,
+    NotRequested,
 }
 
 #[derive(Serialize, Clone)]
@@ -313,7 +313,7 @@ impl FromStr for AttributeRequester {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_uppercase().as_str() {
             "ALLOWED" => Ok(AttributeRequester::ALLOWED),
-            "PROHIBITED" => Ok(AttributeRequester::NOT_REQUESTED),
+            "PROHIBITED" => Ok(AttributeRequester::NotRequested),
             "REQUIRED" => Ok(AttributeRequester::REQUIRED),
             _ => Err("unknown attribute ".to_owned()),
         }
@@ -349,7 +349,7 @@ impl Display for AttributeRequester {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let text = match self {
             AttributeRequester::ALLOWED => "ALLOWED",
-            AttributeRequester::NOT_REQUESTED => "PROHIBITED",
+            AttributeRequester::NotRequested => "PROHIBITED",
             AttributeRequester::REQUIRED => "REQUIRED",
         };
         write!(f, "{text}")

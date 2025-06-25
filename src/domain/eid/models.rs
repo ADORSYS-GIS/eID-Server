@@ -79,6 +79,9 @@ pub enum AuthError {
 
     #[error("Internal server error: {message}")]
     InternalError { message: String },
+
+    #[error("Trusted channel establishment failed: {reason}")]
+    TrustedChannelEstablishmentFailed { reason: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -261,6 +264,13 @@ impl AuthError {
                 "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
                 Some(
                     "http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#invalidCertificate"
+                        .to_string(),
+                ),
+            ),
+            AuthError::TrustedChannelEstablishmentFailed { .. } => (
+                "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
+                Some(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#trustedChannelEstablishmentFailed"
                         .to_string(),
                 ),
             ),

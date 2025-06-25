@@ -14,6 +14,8 @@ use quick_xml::{
 use serde::Deserialize;
 use std::io::{Cursor, Read};
 use tracing::{debug, error, info, warn};
+use crate::sal::transmit::session::TransmitSessionStore;
+use once_cell::sync::Lazy;
 
 use crate::{
     domain::eid::ports::{EIDService, EidService},
@@ -28,6 +30,8 @@ use crate::{
     },
     server::AppState,
 };
+
+static TRANSMIT_SESSION_STORE: Lazy<TransmitSessionStore> = Lazy::new(TransmitSessionStore::new);
 
 /// SAML query parameters for HTTP-Redirect binding
 #[derive(Debug, Deserialize)]
@@ -146,6 +150,8 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                     "TCToken serialized successfully, length: {} bytes",
                     tc_token.len()
                 );
+                let session_id = response.session.id.clone();
+                TRANSMIT_SESSION_STORE.create_session(session_id.clone());
                 (StatusCode::OK, create_xml_response_headers(), tc_token).into_response()
             }
             Err(err) => {
@@ -213,6 +219,8 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                     "Response serialized successfully, length: {} bytes",
                     soap_response.len()
                 );
+                let session_id = response.session.id.clone();
+                TRANSMIT_SESSION_STORE.create_session(session_id.clone());
                 (
                     StatusCode::OK,
                     create_soap_response_headers(),
@@ -234,111 +242,81 @@ pub async fn use_id_handler<S: EIDService + EidService>(
 
 /// Builds TCTokenType XML from UseIDResponse, matching the Governikus format
 pub fn build_tc_token(response: &UseIDResponse) -> Result<String, String> {
-    let server_address = response
-        .ecard_server_address
-        .as_ref()
-        .and_then(|url| url.split('?').next())
-        .ok_or("No ecard_server_address")?;
+    // Hardcode the base address to ensure same-origin policy is met by the client.
+    // This avoids issues where the Host header might be `0.0.0.0` or different from
+    // the address the client needs to connect to. In a production environment,
+    // this should be read from a configuration file.
+    let server_address = "https://localhost:3000/eIDService/useID";
+
+    let refresh_address = "https://localhost:3000/refresh";
 
     let mut writer = Writer::new(Cursor::new(Vec::new()));
     writer
-        .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
+        .write_event(Event::Decl(BytesDecl::new(
+            "1.0",
+            Some("UTF-8"),
+            None,
+        )))
         .map_err(|e| e.to_string())?;
 
-    // Add namespace to TCTokenType
-    let mut root = BytesStart::new("TCTokenType");
-    root.push_attribute(("xmlns", "http://www.bsi.bund.de/ecard/api/1.1"));
+    let mut tc_token_start = BytesStart::new("TCTokenType");
+    tc_token_start.push_attribute(("xmlns", "http://www.bsi.bund.de/ecard/api/1.1"));
+
     writer
-        .write_event(Event::Start(root))
+        .write_event(Event::Start(tc_token_start))
         .map_err(|e| e.to_string())?;
 
     // ServerAddress
     writer
-        .write_event(Event::Start(BytesStart::new("ServerAddress")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(server_address)))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("ServerAddress")))
+        .create_element("ServerAddress")
+        .write_text_content(BytesText::new(server_address))
         .map_err(|e| e.to_string())?;
 
     // SessionIdentifier
     writer
-        .write_event(Event::Start(BytesStart::new("SessionIdentifier")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(&response.session.id)))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("SessionIdentifier")))
+        .create_element("SessionIdentifier")
+        .write_text_content(BytesText::new(&response.session.id))
         .map_err(|e| e.to_string())?;
 
     // RefreshAddress
     writer
-        .write_event(Event::Start(BytesStart::new("RefreshAddress")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(
-            "https://localhost:3000/refresh",
-        )))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("RefreshAddress")))
+        .create_element("RefreshAddress")
+        .write_text_content(BytesText::new(&refresh_address))
         .map_err(|e| e.to_string())?;
 
     // Binding
     writer
-        .write_event(Event::Start(BytesStart::new("Binding")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(
-            "urn:liberty:paos:2006-08",
-        )))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("Binding")))
+        .create_element("Binding")
+        .write_text_content(BytesText::new("urn:liberty:paos:2006-08"))
         .map_err(|e| e.to_string())?;
 
     // PathSecurity-Protocol
     writer
-        .write_event(Event::Start(BytesStart::new("PathSecurity-Protocol")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped("urn:ietf:rfc:4279")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("PathSecurity-Protocol")))
+        .create_element("PathSecurity-Protocol")
+        .write_text_content(BytesText::new("urn:ietf:rfc:4279"))
         .map_err(|e| e.to_string())?;
 
     // PathSecurity-Parameters
+    let mut psp_start = BytesStart::new("PathSecurity-Parameters");
     writer
-        .write_event(Event::Start(BytesStart::new("PathSecurity-Parameters")))
+        .write_event(Event::Start(psp_start))
         .map_err(|e| e.to_string())?;
 
-    // PSK
     writer
-        .write_event(Event::Start(BytesStart::new("PSK")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(&response.psk.key)))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("PSK")))
+        .create_element("PSK")
+        .write_text_content(BytesText::new(&response.psk.key))
         .map_err(|e| e.to_string())?;
 
-    // Close PathSecurity-Parameters
     writer
         .write_event(Event::End(BytesEnd::new("PathSecurity-Parameters")))
         .map_err(|e| e.to_string())?;
 
-    // Close TCTokenType
     writer
         .write_event(Event::End(BytesEnd::new("TCTokenType")))
         .map_err(|e| e.to_string())?;
 
     let result = writer.into_inner().into_inner();
-    String::from_utf8(result).map_err(|e| e.to_string())
+    String::from_utf8(result).map_err(|e| e.to_string()) 
 }
 
 /// Creates headers for XML response
@@ -358,26 +336,26 @@ fn parse_saml_to_use_id_request(saml_xml: &str) -> Result<UseIDRequest, String> 
     const _EID_NS: &str = "http://bsi.bund.de/eID/";
 
     let mut reader = NsReader::from_str(saml_xml);
-    reader.config_mut().trim_text(true);
+    reader.trim_text(true);
     let mut buf = Vec::new();
     let mut operations = OperationsRequester {
-        document_type: AttributeRequester::NOT_REQUESTED,
-        issuing_state: AttributeRequester::NOT_REQUESTED,
-        date_of_expiry: AttributeRequester::NOT_REQUESTED,
-        given_names: AttributeRequester::NOT_REQUESTED,
-        family_names: AttributeRequester::NOT_REQUESTED,
-        artistic_name: AttributeRequester::NOT_REQUESTED,
-        academic_title: AttributeRequester::NOT_REQUESTED,
-        date_of_birth: AttributeRequester::NOT_REQUESTED,
-        place_of_birth: AttributeRequester::NOT_REQUESTED,
-        nationality: AttributeRequester::NOT_REQUESTED,
-        birth_name: AttributeRequester::NOT_REQUESTED,
-        place_of_residence: AttributeRequester::NOT_REQUESTED,
+        document_type: AttributeRequester::NotRequested,
+        issuing_state: AttributeRequester::NotRequested,
+        date_of_expiry: AttributeRequester::NotRequested, 
+        given_names: AttributeRequester::NotRequested,
+        family_names: AttributeRequester::NotRequested,
+        artistic_name: AttributeRequester::NotRequested,
+        academic_title: AttributeRequester::NotRequested,
+        date_of_birth: AttributeRequester::NotRequested,
+        place_of_birth: AttributeRequester::NotRequested,
+        nationality: AttributeRequester::NotRequested,
+        birth_name: AttributeRequester::NotRequested,
+        place_of_residence: AttributeRequester::NotRequested,
         community_id: None,
         residence_permit_id: None,
-        restricted_id: AttributeRequester::NOT_REQUESTED,
-        age_verification: AttributeRequester::NOT_REQUESTED,
-        place_verification: AttributeRequester::NOT_REQUESTED,
+        restricted_id: AttributeRequester::NotRequested,
+        age_verification: AttributeRequester::NotRequested,
+        place_verification: AttributeRequester::NotRequested,
     };
     let mut age_verification = AgeVerificationRequest { _age: 0 };
     let mut place_verification = PlaceVerificationRequest {

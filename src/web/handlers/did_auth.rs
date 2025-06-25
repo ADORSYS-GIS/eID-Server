@@ -29,11 +29,11 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
     pub fn new(eid_service: T) -> Self {
         DIDAuthenticateHandler { eid_service }
     }
-
+ 
     // Parse incoming SOAP XML request using quick-xml
     fn parse_request(&self, body: &str) -> Result<SoapDIDAuthenticateRequest, AuthError> {
         let mut reader = Reader::from_str(body);
-        reader.config_mut().trim_text(true);
+        reader.trim_text(true);
 
         let mut request = SoapDIDAuthenticateRequest {
             connection_handle: ConnectionHandle {

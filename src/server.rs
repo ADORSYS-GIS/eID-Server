@@ -1,31 +1,34 @@
 //! This module contains the HTTP server implementation.
 
-mod handlers;
-mod responses;
-
-use std::sync::Arc;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::Path;
 use std::net::TcpListener;
+use std::path::Path;
+use std::sync::Arc;
+use url::Url;
 
 use crate::eid::get_server_info::handler::get_server_info;
+use crate::web::handlers;
+use crate::web::handlers::sal::paos::paos_handler;
 use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
-use color_eyre::eyre::{eyre, Result};
-use handlers::health::health_check;
-use handlers::did_auth::did_authenticate;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls::crypto::ring::default_provider;
-use rustls::ServerConfig;
-use rustls_pemfile::{certs, pkcs8_private_keys};
 use axum_server::tls_rustls::RustlsConfig;
+use color_eyre::eyre::{Result, eyre};
+use handlers::did_auth::did_authenticate;
+use handlers::health::health_check;
+use handlers::refresh::refresh_handler;
+use rustls::ServerConfig;
+use rustls::crypto::ring::default_provider;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls_pemfile::{certs, pkcs8_private_keys};
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
 
 use crate::domain::eid::ports::{DIDAuthenticate, EIDService, EidService};
+use crate::sal::transmit::protocol::ProtocolHandler;
+use axum::body::Bytes;
 
 #[derive(Debug, Clone)]
 pub struct AppServerConfig {
@@ -64,8 +67,8 @@ impl Server {
             .map(CertificateDer::from)
             .collect();
 
-        let key_file = File::open(Path::new(key_path))
-            .map_err(|e| eyre!("Failed to open key file: {}", e))?;
+        let key_file =
+            File::open(Path::new(key_path)).map_err(|e| eyre!("Failed to open key file: {}", e))?;
         let mut key_reader = BufReader::new(key_file);
         let mut keys: Vec<PrivateKeyDer> = pkcs8_private_keys(&mut key_reader)
             .collect::<Result<Vec<_>, _>>()
@@ -89,7 +92,7 @@ impl Server {
     /// Creates a new HTTPS server.
     pub async fn new(
         eid_service: impl EIDService + EidService + DIDAuthenticate,
-        config: AppServerConfig,
+        _config: AppServerConfig,
     ) -> Result<Self> {
         let trace_layer =
             TraceLayer::new_for_http().make_span_with(|request: &'_ axum::extract::Request<_>| {
@@ -104,7 +107,7 @@ impl Server {
                 Method::GET,
                 Method::POST,
                 Method::PUT,
-                Method::DELETE,
+                Method::DELETE, 
                 Method::OPTIONS,
             ]);
 
@@ -113,6 +116,15 @@ impl Server {
             use_id: eid_service.clone(),
             eid_service,
         };
+        let ecard_server_url_str = state
+            .use_id
+            .get_config()
+            .ecard_server_address
+            .unwrap_or_else(|| "/eIDService/paos".to_owned());
+
+        let ecard_route_path = Url::parse(&ecard_server_url_str)
+            .map(|url| url.path().to_owned())
+            .unwrap_or(ecard_server_url_str);
 
         let router = Router::new()
             .route("/health", get(health_check))
@@ -120,7 +132,13 @@ impl Server {
             .route("/eIDService/useID", get(handlers::useid::use_id_handler))
             .route("/eIDService/getServerInfo", get(get_server_info))
             .route("/did-authenticate", post(did_authenticate))
+            .route("/refresh", get(refresh_handler))
+            .route(
+                "/eIDService/transmit",
+                axum::routing::post(transmit_handler),
+            )
             .layer(cors_layer)
+            .route(&ecard_route_path, post(paos_handler))
             .layer(trace_layer)
             .with_state(state);
 
@@ -128,7 +146,10 @@ impl Server {
     }
 
     /// Runs the HTTPS server and returns the bound port.
-    pub async fn run_with_port(self, config: AppServerConfig) -> Result<(u16, tokio::task::JoinHandle<()>)> {
+    pub async fn run_with_port(
+        self,
+        config: AppServerConfig,
+    ) -> Result<(u16, tokio::task::JoinHandle<()>)> {
         let addr = format!("{}:{}", config.host, config.port);
         let listener = TcpListener::bind(&addr)?;
         listener.set_nonblocking(true)?;
@@ -154,5 +175,29 @@ impl Server {
         tracing::info!("Server running on port {}", port);
         handle.await?;
         Ok(())
+    }
+}
+
+// This handler is generic and forwards APDU requests to any eID-Client implementing the eCard-API
+async fn transmit_handler(body: Bytes) -> impl axum::response::IntoResponse {
+    let xml = String::from_utf8_lossy(&body);
+    let handler = ProtocolHandler::new();
+    match handler.handle_transmit(&xml).await {
+        Ok(resp_xml) => (
+            axum::http::StatusCode::OK,
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "application/xml; charset=utf-8",
+            )],
+            resp_xml,
+        ),
+        Err(e) => (
+            axum::http::StatusCode::BAD_REQUEST,
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "text/plain; charset=utf-8",
+            )],
+            format!("Transmit error: {e}"),
+        ),
     }
 }
