@@ -4,8 +4,8 @@ use std::sync::{Arc, RwLock};
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use color_eyre::Result;
-use rand::{Rng, RngCore};
 use rand::distr::Alphanumeric;
+use rand::{Rng, RngCore};
 use std::default::Default;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -21,16 +21,15 @@ use crate::eid::common::models::{
 use crate::eid::use_id::model::{Psk, UseIDRequest, UseIDResponse};
 use async_trait::async_trait;
 
-/// Configuration for the eID Service
+// Configuration for the eID Service
 #[derive(Clone, Debug)]
 pub struct EIDServiceConfig {
     /// Maximum number of concurrent sessions
     pub max_sessions: usize,
     /// Session timeout in minutes
     pub session_timeout_minutes: i64,
-    /// Optional eCard server address to return in responses (MUST be HTTPS)
+    /// Optional eCard server address to return in responses
     pub ecard_server_address: Option<String>,
-    // Add more config as needed (e.g., allowed cipher suites)
 }
 
 impl Default for EIDServiceConfig {
@@ -38,7 +37,6 @@ impl Default for EIDServiceConfig {
         Self {
             max_sessions: 1000,
             session_timeout_minutes: 5,
-            // IMPORTANT: Use a strong, valid certificate for this address. MUST be HTTPS.
             ecard_server_address: Some("https://localhost:3000".to_string()),
         }
     }
@@ -49,7 +47,7 @@ impl Default for EIDServiceConfig {
 pub struct SessionInfo {
     pub id: String,
     pub expiry: DateTime<Utc>,
-    pub psk: String, 
+    pub psk: String,
     pub operations: Vec<String>,
     pub connection_handles: Vec<ConnectionHandle>,
 }
@@ -59,9 +57,9 @@ pub struct ConnectionHandle {
     pub connection_handle: String,
 }
 
-#[derive(Clone, Debug)] 
+#[derive(Clone, Debug)]
 pub struct SessionManager {
-    pub sessions: Vec<SessionInfo>,
+    pub sessions: Arc<RwLock<Vec<SessionInfo>>>,
 }
 
 impl SessionInfo {
@@ -72,6 +70,14 @@ impl SessionInfo {
             psk,
             operations,
             connection_handles: Vec::new(),
+        }
+    }
+}
+
+impl SessionManager {
+    pub fn new() -> Self {
+        SessionManager {
+            sessions: Arc::new(RwLock::new(Vec::new())),
         }
     }
 }
@@ -88,16 +94,14 @@ pub struct DIDAuthenticateService {
     certificate_store: CertificateStore,
     crypto_provider: CryptoProvider,
     card_communicator: CardCommunicator,
-    session_manager: Arc<RwLock<SessionManager>>,
+    sessions: Arc<RwLock<Vec<SessionInfo>>>,
 }
 
 impl UseidService {
     pub fn new(config: EIDServiceConfig) -> Self {
         Self {
             config,
-            session_manager: Arc::new(RwLock::new(SessionManager {
-                sessions: Vec::new(),
-            })),
+            session_manager: Arc::new(RwLock::new(SessionManager::new())),
         }
     }
 
@@ -116,7 +120,6 @@ impl UseidService {
 
     /// Generate a random PSK for secure communication
     pub fn generate_psk(&self) -> String {
-        // IMPORTANT: PSK must be randomly generated, cryptographically strong, and not derived from TLS-1
         let mut bytes = [0u8; 32];
         rand::rng().fill_bytes(&mut bytes);
         bytes.iter().map(|b| format!("{:02x}", b)).collect()
@@ -217,9 +220,7 @@ impl EIDService for UseidService {
 
         // Check if we've reached the maximum number of sessions
         if self.session_manager.read().unwrap().sessions.len() >= self.config.max_sessions {
-            return Ok(UseIDResponse {
-                ..Default::default()
-            });
+            return Err(color_eyre::eyre::eyre!("Maximum session limit reached"));
         }
 
         // Generate session ID
@@ -255,9 +256,15 @@ impl EIDService for UseidService {
 
         // Store the session
         {
-            let mut sessions = self.session_manager.write().unwrap().sessions.clone();
+            let mut session_manager = self.session_manager.write().map_err(|e| {
+                color_eyre::eyre::eyre!("Failed to acquire session manager lock: {}", e)
+            })?;
+            let mut sessions = session_manager
+                .sessions
+                .write()
+                .map_err(|e| color_eyre::eyre::eyre!("Failed to acquire sessions lock: {}", e))?;
 
-            // Remove expired sessions first
+            // Remove expired sessions
             let now = Utc::now();
             sessions.retain(|session| session.expiry > now);
             sessions.push(session_info.clone());
@@ -339,17 +346,17 @@ impl DIDAuthenticateService {
         certificate_store: CertificateStore,
         crypto_provider: CryptoProvider,
         card_communicator: CardCommunicator,
-        session_manager: Arc<RwLock<SessionManager>>,
+        sessions: Arc<RwLock<Vec<SessionInfo>>>,
     ) -> Self {
         Self {
             certificate_store,
             crypto_provider,
             card_communicator,
-            session_manager,
+            sessions,
         }
     }
 
-    pub async fn new_with_defaults(session_manager: Arc<RwLock<SessionManager>>) -> Self {
+    pub async fn new_with_defaults(sessions: Arc<RwLock<Vec<SessionInfo>>>) -> Self {
         dotenvy::dotenv().expect("Failed to load .env file");
         let certificate_store = CertificateStore::new();
 
@@ -368,7 +375,7 @@ impl DIDAuthenticateService {
             certificate_store: certificate_store.clone(),
             crypto_provider: CryptoProvider::default(),
             card_communicator: CardCommunicator::new(&ausweisapp2_endpoint, certificate_store),
-            session_manager,
+            sessions,
         }
     }
 
@@ -379,7 +386,7 @@ impl DIDAuthenticateService {
         );
 
         match self
-            .authenticate_internal(request, self.session_manager.clone())
+            .authenticate_internal(request, self.sessions.clone())
             .await
         {
             Ok(response_data) => {
@@ -396,7 +403,7 @@ impl DIDAuthenticateService {
     async fn authenticate_internal(
         &self,
         request: DIDAuthenticateRequest,
-        session_manager: Arc<RwLock<SessionManager>>,
+        sessions: Arc<RwLock<Vec<SessionInfo>>>,
     ) -> Result<ResponseProtocolData, AuthError> {
         request.validate()?;
         debug!("Request validation passed");
@@ -411,15 +418,14 @@ impl DIDAuthenticateService {
             })?;
 
         let _session_info = {
-            let sessions = session_manager.read().map_err(|e| AuthError::InternalError {
+            let sessions = sessions.read().map_err(|e| AuthError::InternalError {
                 message: format!("Failed to acquire sessions lock: {}", e),
             })?;
             debug!(
                 "Available sessions: {:?}",
-                sessions.sessions.iter().map(|s| &s.id).collect::<Vec<_>>()
+                sessions.iter().map(|s| &s.id).collect::<Vec<_>>()
             );
             let session = sessions
-                .sessions
                 .iter()
                 .find(|s| s.id == *session_id)
                 .ok_or_else(|| {
@@ -505,11 +511,18 @@ impl DIDAuthenticate for UseidService {
             });
         }
 
-        let did_service = DIDAuthenticateService::new_with_defaults(self.session_manager.clone()).await;
+        // Extract sessions from SessionManager
+        let sessions = {
+            let session_manager =
+                self.session_manager
+                    .read()
+                    .map_err(|e| AuthError::InternalError {
+                        message: format!("Failed to acquire sessions lock: {}", e),
+                    })?;
+            Arc::new(RwLock::new(session_manager.sessions.clone()))
+        };
+
+        let did_service = DIDAuthenticateService::new_with_defaults(sessions).await;
         Ok(did_service.authenticate(request).await)
     }
 }
-
-// In server TLS setup (see src/server.rs), ensure only allowed cipher suites are enabled.
-// For generic model, only TLS_RSA_PSK_WITH_AES_256_CBC_SHA must be allowed for TLS-2.
-// This may require a custom TLS stack or configuration.

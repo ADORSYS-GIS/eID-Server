@@ -16,6 +16,8 @@ pub async fn spawn_server() -> String {
     let server_config = AppServerConfig {
         host: config.server.host,
         port: config.server.port,
+        cert_path: Some("certss/localhost.crt".to_string()),
+        key_path: Some("certss/localhost.key".to_string()),
     };
 
     let server = Server::new(eid_service, server_config.clone())

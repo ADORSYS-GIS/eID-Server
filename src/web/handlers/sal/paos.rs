@@ -1,7 +1,5 @@
-use axum::{extract::State, http::{StatusCode, HeaderMap, HeaderValue}, response::IntoResponse};
+use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use tracing::{debug, error, warn};
-use crate::sal::transmit::session::TransmitSessionStore;
-use once_cell::sync::Lazy;
 
 use crate::{
     domain::eid::{
@@ -11,26 +9,6 @@ use crate::{
     sal::paos::parser::parse_start_paos,
     server::AppState,
 };
-
-const SOAP_RESPONSE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:paos="urn:liberty:paos:2006-08" xmlns:iso="urn:iso:std:iso-iec:24727:tech:schema">
-  <soap:Header>
-    <paos:PAOS soap:mustUnderstand="1" soap:actor="http://schemas.xmlsoap.org/soap/actor/next">
-      <paos:Version>urn:liberty:paos:2006-08</paos:Version>
-      <paos:EndpointReference>
-        <paos:Address>http://www.projectliberty.org/2006/01/role/paos</paos:Address>
-        <paos:MetaData>
-          <paos:ServiceType>http://www.bsi.bund.de/ecard/api/1.1/PAOS/GetNextCommand</paos:ServiceType>
-        </paos:MetaData>
-      </paos:EndpointReference>
-    </paos:PAOS>
-  </soap:Header>
-  <soap:Body>
-    <iso:GetNextCommandResponse/>
-  </soap:Body>
-</soap:Envelope>"#;
- 
-static TRANSMIT_SESSION_STORE: Lazy<TransmitSessionStore> = Lazy::new(TransmitSessionStore::new);
 
 pub async fn paos_handler<S: EIDService + EidService>(
     State(state): State<AppState<S>>,
@@ -128,16 +106,7 @@ pub async fn paos_handler<S: EIDService + EidService>(
             .into_response();
     }
 
-    // After session_id is validated and before returning the response:
-    TRANSMIT_SESSION_STORE.create_session(session_id.clone());
-
-    // Return a minimal SOAP/PAOS-compliant response
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "content-type",
-        HeaderValue::from_static("application/soap+xml; charset=utf-8"),
-    );
-    (StatusCode::OK, headers, SOAP_RESPONSE).into_response()
+    (StatusCode::OK).into_response()
 }
 
 #[cfg(test)]

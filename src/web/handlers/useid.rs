@@ -14,8 +14,6 @@ use quick_xml::{
 use serde::Deserialize;
 use std::io::{Cursor, Read};
 use tracing::{debug, error, info, warn};
-use crate::sal::transmit::session::TransmitSessionStore;
-use once_cell::sync::Lazy;
 
 use crate::{
     domain::eid::ports::{EIDService, EidService},
@@ -30,8 +28,6 @@ use crate::{
     },
     server::AppState,
 };
-
-static TRANSMIT_SESSION_STORE: Lazy<TransmitSessionStore> = Lazy::new(TransmitSessionStore::new);
 
 /// SAML query parameters for HTTP-Redirect binding
 #[derive(Debug, Deserialize)]
@@ -98,7 +94,6 @@ pub async fn use_id_handler<S: EIDService + EidService>(
             saml_xml.len(),
             saml_xml.chars().take(200).collect::<String>()
         );
-        debug!("Full SAMLRequest XML: {}", saml_xml);
 
         // Parse SAML XML into UseIDRequest
         let use_id_request = match parse_saml_to_use_id_request(&saml_xml) {
@@ -122,7 +117,6 @@ pub async fn use_id_handler<S: EIDService + EidService>(
             Ok(response) => {
                 info!("useID request processed successfully");
                 debug!("Response: {:?}", response);
-                // Add detailed logging
                 debug!(
                     "Response details: session_id={}, psk_id={}, psk_key={}, ecard_server_address={:?}",
                     response.session.id,
@@ -142,7 +136,7 @@ pub async fn use_id_handler<S: EIDService + EidService>(
             }
         };
 
-        // For SAML binding, return TCToken XML instead of SOAP
+        // For SAML binding, return TCToken XML
         match build_tc_token(&response) {
             Ok(tc_token) => {
                 info!("TCToken XML: {}", tc_token);
@@ -150,8 +144,6 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                     "TCToken serialized successfully, length: {} bytes",
                     tc_token.len()
                 );
-                let session_id = response.session.id.clone();
-                TRANSMIT_SESSION_STORE.create_session(session_id.clone());
                 (StatusCode::OK, create_xml_response_headers(), tc_token).into_response()
             }
             Err(err) => {
@@ -201,6 +193,35 @@ pub async fn use_id_handler<S: EIDService + EidService>(
             Ok(response) => {
                 info!("useID request processed successfully");
                 debug!("Response: {:?}", response);
+                debug!(
+                    "Response details: session_id={}, psk_id={}, psk_key={}, ecard_server_address={:?}",
+                    response.session.id,
+                    response.psk.id,
+                    response.psk.key,
+                    response.ecard_server_address
+                );
+                // Verify session is stored
+                if let Ok(session_manager) = state.use_id.get_session_manager().read() {
+                    if let Ok(sessions) = session_manager.sessions.read() {
+                        if let Some(stored_session) =
+                            sessions.iter().find(|s| s.id == response.session.id)
+                        {
+                            debug!(
+                                "Session stored in SessionManager: id={}, psk={}",
+                                stored_session.id, stored_session.psk
+                            );
+                        } else {
+                            warn!(
+                                "Session {} not found in SessionManager after storage",
+                                response.session.id
+                            );
+                        }
+                    } else {
+                        error!("Failed to acquire sessions lock in SessionManager");
+                    }
+                } else {
+                    error!("Failed to acquire session manager lock");
+                }
                 response
             }
             Err(err) => {
@@ -219,8 +240,6 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                     "Response serialized successfully, length: {} bytes",
                     soap_response.len()
                 );
-                let session_id = response.session.id.clone();
-                TRANSMIT_SESSION_STORE.create_session(session_id.clone());
                 (
                     StatusCode::OK,
                     create_soap_response_headers(),
@@ -242,81 +261,111 @@ pub async fn use_id_handler<S: EIDService + EidService>(
 
 /// Builds TCTokenType XML from UseIDResponse, matching the Governikus format
 pub fn build_tc_token(response: &UseIDResponse) -> Result<String, String> {
-    // Hardcode the base address to ensure same-origin policy is met by the client.
-    // This avoids issues where the Host header might be `0.0.0.0` or different from
-    // the address the client needs to connect to. In a production environment,
-    // this should be read from a configuration file.
-    let server_address = "https://localhost:3000/eIDService/useID";
-
-    let refresh_address = "https://localhost:3000/refresh";
+    let server_address = response
+        .ecard_server_address
+        .as_ref()
+        .and_then(|url| url.split('?').next())
+        .ok_or("No ecard_server_address")?;
 
     let mut writer = Writer::new(Cursor::new(Vec::new()));
     writer
-        .write_event(Event::Decl(BytesDecl::new(
-            "1.0",
-            Some("UTF-8"),
-            None,
-        )))
+        .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
         .map_err(|e| e.to_string())?;
 
-    let mut tc_token_start = BytesStart::new("TCTokenType");
-    tc_token_start.push_attribute(("xmlns", "http://www.bsi.bund.de/ecard/api/1.1"));
-
+    // Add namespace to TCTokenType
+    let mut root = BytesStart::new("TCTokenType");
+    root.push_attribute(("xmlns", "http://www.bsi.bund.de/ecard/api/1.1"));
     writer
-        .write_event(Event::Start(tc_token_start))
+        .write_event(Event::Start(root))
         .map_err(|e| e.to_string())?;
 
     // ServerAddress
     writer
-        .create_element("ServerAddress")
-        .write_text_content(BytesText::new(server_address))
+        .write_event(Event::Start(BytesStart::new("ServerAddress")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::Text(BytesText::from_escaped(server_address)))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("ServerAddress")))
         .map_err(|e| e.to_string())?;
 
     // SessionIdentifier
     writer
-        .create_element("SessionIdentifier")
-        .write_text_content(BytesText::new(&response.session.id))
+        .write_event(Event::Start(BytesStart::new("SessionIdentifier")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::Text(BytesText::from_escaped(&response.session.id)))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("SessionIdentifier")))
         .map_err(|e| e.to_string())?;
 
     // RefreshAddress
     writer
-        .create_element("RefreshAddress")
-        .write_text_content(BytesText::new(&refresh_address))
+        .write_event(Event::Start(BytesStart::new("RefreshAddress")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::Text(BytesText::from_escaped(
+            "https://localhost:3000/refresh",
+        )))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("RefreshAddress")))
         .map_err(|e| e.to_string())?;
 
     // Binding
     writer
-        .create_element("Binding")
-        .write_text_content(BytesText::new("urn:liberty:paos:2006-08"))
+        .write_event(Event::Start(BytesStart::new("Binding")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::Text(BytesText::from_escaped(
+            "urn:liberty:paos:2006-08",
+        )))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("Binding")))
         .map_err(|e| e.to_string())?;
 
     // PathSecurity-Protocol
     writer
-        .create_element("PathSecurity-Protocol")
-        .write_text_content(BytesText::new("urn:ietf:rfc:4279"))
+        .write_event(Event::Start(BytesStart::new("PathSecurity-Protocol")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::Text(BytesText::from_escaped("urn:ietf:rfc:4279")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("PathSecurity-Protocol")))
         .map_err(|e| e.to_string())?;
 
     // PathSecurity-Parameters
-    let mut psp_start = BytesStart::new("PathSecurity-Parameters");
     writer
-        .write_event(Event::Start(psp_start))
+        .write_event(Event::Start(BytesStart::new("PathSecurity-Parameters")))
         .map_err(|e| e.to_string())?;
 
+    // PSK
     writer
-        .create_element("PSK")
-        .write_text_content(BytesText::new(&response.psk.key))
+        .write_event(Event::Start(BytesStart::new("PSK")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::Text(BytesText::from_escaped(&response.psk.key)))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("PSK")))
         .map_err(|e| e.to_string())?;
 
+    // Close PathSecurity-Parameters
     writer
         .write_event(Event::End(BytesEnd::new("PathSecurity-Parameters")))
         .map_err(|e| e.to_string())?;
 
+    // Close TCTokenType
     writer
         .write_event(Event::End(BytesEnd::new("TCTokenType")))
         .map_err(|e| e.to_string())?;
 
     let result = writer.into_inner().into_inner();
-    String::from_utf8(result).map_err(|e| e.to_string()) 
+    String::from_utf8(result).map_err(|e| e.to_string())
 }
 
 /// Creates headers for XML response
@@ -341,7 +390,7 @@ fn parse_saml_to_use_id_request(saml_xml: &str) -> Result<UseIDRequest, String> 
     let mut operations = OperationsRequester {
         document_type: AttributeRequester::NotRequested,
         issuing_state: AttributeRequester::NotRequested,
-        date_of_expiry: AttributeRequester::NotRequested, 
+        date_of_expiry: AttributeRequester::NotRequested,
         given_names: AttributeRequester::NotRequested,
         family_names: AttributeRequester::NotRequested,
         artistic_name: AttributeRequester::NotRequested,
@@ -432,7 +481,6 @@ fn parse_saml_to_use_id_request(saml_xml: &str) -> Result<UseIDRequest, String> 
                                 .map_err(|e| format!("Invalid isRequired value: {}", e))?
                                 .to_lowercase()
                                 == "true";
-                            debug!("Attribute isRequired: {}", is_required);
                         }
                     }
                 }
@@ -759,7 +807,6 @@ fn build_use_id_response_local(response: &UseIDResponse) -> Result<String, Strin
         error!("Failed to convert response to UTF-8: {}", e);
         e.to_string()
     })?;
-    debug!("Generated SOAP response: {}", response_str);
     Ok(response_str)
 }
 
