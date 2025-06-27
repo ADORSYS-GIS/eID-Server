@@ -6,13 +6,13 @@ use axum::{
 use base64::Engine;
 use flate2::bufread::DeflateDecoder;
 use quick_xml::{
-    NsReader, Writer,
-    escape::escape,
-    events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event},
+    NsReader,
+    events::Event,
     name::{Namespace, ResolveResult},
+    se::to_string,
 };
-use serde::Deserialize;
-use std::io::{Cursor, Read};
+use serde::{Deserialize, Serialize};
+use std::io::Read;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -28,6 +28,87 @@ use crate::{
     },
     server::AppState,
 };
+
+// TCTokenType structs for serialization
+#[derive(Debug, Serialize)]
+#[serde(rename = "TCTokenType")]
+struct TCTokenType {
+    #[serde(rename = "@xmlns")]
+    xmlns: &'static str,
+    #[serde(rename = "ServerAddress")]
+    server_address: String,
+    #[serde(rename = "SessionIdentifier")]
+    session_identifier: String,
+    #[serde(rename = "RefreshAddress")]
+    refresh_address: &'static str,
+    #[serde(rename = "Binding")]
+    binding: &'static str,
+    #[serde(rename = "PathSecurity-Protocol")]
+    path_security_protocol: &'static str,
+    #[serde(rename = "PathSecurity-Parameters")]
+    path_security_parameters: PathSecurityParameters,
+}
+
+#[derive(Debug, Serialize)]
+struct PathSecurityParameters {
+    #[serde(rename = "PSK")]
+    psk: String,
+}
+
+// SOAP response structs for serialization
+#[derive(Debug, Serialize)]
+#[serde(rename = "Envelope", rename_all = "camelCase")]
+struct SoapEnvelope {
+    #[serde(rename = "xmlns:soapenv")]
+    soapenv: &'static str,
+    #[serde(rename = "xmlns:eid")]
+    eid: &'static str,
+    #[serde(rename = "xmlns:dss")]
+    dss: &'static str,
+    body: SoapBody,
+}
+
+#[derive(Debug, Serialize)]
+struct SoapBody {
+    #[serde(rename = "useIDResponse")]
+    use_id_response: UseIDResponseXml,
+}
+
+#[derive(Debug, Serialize)]
+struct UseIDResponseXml {
+    #[serde(rename = "CommunicationErrorAddress")]
+    communication_error_address: &'static str,
+    #[serde(rename = "RefreshAddress")]
+    refresh_address: &'static str,
+    #[serde(rename = "eCardServerAddress")]
+    ecard_server_address: String,
+    #[serde(rename = "Session")]
+    session: SessionXml,
+    #[serde(rename = "PSK")]
+    psk: PskXml,
+    #[serde(rename = "Result")]
+    result: ResultXml,
+}
+
+#[derive(Debug, Serialize)]
+struct SessionXml {
+    #[serde(rename = "ID")]
+    id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PskXml {
+    #[serde(rename = "ID")]
+    id: String,
+    #[serde(rename = "Key")]
+    key: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ResultXml {
+    #[serde(rename = "ResultMajor")]
+    result_major: String,
+}
 
 /// SAML query parameters for HTTP-Redirect binding
 #[derive(Debug, Deserialize)]
@@ -232,7 +313,7 @@ pub async fn use_id_handler<S: EIDService + EidService>(
     }
 }
 
-/// Builds TCTokenType XML from UseIDResponse, matching the Governikus format
+/// Builds TCTokenType XML from UseIDResponse using serde
 pub fn build_tc_token(response: &UseIDResponse) -> Result<String, String> {
     let server_address = response
         .ecard_server_address
@@ -240,105 +321,26 @@ pub fn build_tc_token(response: &UseIDResponse) -> Result<String, String> {
         .and_then(|url| url.split('?').next())
         .ok_or("No ecard_server_address")?;
 
-    let mut writer = Writer::new(Cursor::new(Vec::new()));
-    writer
-        .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
-        .map_err(|e| e.to_string())?;
+    let tc_token = TCTokenType {
+        xmlns: "http://www.bsi.bund.de/ecard/api/1.1",
+        server_address: server_address.to_string(),
+        session_identifier: response.session.id.clone(),
+        refresh_address: "https://localhost:3000/refresh",
+        binding: "urn:liberty:paos:2006-08",
+        path_security_protocol: "urn:ietf:rfc:4279",
+        path_security_parameters: PathSecurityParameters {
+            psk: response.psk.key.clone(),
+        },
+    };
 
-    // Add namespace to TCTokenType
-    let mut root = BytesStart::new("TCTokenType");
-    root.push_attribute(("xmlns", "http://www.bsi.bund.de/ecard/api/1.1"));
-    writer
-        .write_event(Event::Start(root))
-        .map_err(|e| e.to_string())?;
+    let xml = to_string(&tc_token).map_err(|e| {
+        error!("Failed to serialize TCToken: {}", e);
+        e.to_string()
+    })?;
 
-    // ServerAddress
-    writer
-        .write_event(Event::Start(BytesStart::new("ServerAddress")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(server_address)))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("ServerAddress")))
-        .map_err(|e| e.to_string())?;
-
-    // SessionIdentifier
-    writer
-        .write_event(Event::Start(BytesStart::new("SessionIdentifier")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(&response.session.id)))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("SessionIdentifier")))
-        .map_err(|e| e.to_string())?;
-
-    // RefreshAddress
-    writer
-        .write_event(Event::Start(BytesStart::new("RefreshAddress")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(
-            "https://localhost:3000/refresh",
-        )))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("RefreshAddress")))
-        .map_err(|e| e.to_string())?;
-
-    // Binding
-    writer
-        .write_event(Event::Start(BytesStart::new("Binding")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(
-            "urn:liberty:paos:2006-08",
-        )))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("Binding")))
-        .map_err(|e| e.to_string())?;
-
-    // PathSecurity-Protocol
-    writer
-        .write_event(Event::Start(BytesStart::new("PathSecurity-Protocol")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped("urn:ietf:rfc:4279")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("PathSecurity-Protocol")))
-        .map_err(|e| e.to_string())?;
-
-    // PathSecurity-Parameters
-    writer
-        .write_event(Event::Start(BytesStart::new("PathSecurity-Parameters")))
-        .map_err(|e| e.to_string())?;
-
-    // PSK
-    writer
-        .write_event(Event::Start(BytesStart::new("PSK")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(&response.psk.key)))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("PSK")))
-        .map_err(|e| e.to_string())?;
-
-    // Close PathSecurity-Parameters
-    writer
-        .write_event(Event::End(BytesEnd::new("PathSecurity-Parameters")))
-        .map_err(|e| e.to_string())?;
-
-    // Close TCTokenType
-    writer
-        .write_event(Event::End(BytesEnd::new("TCTokenType")))
-        .map_err(|e| e.to_string())?;
-
-    let result = writer.into_inner().into_inner();
-    String::from_utf8(result).map_err(|e| e.to_string())
+    // Prepend XML declaration since serde_xml_rs doesn't include it
+    let xml_with_decl = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{xml}");
+    Ok(xml_with_decl)
 }
 
 /// Creates headers for XML response
@@ -623,7 +625,7 @@ fn create_soap_response_headers() -> HeaderMap {
     headers
 }
 
-/// Builds a SOAP response from a UseIDResponse struct (local implementation).
+/// Builds a SOAP response from a UseIDResponse struct using serde
 fn build_use_id_response_local(response: &UseIDResponse) -> Result<String, String> {
     debug!(
         "Building SOAP response with: session_id={}, ecard_server_address={:?}, psk_id={}, psk_key={}, result_major={}",
@@ -634,154 +636,43 @@ fn build_use_id_response_local(response: &UseIDResponse) -> Result<String, Strin
         response.result.result_major
     );
 
-    let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 0);
-    let decl = BytesDecl::new("1.0", Some("UTF-8"), None);
-    writer
-        .write_event(Event::Decl(decl))
-        .map_err(|e| e.to_string())?;
-
-    let mut envelope = BytesStart::new("soapenv:Envelope");
-    envelope.push_attribute(("xmlns:soapenv", "http://schemas.xmlsoap.org/soap/envelope/"));
-    envelope.push_attribute(("xmlns:eid", "http://bsi.bund.de/eID/"));
-    envelope.push_attribute(("xmlns:dss", "urn:oasis:names:tc:dss:1.0:core:schema"));
-    writer
-        .write_event(Event::Start(envelope))
-        .map_err(|e| e.to_string())?;
-
-    writer
-        .write_event(Event::Start(BytesStart::new("soapenv:Body")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Start(BytesStart::new("eid:useIDResponse")))
-        .map_err(|e| e.to_string())?;
-
-    // CommunicationErrorAddress
-    writer
-        .write_event(Event::Start(BytesStart::new(
-            "eid:CommunicationErrorAddress",
-        )))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(
-            "https://localhost:3000/error",
-        )))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("eid:CommunicationErrorAddress")))
-        .map_err(|e| e.to_string())?;
-
-    // RefreshAddress
-    writer
-        .write_event(Event::Start(BytesStart::new("eid:RefreshAddress")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(
-            "https://localhost:3000/refresh",
-        )))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("eid:RefreshAddress")))
-        .map_err(|e| e.to_string())?;
-
-    // eCardServerAddress
-    let ecard_url = response.ecard_server_address.as_ref().ok_or_else(|| {
+    let ecard_server_address = response.ecard_server_address.as_ref().ok_or_else(|| {
         error!("eCard server address not provided in response");
         "eCard server address not provided".to_string()
     })?;
-    writer
-        .write_event(Event::Start(BytesStart::new("eid:eCardServerAddress")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(escape(ecard_url))))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("eid:eCardServerAddress")))
-        .map_err(|e| e.to_string())?;
 
-    // Session
-    writer
-        .write_event(Event::Start(BytesStart::new("eid:Session")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Start(BytesStart::new("eid:ID")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(&response.session.id)))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("eid:ID")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("eid:Session")))
-        .map_err(|e| e.to_string())?;
+    let envelope = SoapEnvelope {
+        soapenv: "http://schemas.xmlsoap.org/soap/envelope/",
+        eid: "http://bsi.bund.de/eID/",
+        dss: "urn:oasis:names:tc:dss:1.0:core:schema",
+        body: SoapBody {
+            use_id_response: UseIDResponseXml {
+                communication_error_address: "https://localhost:3000/error",
+                refresh_address: "https://localhost:3000/refresh",
+                ecard_server_address: ecard_server_address.to_string(),
+                session: SessionXml {
+                    id: response.session.id.clone(),
+                },
+                psk: PskXml {
+                    id: response.psk.id.clone(),
+                    key: response.psk.key.clone(),
+                },
+                result: ResultXml {
+                    result_major: response.result.result_major.clone(),
+                },
+            },
+        },
+    };
 
-    // PSK
-    writer
-        .write_event(Event::Start(BytesStart::new("eid:PSK")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Start(BytesStart::new("eid:ID")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(&response.psk.id)))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("eid:ID")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Start(BytesStart::new("eid:Key")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(&response.psk.key)))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("eid:Key")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("eid:PSK")))
-        .map_err(|e| e.to_string())?;
-
-    // Result
-    writer
-        .write_event(Event::Start(BytesStart::new("dss:Result")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Start(BytesStart::new("dss:ResultMajor")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::Text(BytesText::from_escaped(
-            &response.result.result_major,
-        )))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("dss:ResultMajor")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("dss:Result")))
-        .map_err(|e| e.to_string())?;
-
-    writer
-        .write_event(Event::End(BytesEnd::new("eid:useIDResponse")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("soapenv:Body")))
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_event(Event::End(BytesEnd::new("soapenv:Envelope")))
-        .map_err(|e| e.to_string())?;
-
-    let result = writer.into_inner().into_inner();
-    debug!(
-        "Raw response bytes (length: {}): {:?}",
-        result.len(),
-        result
-    );
-    let response_str = String::from_utf8(result).map_err(|e| {
-        error!("Failed to convert response to UTF-8: {}", e);
+    let xml = to_string(&envelope).map_err(|e| {
+        error!("Failed to serialize SOAP response: {}", e);
         e.to_string()
     })?;
-    debug!("Generated SOAP response: {}", response_str);
-    Ok(response_str)
+
+    // Prepend XML declaration since serde_xml_rs doesn't include it
+    let xml_with_decl = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{xml}");
+    debug!("Generated SOAP response: {}", xml_with_decl);
+    Ok(xml_with_decl)
 }
 
 #[cfg(test)]
@@ -1053,7 +944,13 @@ mod tests {
         };
 
         let tc_token = build_tc_token(&response).unwrap();
-        assert!(tc_token.contains("<TCTokenType xmlns=\"http://www.bsi.bund.de/ecard/api/1.1\">"));
+        println!("Generated TCToken XML: {tc_token}");
+
+        assert!(
+            tc_token.contains("<TCTokenType xmlns=\"http://www.bsi.bund.de/ecard/api/1.1\">"),
+            "Expected TCTokenType with namespace, got: {}",
+            tc_token
+        );
         assert!(
             tc_token.contains("<ServerAddress>https://test.eid.example.com/ecard</ServerAddress>")
         );
@@ -1069,7 +966,6 @@ mod tests {
             "<PSK>a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2</PSK>"
         ));
     }
-
     #[tokio::test]
     async fn test_build_tc_token_missing_ecard_address() {
         let response = UseIDResponse {

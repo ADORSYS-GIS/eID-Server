@@ -1,18 +1,73 @@
-use crate::domain::eid::{
-    models::{
-        AuthError, AuthenticationProtocolData, ConnectionHandle, DIDAuthenticateRequest,
-        DIDAuthenticateResponse, SoapResponse,
+use crate::{
+    domain::eid::{
+        models::{
+            AuthError, AuthenticationProtocolData, ConnectionHandle, DIDAuthenticateRequest,
+            DIDAuthenticateResponse, SoapResponse,
+        },
+        ports::{DIDAuthenticate, EIDService, EidService},
     },
-    ports::{DIDAuthenticate, EIDService, EidService},
+    server::AppState,
 };
-use crate::server::AppState;
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use color_eyre::Result;
-use quick_xml::{
-    Reader, Writer,
-    events::{BytesEnd, BytesStart, BytesText, Event},
-};
-use serde::Deserialize;
+use quick_xml::{Reader, events::Event, se::to_string};
+use serde::{Deserialize, Serialize};
+
+// SOAP response structs for serialization
+#[derive(Debug, Serialize)]
+#[serde(rename = "soapenv:Envelope")]
+struct SoapEnvelope {
+    #[serde(rename = "xmlns:soapenv")]
+    soapenv: &'static str,
+    #[serde(rename = "xmlns:ecard")]
+    ecard: &'static str,
+    #[serde(rename = "soapenv:Header")]
+    header: SoapHeader,
+    #[serde(rename = "soapenv:Body")]
+    body: SoapBody,
+}
+
+#[derive(Debug, Serialize)]
+struct SoapHeader {}
+
+#[derive(Debug, Serialize)]
+#[serde(rename = "soapenv:Body")]
+struct SoapBody {
+    #[serde(rename = "ecard:DIDAuthenticateResponse")]
+    did_authenticate_response: DidAuthenticateResponseXml,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename = "ecard:DIDAuthenticateResponse")]
+struct DidAuthenticateResponseXml {
+    #[serde(rename = "ecard:Result")]
+    result: ResultXml,
+    #[serde(rename = "ecard:AuthenticationProtocolData")]
+    authentication_protocol_data: AuthenticationProtocolDataXml,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename = "ecard:Result")]
+struct ResultXml {
+    #[serde(rename = "ecard:ResultMajor")]
+    result_major: String,
+    #[serde(rename = "ecard:ResultMinor", skip_serializing_if = "Option::is_none")]
+    result_minor: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename = "ecard:AuthenticationProtocolData")]
+struct AuthenticationProtocolDataXml {
+    #[serde(rename = "ecard:Certificate", skip_serializing_if = "Option::is_none")]
+    certificate: Option<String>,
+    #[serde(rename = "ecard:PersonalData", skip_serializing_if = "Option::is_none")]
+    personal_data: Option<String>,
+    #[serde(
+        rename = "ecard:AuthenticationToken",
+        skip_serializing_if = "Option::is_none"
+    )]
+    authentication_token: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
 struct SoapDIDAuthenticateRequest {
@@ -30,7 +85,7 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
         DIDAuthenticateHandler { eid_service }
     }
 
-    // Parse incoming SOAP XML request using quick-xml
+    // Parse incoming SOAP XML request using quick-xml (unchanged)
     fn parse_request(&self, body: &str) -> Result<SoapDIDAuthenticateRequest, AuthError> {
         // Basic validation: check if input resembles XML
         if body.trim().is_empty() || !body.contains('<') || !body.contains('>') {
@@ -137,178 +192,36 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
         Ok(request)
     }
 
-    // Convert domain response to SOAP XML response using quick-xml
+    // Convert domain response to SOAP XML response using serde
     fn to_soap_response(&self, response: DIDAuthenticateResponse) -> Result<String, AuthError> {
-        let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
+        let envelope = SoapEnvelope {
+            soapenv: "http://schemas.xmlsoap.org/soap/envelope/",
+            ecard: "http://www.bsi.bund.de/ecard/api/1.1",
+            header: SoapHeader {},
+            body: SoapBody {
+                did_authenticate_response: DidAuthenticateResponseXml {
+                    result: ResultXml {
+                        result_major: response.result_major,
+                        result_minor: response.result_minor,
+                    },
+                    authentication_protocol_data: AuthenticationProtocolDataXml {
+                        certificate: response.authentication_protocol_data.certificate,
+                        personal_data: response.authentication_protocol_data.personal_data,
+                        authentication_token: response
+                            .authentication_protocol_data
+                            .authentication_token,
+                    },
+                },
+            },
+        };
 
-        let mut envelope = BytesStart::new("soapenv:Envelope");
-        envelope.push_attribute(("xmlns:soapenv", "http://schemas.xmlsoap.org/soap/envelope/"));
-        envelope.push_attribute(("xmlns:ecard", "http://www.bsi.bund.de/ecard/api/1.1"));
-        writer
-            .write_event(Event::Start(envelope))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write SOAP Envelope".to_string(),
-            })?;
+        let xml = to_string(&envelope).map_err(|e| AuthError::InvalidConnection {
+            reason: format!("Failed to serialize SOAP response: {e}"),
+        })?;
 
-        writer
-            .write_event(Event::Start(BytesStart::new("soapenv:Header")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write SOAP Header".to_string(),
-            })?;
-        writer
-            .write_event(Event::End(BytesEnd::new("soapenv:Header")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close SOAP Header".to_string(),
-            })?;
-
-        writer
-            .write_event(Event::Start(BytesStart::new("soapenv:Body")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write SOAP Body".to_string(),
-            })?;
-
-        writer
-            .write_event(Event::Start(BytesStart::new(
-                "ecard:DIDAuthenticateResponse",
-            )))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write DIDAuthenticateResponse".to_string(),
-            })?;
-
-        writer
-            .write_event(Event::Start(BytesStart::new("ecard:Result")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write Result".to_string(),
-            })?;
-        writer
-            .write_event(Event::Start(BytesStart::new("ecard:ResultMajor")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write ResultMajor".to_string(),
-            })?;
-        writer
-            .write_event(Event::Text(BytesText::new(&response.result_major)))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write ResultMajor text".to_string(),
-            })?;
-        writer
-            .write_event(Event::End(BytesEnd::new("ecard:ResultMajor")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close ResultMajor".to_string(),
-            })?;
-
-        if let Some(minor) = &response.result_minor {
-            writer
-                .write_event(Event::Start(BytesStart::new("ecard:ResultMinor")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write ResultMinor".to_string(),
-                })?;
-            writer
-                .write_event(Event::Text(BytesText::new(minor)))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write ResultMinor text".to_string(),
-                })?;
-            writer
-                .write_event(Event::End(BytesEnd::new("ecard:ResultMinor")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to close ResultMinor".to_string(),
-                })?;
-        }
-        writer
-            .write_event(Event::End(BytesEnd::new("ecard:Result")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close Result".to_string(),
-            })?;
-
-        writer
-            .write_event(Event::Start(BytesStart::new(
-                "ecard:AuthenticationProtocolData",
-            )))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write AuthenticationProtocolData".to_string(),
-            })?;
-
-        if let Some(certificate) = &response.authentication_protocol_data.certificate {
-            writer
-                .write_event(Event::Start(BytesStart::new("ecard:Certificate")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write Certificate".to_string(),
-                })?;
-            writer
-                .write_event(Event::Text(BytesText::new(certificate)))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write Certificate text".to_string(),
-                })?;
-            writer
-                .write_event(Event::End(BytesEnd::new("ecard:Certificate")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to close Certificate".to_string(),
-                })?;
-        }
-
-        if let Some(personal_data) = &response.authentication_protocol_data.personal_data {
-            writer
-                .write_event(Event::Start(BytesStart::new("ecard:PersonalData")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write PersonalData".to_string(),
-                })?;
-            writer
-                .write_event(Event::Text(BytesText::new(personal_data)))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write PersonalData text".to_string(),
-                })?;
-            writer
-                .write_event(Event::End(BytesEnd::new("ecard:PersonalData")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to close PersonalData".to_string(),
-                })?;
-        }
-
-        if let Some(auth_token) = &response.authentication_protocol_data.authentication_token {
-            writer
-                .write_event(Event::Start(BytesStart::new("ecard:AuthenticationToken")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write AuthenticationToken".to_string(),
-                })?;
-            writer
-                .write_event(Event::Text(BytesText::new(auth_token)))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write AuthenticationToken text".to_string(),
-                })?;
-            writer
-                .write_event(Event::End(BytesEnd::new("ecard:AuthenticationToken")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to close AuthenticationToken".to_string(),
-                })?;
-        }
-
-        writer
-            .write_event(Event::End(BytesEnd::new(
-                "ecard:AuthenticationProtocolData",
-            )))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close AuthenticationProtocolData".to_string(),
-            })?;
-        writer
-            .write_event(Event::End(BytesEnd::new("ecard:DIDAuthenticateResponse")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close DIDAuthenticateResponse".to_string(),
-            })?;
-        writer
-            .write_event(Event::End(BytesEnd::new("soapenv:Body")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close SOAP Body".to_string(),
-            })?;
-        writer
-            .write_event(Event::End(BytesEnd::new("soapenv:Envelope")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close SOAP Envelope".to_string(),
-            })?;
-
-        let result =
-            String::from_utf8(writer.into_inner()).map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to convert response to UTF-8".to_string(),
-            })?;
-        Ok(result)
+        // Prepend XML declaration
+        let xml_with_declaration = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{xml}");
+        Ok(xml_with_declaration)
     }
 
     // Handle the DIDAuthenticate request
@@ -407,6 +320,7 @@ mod tests {
             }
         }
     }
+
     fn create_test_response() -> DIDAuthenticateResponse {
         // Parse the RFC 3339 timestamp to a Unix timestamp (seconds)
         let timestamp_str = "2025-06-17T09:58:00Z";
@@ -560,9 +474,14 @@ mod tests {
         );
 
         let xml_string = soap_xml.unwrap();
+        // Add debug output to inspect the XML
+        println!("Generated XML: {xml_string}");
 
         // Verify SOAP structure
-        assert!(xml_string.contains("soapenv:Envelope"));
+        assert!(
+            xml_string.contains("soapenv:Envelope"),
+            "Expected soapenv:Envelope in output"
+        );
         assert!(xml_string.contains("soapenv:Body"));
         assert!(xml_string.contains("ecard:DIDAuthenticateResponse"));
         assert!(xml_string.contains("ecard:Result"));
@@ -586,6 +505,7 @@ mod tests {
             <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ecard="http://www.bsi.bund.de/ecard/api/1.1">
                 <soapenv:Body>
                     <ecard:DIDAuthenticate>
+ dbo
                         <ecard:ConnectionHandle>
                             <ecard:ChannelHandle>test_channel</ecard:ChannelHandle>
                             <ecard:IFDName>test_ifd</ecard:IFDName>
@@ -600,8 +520,7 @@ mod tests {
             </soapenv:Envelope>"#;
 
         let result = handler.parse_request(invalid_soap);
-        assert!(result.is_ok()); // Parser should succeed but DIDName will be empty
-
+        assert!(result.is_ok());
         let parsed = result.unwrap();
         assert!(parsed.did_name.is_empty());
     }

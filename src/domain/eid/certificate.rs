@@ -2,24 +2,21 @@ use std::{fs, sync::Arc};
 
 use base64::Engine;
 use lru::LruCache;
-use quick_xml::{
-    Reader, Writer,
-    events::{BytesEnd, BytesStart, BytesText, Event},
-};
-
+use quick_xml::{Reader, events::Event, se::to_string};
 use reqwest::Client;
 use ring::{
     agreement, digest, hkdf,
     rand::{SecureRandom, SystemRandom},
     signature,
 };
+use serde::Serialize;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use x509_parser::{parse_x509_certificate, prelude::X509Certificate};
 
 use crate::domain::eid::models::{AuthError, AuthenticationProtocolData, ConnectionHandle};
 
-// ... (CertificateStore and CryptoProvider unchanged, included for completeness)
+// CertificateStore implementation (unchanged)
 #[derive(Debug, Clone)]
 pub struct CertificateStore {
     trusted_roots: Arc<RwLock<Vec<Vec<u8>>>>,
@@ -327,10 +324,7 @@ impl Default for CertificateStore {
     }
 }
 
-/// Cryptographic provider for eID operations.
-///
-/// Handles cryptographic operations including key generation, signature verification,
-/// key agreement, and secure random number generation.
+// CryptoProvider implementation (unchanged)
 #[derive(Debug, Clone)]
 pub struct CryptoProvider {
     /// Cryptographically secure random number generator
@@ -580,6 +574,68 @@ impl Default for CryptoProvider {
     }
 }
 
+// CardCommunicator implementation with serde-based SOAP request building
+#[derive(Debug, Serialize)]
+#[serde(rename = "Envelope", rename_all = "camelCase")]
+struct SoapEnvelope {
+    #[serde(rename = "xmlns:soapenv")]
+    soapenv: &'static str,
+    #[serde(rename = "xmlns:ecard")]
+    ecard: &'static str,
+    header: SoapHeader,
+    body: SoapBody,
+}
+
+#[derive(Debug, Serialize)]
+struct SoapHeader {}
+
+#[derive(Debug, Serialize)]
+#[serde(rename = "Body")]
+struct SoapBody {
+    #[serde(rename = "DIDAuthenticate")]
+    did_authenticate: DidAuthenticate,
+}
+
+#[derive(Debug, Serialize)]
+struct DidAuthenticate {
+    #[serde(rename = "ConnectionHandle")]
+    connection_handle: ConnectionHandleData,
+    #[serde(rename = "DIDName")]
+    did_name: String,
+    #[serde(rename = "AuthenticationProtocolData")]
+    authentication_protocol_data: AuthenticationProtocolDataXml,
+}
+
+#[derive(Debug, Serialize)]
+struct ConnectionHandleData {
+    #[serde(rename = "ChannelHandle", skip_serializing_if = "Option::is_none")]
+    channel_handle: Option<String>,
+    #[serde(rename = "IFDName", skip_serializing_if = "Option::is_none")]
+    ifd_name: Option<String>,
+    #[serde(rename = "SlotIndex", skip_serializing_if = "Option::is_none")]
+    slot_index: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename = "AuthenticationProtocolData")]
+struct AuthenticationProtocolDataXml {
+    #[serde(rename = "Protocol")]
+    protocol: &'static str,
+    #[serde(rename = "Certificate")]
+    certificate: String,
+    #[serde(rename = "CertificateDescription")]
+    certificate_description: String,
+    #[serde(rename = "RequiredCHAT")]
+    required_chat: String,
+    #[serde(rename = "OptionalCHAT", skip_serializing_if = "Option::is_none")]
+    optional_chat: Option<String>,
+    #[serde(
+        rename = "AuthenticatedAuxiliaryData",
+        skip_serializing_if = "Option::is_none"
+    )]
+    authenticated_auxiliary_data: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct CardCommunicator {
     client: Client,
@@ -639,266 +695,53 @@ impl CardCommunicator {
         let personal_data = self.parse_soap_response(&response_text)?;
         Ok(personal_data)
     }
+
     async fn build_soap_request(
         &self,
         connection: &ConnectionHandle,
         did_name: &str,
         auth_data: &AuthenticationProtocolData,
     ) -> Result<String, AuthError> {
-        let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
+        debug!("Building SOAP request");
 
-        // SOAP Envelope
-        let mut envelope = BytesStart::new("soapenv:Envelope");
-        envelope.push_attribute(("xmlns:soapenv", "http://schemas.xmlsoap.org/soap/envelope/"));
-        envelope.push_attribute(("xmlns:ecard", "http://www.bsi.bund.de/ecard/api/1.1"));
-        writer
-            .write_event(Event::Start(envelope))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write SOAP Envelope".to_string(),
-            })?;
-
-        writer
-            .write_event(Event::Start(BytesStart::new("soapenv:Header")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write SOAP Header".to_string(),
-            })?;
-        writer
-            .write_event(Event::End(BytesEnd::new("soapenv:Header")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close SOAP Header".to_string(),
-            })?;
-
-        writer
-            .write_event(Event::Start(BytesStart::new("soapenv:Body")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write SOAP Body".to_string(),
-            })?;
-
-        writer
-            .write_event(Event::Start(BytesStart::new("ecard:DIDAuthenticate")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write DIDAuthenticate".to_string(),
-            })?;
-
-        // ConnectionHandle
-        writer
-            .write_event(Event::Start(BytesStart::new("ecard:ConnectionHandle")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write ConnectionHandle".to_string(),
-            })?;
-        if let Some(channel_handle) = &connection.channel_handle {
-            writer
-                .write_event(Event::Start(BytesStart::new("ecard:ChannelHandle")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write ChannelHandle".to_string(),
-                })?;
-            writer
-                .write_event(Event::Text(BytesText::new(channel_handle)))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write ChannelHandle text".to_string(),
-                })?;
-            writer
-                .write_event(Event::End(BytesEnd::new("ecard:ChannelHandle")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to close ChannelHandle".to_string(),
-                })?;
-        }
-        if let Some(ifd_name) = &connection.ifd_name {
-            writer
-                .write_event(Event::Start(BytesStart::new("ecard:IFDName")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write IFDName".to_string(),
-                })?;
-            writer
-                .write_event(Event::Text(BytesText::new(ifd_name)))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write IFDName text".to_string(),
-                })?;
-            writer
-                .write_event(Event::End(BytesEnd::new("ecard:IFDName")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to close IFDName".to_string(),
-                })?;
-        }
-        if let Some(slot_index) = connection.slot_index {
-            writer
-                .write_event(Event::Start(BytesStart::new("ecard:SlotIndex")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write SlotIndex".to_string(),
-                })?;
-            writer
-                .write_event(Event::Text(BytesText::new(&slot_index.to_string())))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write SlotIndex text".to_string(),
-                })?;
-            writer
-                .write_event(Event::End(BytesEnd::new("ecard:SlotIndex")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to close SlotIndex".to_string(),
-                })?;
-        }
-        writer
-            .write_event(Event::End(BytesEnd::new("ecard:ConnectionHandle")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close ConnectionHandle".to_string(),
-            })?;
-
-        // DIDName
-        writer
-            .write_event(Event::Start(BytesStart::new("ecard:DIDName")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write DIDName".to_string(),
-            })?;
-        writer
-            .write_event(Event::Text(BytesText::new(did_name)))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write DIDName text".to_string(),
-            })?;
-        writer
-            .write_event(Event::End(BytesEnd::new("ecard:DIDName")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close DIDName".to_string(),
-            })?;
-
-        // AuthenticationProtocolData
-        let mut auth_data_elem = BytesStart::new("ecard:AuthenticationProtocolData");
-        auth_data_elem.push_attribute((
-            "Protocol",
-            "urn:iso:std:iso-iec:24727:part:3:profile:EAC1InputType",
-        ));
-        writer
-            .write_event(Event::Start(auth_data_elem))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write AuthenticationProtocolData".to_string(),
-            })?;
-
-        // Certificate (concatenated CV chain, base64-encoded)
         let cv_chain = self.certificate_store.load_cv_chain().await?;
         let cv_chain_b64 = base64::engine::general_purpose::STANDARD.encode(&cv_chain);
-        writer
-            .write_event(Event::Start(BytesStart::new("ecard:Certificate")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write Certificate".to_string(),
-            })?;
-        writer
-            .write_event(Event::Text(BytesText::new(&cv_chain_b64)))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write Certificate text".to_string(),
-            })?;
-        writer
-            .write_event(Event::End(BytesEnd::new("ecard:Certificate")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close Certificate".to_string(),
-            })?;
 
-        // CertificateDescription
-        writer
-            .write_event(Event::Start(BytesStart::new(
-                "ecard:CertificateDescription",
-            )))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write CertificateDescription".to_string(),
-            })?;
         let cert_desc = "<SubjectURL>https://eservice.example.com</SubjectURL><CommCertificates>{tls_cert_hash}</CommCertificates>";
-        writer
-            .write_event(Event::Text(BytesText::new(cert_desc)))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write CertificateDescription text".to_string(),
-            })?;
-        writer
-            .write_event(Event::End(BytesEnd::new("ecard:CertificateDescription")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close CertificateDescription".to_string(),
-            })?;
 
-        // RequiredCHAT
-        writer
-            .write_event(Event::Start(BytesStart::new("ecard:RequiredCHAT")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write RequiredCHAT".to_string(),
-            })?;
-        writer
-            .write_event(Event::Text(BytesText::new(&auth_data.required_chat)))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to write RequiredCHAT text".to_string(),
-            })?;
-        writer
-            .write_event(Event::End(BytesEnd::new("ecard:RequiredCHAT")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close RequiredCHAT".to_string(),
-            })?;
+        let envelope = SoapEnvelope {
+            soapenv: "http://schemas.xmlsoap.org/soap/envelope/",
+            ecard: "http://www.bsi.bund.de/ecard/api/1.1",
+            header: SoapHeader {},
+            body: SoapBody {
+                did_authenticate: DidAuthenticate {
+                    connection_handle: ConnectionHandleData {
+                        channel_handle: connection.channel_handle.clone(),
+                        ifd_name: connection.ifd_name.clone(),
+                        slot_index: connection.slot_index.map(|i| i.to_string()),
+                    },
+                    did_name: did_name.to_string(),
+                    authentication_protocol_data: AuthenticationProtocolDataXml {
+                        protocol: "urn:iso:std:iso-iec:24727:part:3:profile:EAC1InputType",
+                        certificate: cv_chain_b64,
+                        certificate_description: cert_desc.to_string(),
+                        required_chat: auth_data.required_chat.clone(),
+                        optional_chat: auth_data.optional_chat.clone(),
+                        authenticated_auxiliary_data: auth_data.transaction_info.clone(),
+                    },
+                },
+            },
+        };
 
-        // OptionalCHAT
-        if let Some(optional_chat) = &auth_data.optional_chat {
-            writer
-                .write_event(Event::Start(BytesStart::new("ecard:OptionalCHAT")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write OptionalCHAT".to_string(),
-                })?;
-            writer
-                .write_event(Event::Text(BytesText::new(optional_chat)))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write OptionalCHAT text".to_string(),
-                })?;
-            writer
-                .write_event(Event::End(BytesEnd::new("ecard:OptionalCHAT")))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to close OptionalCHAT".to_string(),
-                })?;
-        }
+        let xml = to_string(&envelope).map_err(|e| {
+            error!("Failed to serialize SOAP request: {}", e);
+            AuthError::InvalidConnection {
+                reason: format!("Failed to serialize SOAP request: {e}"),
+            }
+        })?;
 
-        // TransactionInfo
-        if let Some(transaction_info) = &auth_data.transaction_info {
-            writer
-                .write_event(Event::Start(BytesStart::new(
-                    "ecard:AuthenticatedAuxiliaryData",
-                )))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write AuthenticatedAuxiliaryData".to_string(),
-                })?;
-            writer
-                .write_event(Event::Text(BytesText::new(transaction_info)))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to write AuthenticatedAuxiliaryData text".to_string(),
-                })?;
-            writer
-                .write_event(Event::End(BytesEnd::new(
-                    "ecard:AuthenticatedAuxiliaryData",
-                )))
-                .map_err(|_| AuthError::InvalidConnection {
-                    reason: "Failed to close AuthenticatedAuxiliaryData".to_string(),
-                })?;
-        }
-
-        writer
-            .write_event(Event::End(BytesEnd::new(
-                "ecard:AuthenticationProtocolData",
-            )))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close AuthenticationProtocolData".to_string(),
-            })?;
-
-        writer
-            .write_event(Event::End(BytesEnd::new("ecard:DIDAuthenticate")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close DIDAuthenticate".to_string(),
-            })?;
-        writer
-            .write_event(Event::End(BytesEnd::new("soapenv:Body")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close SOAP Body".to_string(),
-            })?;
-        writer
-            .write_event(Event::End(BytesEnd::new("soapenv:Envelope")))
-            .map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to close SOAP Envelope".to_string(),
-            })?;
-
-        let result =
-            String::from_utf8(writer.into_inner()).map_err(|_| AuthError::InvalidConnection {
-                reason: "Failed to convert SOAP request to UTF-8".to_string(),
-            })?;
-        Ok(result)
+        debug!("Successfully built SOAP request");
+        Ok(xml)
     }
 
     fn parse_soap_response(&self, response: &str) -> Result<String, AuthError> {
