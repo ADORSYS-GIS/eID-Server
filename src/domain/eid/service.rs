@@ -37,7 +37,7 @@ impl Default for EIDServiceConfig {
         Self {
             max_sessions: 1000,
             session_timeout_minutes: 5,
-            ecard_server_address: Some("https://localhost:8443".to_string()),
+            ecard_server_address: Some("https://localhost:3000".to_string()),
         }
     }
 }
