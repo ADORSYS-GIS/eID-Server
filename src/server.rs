@@ -5,7 +5,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::domain::eid::ports::{DIDAuthenticate, EIDService, EidService};
-use crate::domain::eid::service::SessionManager;
 use crate::eid::get_server_info::handler::get_server_info;
 use crate::web::handlers;
 use crate::web::handlers::refresh::refresh_handler;
@@ -16,8 +15,8 @@ use axum_server::tls_rustls::RustlsConfig;
 use color_eyre::eyre::{Context, Result, eyre};
 use handlers::did_auth::did_authenticate;
 use handlers::health::health_check;
-use rustls::CipherSuite;
-use rustls::crypto::aws_lc_rs::sign::any_supported_type;
+use rustls::ServerConfig;
+use rustls::crypto::aws_lc_rs as provider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::{ClientHello, ResolvesServerCert};
 use tower_http::{
@@ -40,81 +39,20 @@ pub struct AppState<S: EIDService + EidService> {
 }
 
 #[derive(Debug)]
-struct PskResolver {
+struct CertResolver {
     certified_key: Arc<rustls::sign::CertifiedKey>,
-    session_manager: Arc<std::sync::RwLock<SessionManager>>,
 }
 
-impl PskResolver {
-    fn new(
-        certified_key: Arc<rustls::sign::CertifiedKey>,
-        session_manager: Arc<std::sync::RwLock<SessionManager>>,
-    ) -> Self {
-        PskResolver {
-            certified_key,
-            session_manager,
-        }
+impl CertResolver {
+    fn new(certified_key: Arc<rustls::sign::CertifiedKey>) -> Self {
+        CertResolver { certified_key }
     }
 }
 
-impl ResolvesServerCert for PskResolver {
-    fn resolve(&self, client_hello: ClientHello) -> Option<Arc<rustls::sign::CertifiedKey>> {
-        let psk_suites = client_hello
-            .cipher_suites()
-            .iter()
-            .any(|&suite| suite == CipherSuite::TLS_PSK_WITH_AES_256_GCM_SHA384);
-
-        if psk_suites {
-            tracing::debug!("Client requested PSK mode");
-            return None; // PSK mode, no certificate needed
-        }
-
+impl ResolvesServerCert for CertResolver {
+    fn resolve(&self, _client_hello: ClientHello) -> Option<Arc<rustls::sign::CertifiedKey>> {
         tracing::debug!("Using certificate-based TLS");
         Some(self.certified_key.clone())
-    }
-}
-
-impl ResolvesServerPsk for PskResolver {
-    fn resolve_psk(&self, identity: &[u8]) -> Option<Server> {
-        let identity_str = match std::str::from_utf8(identity) {
-            Ok(id) => id,
-            Err(e) => {
-                tracing::error!("Invalid PSK identity encoding: {}", e);
-                return None;
-            }
-        };
-
-        tracing::debug!("Resolving PSK for identity: {}", identity_str);
-
-        let psk = match self.session_manager.read() {
-            Ok(sessions) => sessions
-                .sessions
-                .iter()
-                .find(|s| s.id == identity_str)
-                .map(|s| s.psk.clone()),
-            Err(e) => {
-                tracing::error!("Failed to acquire session manager lock: {}", e);
-                return None;
-            }
-        };
-
-        match psk {
-            Some(psk) => {
-                tracing::debug!("Found PSK for identity: {}", identity_str);
-                // Convert hex-encoded PSK to bytes
-                match hex::decode(&psk) {
-                    Ok(psk_bytes) => Some(Server::from_psk(psk_bytes)),
-                    Err(e) => {
-                        tracing::error!("Failed to decode PSK hex: {}", e);
-                        None
-                    }
-                }
-            }
-            None => {
-                tracing::warn!("No PSK found for identity: {}", identity_str);
-                None
-            }
-        }
     }
 }
 
@@ -124,7 +62,7 @@ pub struct Server<S: EIDService + EidService + DIDAuthenticate + Clone + Send + 
 }
 
 impl<S: EIDService + EidService + DIDAuthenticate + Clone + Send + Sync + 'static> Server<S> {
-    /// Creates a new HTTPS server with enhanced TLS configuration.
+    /// Creates a new HTTPS server with certificate-based TLS configuration.
     pub async fn new(eid_service: S, _config: AppServerConfig) -> Result<Self> {
         let trace_layer =
             TraceLayer::new_for_http().make_span_with(|request: &'_ axum::extract::Request<_>| {
@@ -164,12 +102,8 @@ impl<S: EIDService + EidService + DIDAuthenticate + Clone + Send + Sync + 'stati
         Ok(Self { router, state })
     }
 
-    /// Loads TLS certificates and configures TLS-PSK
-    async fn load_tls_config(
-        cert_path: &str,
-        key_path: &str,
-        session_manager: Arc<std::sync::RwLock<SessionManager>>,
-    ) -> Result<RustlsConfig> {
+    /// Loads TLS certificates for certificate-based TLS
+    async fn load_tls_config(cert_path: &str, key_path: &str) -> Result<RustlsConfig> {
         tracing::debug!("Loading TLS certificate from: {}", cert_path);
         // Read certificate file
         let mut cert_file = File::open(Path::new(cert_path))
@@ -218,44 +152,25 @@ impl<S: EIDService + EidService + DIDAuthenticate + Clone + Send + Sync + 'stati
         let key = PrivateKeyDer::from(key);
 
         // Create a CertifiedKey for certificate-based TLS
-        let certified_key = Arc::new(rustls::sign::CertifiedKey::new(
-            certs,
-            any_supported_type(&key).map_err(|e| eyre!("Failed to create signing key: {}", e))?,
-        ));
+        let signing_key = provider::sign::any_supported_type(&key)
+            .map_err(|e| eyre!("Failed to create signing key: {}", e))?;
+        let certified_key = Arc::new(rustls::sign::CertifiedKey::new(certs, signing_key));
 
-        // Log SessionManager contents for debugging
-        {
-            let session_manager = session_manager
-                .read()
-                .map_err(|e| eyre!("Failed to acquire session manager lock: {}", e))?;
-            if session_manager.sessions.is_empty() {
-                tracing::warn!("SessionManager is empty");
-            } else {
-                for session in session_manager.sessions.iter() {
-                    tracing::debug!("Session in manager: id={}, psk={}", session.id, session.psk);
-                }
-            }
-        }
+        // Configure rustls ServerConfig with certificate-based TLS
+        let cert_resolver = Arc::new(CertResolver::new(certified_key.clone()));
 
-        // Configure rustls ServerConfig with certificate and PSK support
-        let psk_resolver = Arc::new(PskResolver::new(
-            certified_key.clone(),
-            session_manager.clone(),
-        ));
-        let server_config = rustls::ServerConfig::builder_with_provider(Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
-        ))
-        .with_protocol_versions(&[&rustls::version::TLS12])
-        .map_err(|e| eyre!("Failed to configure TLS versions: {}", e))?
-        .with_no_client_auth()
-        .with_cert_resolver(psk_resolver);
+        // Create provider and server config
+        let provider = provider::default_provider();
+        let server_config = ServerConfig::builder_with_provider(Arc::new(provider))
+            .with_protocol_versions(rustls::DEFAULT_VERSIONS)
+            .map_err(|e| eyre!("Failed to set protocol versions: {}", e))?
+            .with_no_client_auth()
+            .with_cert_resolver(cert_resolver);
 
         let tls_config = RustlsConfig::from_config(Arc::new(server_config));
 
-        tracing::info!("TLS configuration loaded with PSK and certificate support");
-        tracing::info!(
-            "Supported cipher suites: TLS_PSK_WITH_AES_256_GCM_SHA384, TLS13_AES_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
-        );
+        tracing::info!("TLS configuration loaded with certificate support");
+        tracing::info!("Using default secure cipher suites and protocol versions");
 
         Ok(tls_config)
     }
@@ -291,7 +206,7 @@ impl<S: EIDService + EidService + DIDAuthenticate + Clone + Send + Sync + 'stati
         Ok(())
     }
 
-    /// Runs the HTTPS server with enhanced TLS and returns the bound port.
+    /// Runs the HTTPS server with certificate-based TLS and returns the bound port.
     pub async fn run_with_port(
         self,
         config: AppServerConfig,
@@ -316,17 +231,14 @@ impl<S: EIDService + EidService + DIDAuthenticate + Clone + Send + Sync + 'stati
         Self::validate_certificate_chain(cert_path)
             .context("Certificate chain validation failed")?;
 
-        // Extract session manager from the stored state
-        let session_manager = self.state.use_id.get_session_manager();
-
-        let tls_config = Self::load_tls_config(cert_path, key_path, session_manager)
+        let tls_config = Self::load_tls_config(cert_path, key_path)
             .await
             .context("Loading TLS configuration")?;
 
         tracing::info!("Server listening on https://{}:{}", config.host, bound_port);
         tracing::info!("Using certificate: {}", cert_path);
         tracing::info!("Using private key: {}", key_path);
-        tracing::info!("TLS configuration: Enhanced security with TLS-PSK and certificate support");
+        tracing::info!("TLS configuration: Certificate-based TLS with default secure settings");
 
         let server = axum_server::from_tcp_rustls(listener, tls_config)
             .serve(self.router.into_make_service());
@@ -340,17 +252,15 @@ impl<S: EIDService + EidService + DIDAuthenticate + Clone + Send + Sync + 'stati
         Ok((bound_port, handle))
     }
 
-    /// Runs the HTTPS server with enhanced TLS.
+    /// Runs the HTTPS server with certificate-based TLS.
     pub async fn run(self, config: AppServerConfig) -> Result<()> {
         let (port, handle) = self.run_with_port(config).await?;
-        tracing::info!(
-            "Server running on port {} with TLS-PSK and certificate support",
-            port
-        );
+        tracing::info!("Server running on port {} with certificate-based TLS", port);
         handle
             .await
             .map_err(|e| eyre!("Server task failed: {:?}", e))
             .context("Running server task")?;
         Ok(())
+        
     }
 }

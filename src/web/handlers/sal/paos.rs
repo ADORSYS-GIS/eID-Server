@@ -63,7 +63,7 @@ pub async fn paos_handler<S: EIDService + EidService>(
     // Update session manager with connection handles
     let update_result = {
         let session_manager_arc = state.use_id.get_session_manager();
-        let mut session_manager = match session_manager_arc.write() {
+        let session_manager = match session_manager_arc.write() {
             Ok(mgr) => mgr,
             Err(err) => {
                 error!("Session manager lock poisoned: {}", err);
@@ -75,12 +75,21 @@ pub async fn paos_handler<S: EIDService + EidService>(
             }
         };
 
+        // Acquire write lock on sessions
+        let mut sessions = match session_manager.sessions.write() {
+            Ok(sessions) => sessions,
+            Err(err) => {
+                error!("Sessions lock poisoned: {}", err);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error".to_string(),
+                )
+                    .into_response();
+            }
+        };
+
         // Find the session and update its connection handles
-        if let Some(session) = session_manager
-            .sessions
-            .iter_mut()
-            .find(|s| s.id == session_id)
-        {
+        if let Some(session) = sessions.iter_mut().find(|s| s.id == session_id) {
             for handle in paos_request.connection_handles {
                 session.connection_handles.push(ConnectionHandle {
                     connection_handle: handle,
@@ -124,7 +133,7 @@ mod tests {
     use crate::domain::eid::service::{
         EIDServiceConfig, SessionInfo, SessionManager, UseidService,
     };
-
+    use crate::server::AppState;
     use super::*;
 
     fn create_test_state(id: String) -> AppState<UseidService> {
@@ -135,13 +144,13 @@ mod tests {
                 ecard_server_address: Some("https://test.eid.example.com/ecard".to_string()),
             },
             session_manager: Arc::new(RwLock::new(SessionManager {
-                sessions: vec![SessionInfo {
+                sessions: Arc::new(RwLock::new(vec![SessionInfo {
                     id,
                     expiry: Utc::now() + Duration::minutes(5),
                     psk: String::new(),
                     operations: vec![],
                     connection_handles: vec![],
-                }],
+                }])),
             })),
         };
         let service_arc = Arc::new(service);

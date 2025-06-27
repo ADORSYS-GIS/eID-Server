@@ -205,23 +205,26 @@ impl EIDService for UseidService {
 
     /// Check if a session is valid by its ID
     fn is_session_valid(&self, session_id: &str) -> Result<bool> {
-        match self.session_manager.read() {
-            Ok(mgr) => Ok(mgr.sessions.iter().any(|s| s.id == session_id)),
-            Err(e) => Err(color_eyre::eyre::eyre!(
-                "Session manager lock poisoned: {}",
-                e
-            )),
-        }
+        // Lock the outer session manager
+        let mgr = self
+            .session_manager
+            .read()
+            .map_err(|e| color_eyre::eyre::eyre!("Session manager lock poisoned: {}", e))?;
+
+        // Lock the inner sessions vector
+        let sessions = mgr
+            .sessions
+            .read()
+            .map_err(|e| color_eyre::eyre::eyre!("Sessions lock poisoned: {}", e))?;
+
+        // Iterate through sessions
+        Ok(sessions.iter().any(|s| s.id == session_id))
     }
+
     fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse> {
         // Validate the request: Check if any operations are REQUIRED
         let required_operations = Self::get_required_operations(&request._use_operations);
         debug!("Required operations: {:?}", required_operations);
-
-        // Check if we've reached the maximum number of sessions
-        if self.session_manager.read().unwrap().sessions.len() >= self.config.max_sessions {
-            return Err(color_eyre::eyre::eyre!("Maximum session limit reached"));
-        }
 
         // Generate session ID
         let session_id = self.generate_session_id();
@@ -256,7 +259,7 @@ impl EIDService for UseidService {
 
         // Store the session
         {
-            let mut session_manager = self.session_manager.write().map_err(|e| {
+            let session_manager = self.session_manager.write().map_err(|e| {
                 color_eyre::eyre::eyre!("Failed to acquire session manager lock: {}", e)
             })?;
             let mut sessions = session_manager
@@ -511,7 +514,7 @@ impl DIDAuthenticate for UseidService {
             });
         }
 
-        // Extract sessions from SessionManager
+        // Extract sessions by cloning the Arc
         let sessions = {
             let session_manager =
                 self.session_manager
@@ -519,7 +522,8 @@ impl DIDAuthenticate for UseidService {
                     .map_err(|e| AuthError::InternalError {
                         message: format!("Failed to acquire sessions lock: {}", e),
                     })?;
-            Arc::new(RwLock::new(session_manager.sessions.clone()))
+            // Clone the Arc directly without wrapping in another RwLock
+            session_manager.sessions.clone()
         };
 
         let did_service = DIDAuthenticateService::new_with_defaults(sessions).await;
