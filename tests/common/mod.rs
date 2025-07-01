@@ -20,7 +20,7 @@ pub async fn spawn_server() -> String {
         port: config.server.port,
     };
 
-    let server = Server::new(eid_service, server_config.clone())
+    let server = Server::new(eid_service, server_config.clone(), None)
         .await
         .unwrap();
 
