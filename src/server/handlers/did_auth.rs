@@ -550,7 +550,6 @@ mod tests {
 
         let state = AppState {
             eid_service: useid_service.clone(),
-            use_id: useid_service.clone(),
         };
 
         let soap_request = create_minimal_valid_soap_request();

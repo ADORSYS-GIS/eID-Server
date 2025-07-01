@@ -195,7 +195,7 @@ pub async fn use_id_handler<S: EIDService + EidService>(
         };
 
         // Process the request
-        let response = match state.use_id.handle_use_id(use_id_request) {
+        let response = match state.eid_service.handle_use_id(use_id_request) {
             Ok(response) => {
                 info!("useID request processed successfully");
                 debug!("Response: {:?}", response);
@@ -272,7 +272,7 @@ pub async fn use_id_handler<S: EIDService + EidService>(
             }
         };
 
-        let response = match state.use_id.handle_use_id(use_id_request) {
+        let response = match state.eid_service.handle_use_id(use_id_request) {
             Ok(response) => {
                 info!("useID request processed successfully");
                 debug!("Response: {:?}", response);
@@ -700,8 +700,7 @@ mod tests {
         });
         let service_arc = Arc::new(service);
         AppState {
-            use_id: service_arc.clone(),
-            eid_service: service_arc,
+            eid_service: service_arc.clone(),
         }
     }
 
