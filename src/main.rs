@@ -5,6 +5,9 @@ use eid_server::{
     telemetry,
 };
 
+// Use the psk_tls_server module from the library
+use eid_server::psk_tls_server;
+
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
@@ -21,6 +24,20 @@ async fn main() -> color_eyre::Result<()> {
         host: &config.server.host,
         port: config.server.port,
     };
-    let server = Server::new(eid_service, server_config).await?;
-    server.run().await
+
+    // Create config directory if it doesn't exist
+    let config_dir = std::path::Path::new("config");
+    if !config_dir.exists() {
+        std::fs::create_dir_all(config_dir)?;
+        println!("Created config directory");
+    }
+
+    // For demonstration, use PSK server if psk_identity is set (customize as needed)
+    if !config.tls.psk_identity.is_empty() {
+        psk_tls_server::run_psk_tls_server(&config, eid_service).await?;
+        Ok(())
+    } else {
+        let server = Server::new(eid_service, server_config, Some(config.tls)).await?;
+        server.run().await
+    }
 }
