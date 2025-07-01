@@ -121,10 +121,18 @@ pub async fn run_psk_tls_server(
 
             if let Err(e) = Pin::new(&mut ssl_stream).accept().await {
                 eprintln!("TLS handshake failed: {}", e);
+                // Print more details about the error if available
+                eprintln!("Error details: {:?}", e);
                 return;
             }
 
+            // Print TLS session information for debugging
+            let ssl = ssl_stream.ssl();
             println!("TLS handshake successful!");
+            println!("TLS version: {}", ssl.version_str());
+            if let Some(cipher) = ssl.current_cipher() {
+                println!("TLS cipher: {}", cipher.name());
+            }
 
             // Handle the connection with HTTP
             let service = service_fn(move |req: hyper::Request<hyper::Body>| {
@@ -233,7 +241,23 @@ pub fn create_psk_ssl_context(config: &Config) -> color_eyre::Result<SslContext>
     } else {
         // Create a self-signed certificate for development
         println!("Certificate files not found. Creating a temporary self-signed certificate.");
-        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+        // Include both localhost and the actual server host in the certificate
+        let mut subject_alt_names = vec!["localhost".into()];
+
+        // Add the actual server host to the certificate
+        if config.server.host != "localhost" && config.server.host != "127.0.0.1" {
+            subject_alt_names.push(config.server.host.clone().into());
+            // Also add 0.0.0.0 as it's commonly used
+            if config.server.host != "0.0.0.0" {
+                subject_alt_names.push("0.0.0.0".into());
+            }
+        }
+
+        println!(
+            "Creating certificate with subject alternative names: {:?}",
+            subject_alt_names
+        );
+        let cert = rcgen::generate_simple_self_signed(subject_alt_names)?;
         let cert_pem = cert.serialize_pem()?;
         let key_pem = cert.serialize_private_key_pem();
 
@@ -253,8 +277,18 @@ pub fn create_psk_ssl_context(config: &Config) -> color_eyre::Result<SslContext>
         );
     }
 
-    // Set cipher suite to TLS_RSA_PSK_WITH_AES_256_CBC_SHA
-    ctx_builder.set_cipher_list("RSA-PSK-AES256-CBC-SHA")?;
+    // Set cipher suites to support a wider range of clients
+    // Include both RSA-PSK and standard TLS cipher suites
+    ctx_builder.set_cipher_list("RSA-PSK-AES256-CBC-SHA:RSA-PSK-AES128-CBC-SHA:AES256-GCM-SHA384:AES128-GCM-SHA256:HIGH:!aNULL:!kRSA:!MD5:!RC4")?;
+
+    // Enable PSK cipher suites
+    println!("Enabling PSK cipher suites");
+
+    // Set minimum TLS version to TLS 1.2
+    ctx_builder.set_min_proto_version(Some(openssl::ssl::SslVersion::TLS1_2))?;
+
+    // Accept client certificates but don't require them
+    ctx_builder.set_verify(openssl::ssl::SslVerifyMode::NONE);
 
     // Build and return the SSL context
     Ok(ctx_builder.build())
