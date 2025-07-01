@@ -200,10 +200,10 @@ mod tests {
                     .to_bytes()
                     .to_vec(),
             )
-                .unwrap(),
+            .unwrap(),
         )
-            .await
-            .into_response();
+        .await
+        .into_response();
 
         // Check status and print debug info if not OK
         let status = response.status();

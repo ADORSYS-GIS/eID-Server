@@ -24,7 +24,7 @@ lazy_static! {
 
 // Add a PSK to the store
 pub fn add_psk(identity: String, key: String) {
-    let identity_clone = identity.clone(); 
+    let identity_clone = identity.clone();
     let mut store = PSK_STORE.write().unwrap();
     store.insert(identity, key);
     println!("Added PSK for identity: {}", identity_clone);
