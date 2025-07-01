@@ -84,13 +84,14 @@ pub async fn run_psk_tls_server(
     add_psk(config.tls.psk_identity.clone(), config.tls.psk.clone());
 
     // Register existing sessions from the eid_service
-    let sessions = eid_service.sessions.read().unwrap();
-    for session in sessions.iter() {
-        if let Some(psk) = &session.psk {
-            register_session_psk(session.id.clone(), psk.clone());
+    {
+        let sessions = eid_service.sessions.read().unwrap();
+        for session in sessions.iter() {
+            if let Some(psk) = &session.psk {
+                register_session_psk(session.id.clone(), psk.clone());
+            }
         }
-    }
-    drop(sessions);
+    } // sessions guard is dropped here
 
     // Create a shared SSL context for all connections
     let ssl_ctx = Arc::new(create_psk_ssl_context(config)?);
@@ -335,7 +336,6 @@ mod tests {
         let _ssl_ctx = create_psk_ssl_context(&config)?;
 
         // If we get here without errors, the test passes
-        assert!(true);
 
         Ok(())
     }
@@ -360,7 +360,6 @@ mod tests {
         let _ssl_ctx = create_psk_ssl_context(&config)?;
 
         // If we get here without errors, the test passes
-        assert!(true);
 
         Ok(())
     }
@@ -390,7 +389,6 @@ mod tests {
         let _ssl_ctx = create_psk_ssl_context(&config)?;
 
         // We can't directly test the callback, but we can verify the context was created
-        assert!(true);
 
         Ok(())
     }
