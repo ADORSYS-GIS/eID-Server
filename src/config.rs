@@ -4,21 +4,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
-    pub tls: TlsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TlsConfig {
-    pub cert_path: String,
-    pub key_path: String,
-    pub psk: String,
-    pub psk_identity: String,
 }
 
 impl Config {
@@ -28,10 +19,6 @@ impl Config {
             // Set default values
             .set_default("server.host", "localhost")?
             .set_default("server.port", 3000)?
-            .set_default("tls.cert_path", "config/cert.pem")?
-            .set_default("tls.key_path", "config/key.pem")?
-            .set_default("tls.psk", "supersecretpsk")?
-            .set_default("tls.psk_identity", "psk_identity")?
             // Add a config file under config/settings.toml
             // or any other format supported by `config` crate
             .add_source(File::with_name("config/settings").required(false))
