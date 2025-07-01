@@ -365,8 +365,6 @@ mod tests {
         Ok(())
     }
 
-    // This test is more complex and would require mocking the OpenSSL callback
-    // For now, we'll just test that the PSK callback is set correctly
     #[test]
     fn test_psk_callback_is_set() -> color_eyre::Result<()> {
         clear_psk_store();

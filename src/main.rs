@@ -32,7 +32,6 @@ async fn main() -> color_eyre::Result<()> {
         println!("Created config directory");
     }
 
-    // For demonstration, use PSK server if psk_identity is set (customize as needed)
     if !config.tls.psk_identity.is_empty() {
         psk_tls_server::run_psk_tls_server(&config, eid_service).await?;
         Ok(())
