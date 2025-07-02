@@ -25,9 +25,12 @@ lazy_static! {
 // Add a PSK to the store
 pub fn add_psk(identity: String, key: String) {
     let identity_clone = identity.clone();
-    let mut store = PSK_STORE.write().unwrap();
-    store.insert(identity, key);
-    println!("Added PSK for identity: {}", identity_clone);
+    if let Ok(mut store) = PSK_STORE.write() {
+        store.insert(identity, key);
+        println!("Added PSK for identity: {}", identity_clone);
+    } else {
+        eprintln!("Failed to acquire write lock for PSK store");
+    }
 }
 
 // PSK callback function for OpenSSL
@@ -50,7 +53,13 @@ extern "C" fn psk_server_callback(
         println!("PSK callback received identity: {}", identity_str);
 
         // Look up the PSK for this identity
-        let store = PSK_STORE.read().unwrap();
+        let store = match PSK_STORE.read() {
+            Ok(store) => store,
+            Err(_) => {
+                println!("Failed to acquire read lock for PSK store");
+                return 0; // Lock error
+            }
+        };
         let psk_key = match store.get(&identity_str) {
             Some(key) => key,
             None => {
@@ -85,10 +94,16 @@ pub async fn run_psk_tls_server(
 
     // Register existing sessions from the eid_service
     {
-        let sessions = eid_service.sessions.read().unwrap();
-        for session in sessions.iter() {
-            if let Some(psk) = &session.psk {
-                register_session_psk(session.id.clone(), psk.clone());
+        match eid_service.sessions.read() {
+            Ok(sessions) => {
+                for session in sessions.iter() {
+                    if let Some(psk) = &session.psk {
+                        register_session_psk(session.id.clone(), psk.clone());
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to read sessions: {}", e);
             }
         }
     } // sessions guard is dropped here
@@ -110,7 +125,13 @@ pub async fn run_psk_tls_server(
 
         tokio::spawn(async move {
             // Create a new SSL instance for each connection
-            let ssl = Ssl::new(&ssl_ctx).unwrap();
+            let ssl = match Ssl::new(&ssl_ctx) {
+                Ok(ssl) => ssl,
+                Err(e) => {
+                    eprintln!("Failed to create SSL instance: {}", e);
+                    return;
+                }
+            };
             let mut ssl_stream = match SslStream::new(ssl, stream) {
                 Ok(s) => s,
                 Err(e) => {
@@ -158,12 +179,25 @@ pub async fn run_psk_tls_server(
                         });
 
                     // Copy headers
-                    let mut axum_req = axum_req.body(Body::from(body_bytes)).unwrap();
+                    let mut axum_req = match axum_req.body(Body::from(body_bytes)) {
+                        Ok(req) => req,
+                        Err(e) => {
+                            let mut res = hyper::Response::new(hyper::Body::from(format!(
+                                "Failed to build request: {}",
+                                e
+                            )));
+                            *res.status_mut() = hyper::StatusCode::BAD_REQUEST;
+                            return Ok(res);
+                        }
+                    };
                     for (name, value) in parts.headers.iter() {
-                        axum_req.headers_mut().insert(
-                            axum::http::HeaderName::from_bytes(name.as_str().as_bytes()).unwrap(),
-                            axum::http::HeaderValue::from_bytes(value.as_bytes()).unwrap(),
-                        );
+                        if let (Ok(header_name), Ok(header_value)) = (
+                            axum::http::HeaderName::from_bytes(name.as_str().as_bytes()),
+                            axum::http::HeaderValue::from_bytes(value.as_bytes()),
+                        ) {
+                            axum_req.headers_mut().insert(header_name, header_value);
+                        }
+                        // Skip invalid headers silently
                     }
 
                     // Process with router
@@ -172,7 +206,7 @@ pub async fn run_psk_tls_server(
                             let (parts, body) = res.into_parts();
 
                             // Build a new hyper response
-                            let mut hyper_res = hyper::Response::builder()
+                            let mut hyper_res = match hyper::Response::builder()
                                 .status(parts.status.as_u16())
                                 .version(match parts.version {
                                     axum::http::Version::HTTP_09 => hyper::Version::HTTP_09,
@@ -183,16 +217,27 @@ pub async fn run_psk_tls_server(
                                     _ => hyper::Version::HTTP_11,
                                 })
                                 .body(hyper::Body::empty())
-                                .unwrap();
+                            {
+                                Ok(res) => res,
+                                Err(e) => {
+                                    let mut error_res = hyper::Response::new(hyper::Body::from(
+                                        format!("Failed to build response: {}", e),
+                                    ));
+                                    *error_res.status_mut() =
+                                        hyper::StatusCode::INTERNAL_SERVER_ERROR;
+                                    return Ok(error_res);
+                                }
+                            };
 
                             // Copy headers
                             for (name, value) in parts.headers.iter() {
-                                hyper_res.headers_mut().insert(
-                                    hyper::header::HeaderName::from_bytes(name.as_str().as_bytes())
-                                        .unwrap(),
-                                    hyper::header::HeaderValue::from_bytes(value.as_bytes())
-                                        .unwrap(),
-                                );
+                                if let (Ok(header_name), Ok(header_value)) = (
+                                    hyper::header::HeaderName::from_bytes(name.as_str().as_bytes()),
+                                    hyper::header::HeaderValue::from_bytes(value.as_bytes()),
+                                ) {
+                                    hyper_res.headers_mut().insert(header_name, header_value);
+                                }
+                                // Skip invalid headers silently
                             }
 
                             // Convert body
@@ -246,7 +291,7 @@ pub fn create_psk_ssl_context(config: &Config) -> color_eyre::Result<SslContext>
 
         // Add the actual server host to the certificate
         if config.server.host != "localhost" && config.server.host != "127.0.0.1" {
-            subject_alt_names.push(config.server.host.clone().into());
+            subject_alt_names.push(config.server.host.clone());
             // Also add 0.0.0.0 as it's commonly used
             if config.server.host != "0.0.0.0" {
                 subject_alt_names.push("0.0.0.0".into());
@@ -302,8 +347,9 @@ mod tests {
 
     // Helper function to clear the PSK store between tests
     fn clear_psk_store() {
-        let mut store = PSK_STORE.write().unwrap();
-        store.clear();
+        if let Ok(mut store) = PSK_STORE.write() {
+            store.clear();
+        }
     }
 
     #[test]
@@ -316,9 +362,9 @@ mod tests {
         add_psk(identity.clone(), key.clone());
 
         // Verify it was added correctly
-        let store = PSK_STORE.read().unwrap();
+        let store = PSK_STORE.read().expect("Failed to read PSK store in test");
         assert!(store.contains_key(&identity));
-        assert_eq!(store.get(&identity).unwrap(), &key);
+        assert_eq!(store.get(&identity).expect("PSK should exist"), &key);
     }
 
     #[test]
@@ -331,9 +377,12 @@ mod tests {
         register_session_psk(session_id.clone(), psk.clone());
 
         // Verify it was registered correctly
-        let store = PSK_STORE.read().unwrap();
+        let store = PSK_STORE.read().expect("Failed to read PSK store in test");
         assert!(store.contains_key(&session_id));
-        assert_eq!(store.get(&session_id).unwrap(), &psk);
+        assert_eq!(
+            store.get(&session_id).expect("Session PSK should exist"),
+            &psk
+        );
     }
 
     #[test]
@@ -359,8 +408,8 @@ mod tests {
                 port: 8443,
             },
             tls: crate::config::TlsConfig {
-                cert_path: cert_path.to_str().unwrap().to_string(),
-                key_path: key_path.to_str().unwrap().to_string(),
+                cert_path: cert_path.to_str().expect("Invalid cert path").to_string(),
+                key_path: key_path.to_str().expect("Invalid key path").to_string(),
                 psk: "test_psk".to_string(),
                 psk_identity: "test_identity".to_string(),
             },
@@ -421,8 +470,6 @@ mod tests {
 
         // Create the SSL context
         let _ssl_ctx = create_psk_ssl_context(&config)?;
-
-        // We can't directly test the callback, but we can verify the context was created
 
         Ok(())
     }
