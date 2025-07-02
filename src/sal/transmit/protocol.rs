@@ -117,8 +117,8 @@ impl ProtocolHandler {
     /// Creates a new protocol handler with default configuration
     pub fn new() -> Self {
         Self {
-            protocol_version: "1.1.5".to_string(), // Version according to eCard-API Framework
-            namespace: ISO24727_3_NS.to_string(),  // ISO 24727-3 namespace
+            protocol_version: "1.1.5".to_string(),
+            namespace: ISO24727_3_NS.to_string(), // ISO 24727-3 namespace
             schema_location: format!("{} {}", ISO24727_3_NS, "iso-24727-3.xsd"),
         }
     }

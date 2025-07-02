@@ -32,7 +32,7 @@ pub fn build_get_server_info_response(
         },
     };
 
-    let xml = to_string(&envelope).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let xml = to_string(&envelope).map_err(io::Error::other)?;
 
     let xml_with_ns = xml.replacen(
         "<soapenv:Envelope",
