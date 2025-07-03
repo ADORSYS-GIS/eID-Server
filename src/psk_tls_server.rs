@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::domain::eid::service::UseidService;
 use axum::{Router, body::Body};
+use hex;
 use hyper::server::conn::Http;
 use hyper::service::service_fn;
 use lazy_static::lazy_static;
@@ -24,13 +25,14 @@ lazy_static! {
 
 // Add a PSK to the store
 pub fn add_psk(identity: String, key: String) {
-    let identity_clone = identity.clone();
     if let Ok(mut store) = PSK_STORE.write() {
         store.insert(identity, key);
-        println!("Added PSK for identity: {}", identity_clone);
-    } else {
-        eprintln!("Failed to acquire write lock for PSK store");
     }
+}
+
+// Helper to decode hex string to bytes
+fn decode_hex_psk(psk_hex: &str) -> Option<Vec<u8>> {
+    hex::decode(psk_hex).ok()
 }
 
 // PSK callback function for OpenSSL
@@ -47,35 +49,35 @@ extern "C" fn psk_server_callback(
         // Convert identity to Rust string
         let identity_str = match CStr::from_ptr(identity).to_str() {
             Ok(s) => s.to_string(),
-            Err(_) => return 0, // Error in identity
+            Err(_) => return 0,
         };
-
-        println!("PSK callback received identity: {}", identity_str);
 
         // Look up the PSK for this identity
         let store = match PSK_STORE.read() {
             Ok(store) => store,
             Err(_) => {
-                println!("Failed to acquire read lock for PSK store");
-                return 0; // Lock error
+                return 0;
             }
         };
         let psk_key = match store.get(&identity_str) {
             Some(key) => key,
             None => {
-                println!("PSK not found for identity: {}", identity_str);
-                return 0; // Identity not found
+                return 0;
             }
         };
 
-        // Copy PSK to output buffer
-        let psk_bytes = psk_key.as_bytes();
+        // Decode PSK from hex
+        let psk_bytes = match decode_hex_psk(psk_key) {
+            Some(bytes) => bytes,
+            None => {
+                return 0;
+            }
+        };
         let psk_len = std::cmp::min(psk_bytes.len(), max_psk_len as usize);
 
         let psk_slice = slice::from_raw_parts_mut(psk, psk_len);
         psk_slice.copy_from_slice(&psk_bytes[..psk_len]);
 
-        println!("PSK found and set for identity: {}", identity_str);
         psk_len as libc::c_uint
     }
 }
@@ -102,9 +104,7 @@ pub async fn run_psk_tls_server(
                     }
                 }
             }
-            Err(e) => {
-                eprintln!("Failed to read sessions: {}", e);
-            }
+            Err(_e) => {}
         }
     } // sessions guard is dropped here
 
@@ -115,7 +115,6 @@ pub async fn run_psk_tls_server(
     let router = Arc::new(router);
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let listener = TcpListener::bind(&addr).await?;
-    println!("PSK TLS server listening on {}", addr);
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -127,32 +126,19 @@ pub async fn run_psk_tls_server(
             // Create a new SSL instance for each connection
             let ssl = match Ssl::new(&ssl_ctx) {
                 Ok(ssl) => ssl,
-                Err(e) => {
-                    eprintln!("Failed to create SSL instance: {}", e);
+                Err(_e) => {
                     return;
                 }
             };
             let mut ssl_stream = match SslStream::new(ssl, stream) {
                 Ok(s) => s,
-                Err(e) => {
-                    eprintln!("Failed to create SslStream: {}", e);
+                Err(_e) => {
                     return;
                 }
             };
 
-            if let Err(e) = Pin::new(&mut ssl_stream).accept().await {
-                eprintln!("TLS handshake failed: {}", e);
-                // Print more details about the error if available
-                eprintln!("Error details: {:?}", e);
+            if let Err(_e) = Pin::new(&mut ssl_stream).accept().await {
                 return;
-            }
-
-            // Print TLS session information for debugging
-            let ssl = ssl_stream.ssl();
-            println!("TLS handshake successful!");
-            println!("TLS version: {}", ssl.version_str());
-            if let Some(cipher) = ssl.current_cipher() {
-                println!("TLS cipher: {}", cipher.name());
             }
 
             // Handle the connection with HTTP
@@ -260,9 +246,7 @@ pub async fn run_psk_tls_server(
                 }
             });
 
-            if let Err(err) = Http::new().serve_connection(ssl_stream, service).await {
-                eprintln!("HTTP error: {}", err);
-            }
+            if let Err(_err) = Http::new().serve_connection(ssl_stream, service).await {}
         });
     }
 }
@@ -277,31 +261,20 @@ pub fn create_psk_ssl_context(config: &Config) -> color_eyre::Result<SslContext>
         && std::path::Path::new(&config.tls.key_path).exists()
     {
         // Use specified certificate and key files if they exist
-        println!(
-            "Using certificate at {} and key at {}",
-            config.tls.cert_path, config.tls.key_path
-        );
         ctx_builder.set_certificate_file(&config.tls.cert_path, SslFiletype::PEM)?;
         ctx_builder.set_private_key_file(&config.tls.key_path, SslFiletype::PEM)?;
     } else {
         // Create a self-signed certificate for development
-        println!("Certificate files not found. Creating a temporary self-signed certificate.");
         // Include both localhost and the actual server host in the certificate
         let mut subject_alt_names = vec!["localhost".into()];
 
-        // Add the actual server host to the certificate
         if config.server.host != "localhost" && config.server.host != "127.0.0.1" {
             subject_alt_names.push(config.server.host.clone());
-            // Also add 0.0.0.0 as it's commonly used
             if config.server.host != "0.0.0.0" {
                 subject_alt_names.push("0.0.0.0".into());
             }
         }
 
-        println!(
-            "Creating certificate with subject alternative names: {:?}",
-            subject_alt_names
-        );
         let cert = rcgen::generate_simple_self_signed(subject_alt_names)?;
         let cert_pem = cert.serialize_pem()?;
         let key_pem = cert.serialize_private_key_pem();
@@ -322,13 +295,10 @@ pub fn create_psk_ssl_context(config: &Config) -> color_eyre::Result<SslContext>
         );
     }
 
-    // Set cipher suites to support a wider range of clients
-    // Include both RSA-PSK and standard TLS cipher suites
-    ctx_builder.set_cipher_list("RSA-PSK-AES256-CBC-SHA:RSA-PSK-AES128-CBC-SHA:AES256-GCM-SHA384:AES128-GCM-SHA256:HIGH:!aNULL:!kRSA:!MD5:!RC4")?;
+    // Restrict cipher suites to only TLS_RSA_PSK_* as per spec
+    ctx_builder.set_cipher_list("RSA-PSK-AES256-CBC-SHA:RSA-PSK-AES128-CBC-SHA")?;
 
     // Enable PSK cipher suites
-    println!("Enabling PSK cipher suites");
-
     // Set minimum TLS version to TLS 1.2
     ctx_builder.set_min_proto_version(Some(openssl::ssl::SslVersion::TLS1_2))?;
 
@@ -442,8 +412,6 @@ mod tests {
         // Test creating the SSL context with self-signed certificate
         let _ssl_ctx = create_psk_ssl_context(&config)?;
 
-        // If we get here without errors, the test passes
-
         Ok(())
     }
 
@@ -451,10 +419,8 @@ mod tests {
     fn test_psk_callback_is_set() -> color_eyre::Result<()> {
         clear_psk_store();
 
-        // Add a test PSK
         add_psk("test_identity".to_string(), "test_key".to_string());
 
-        // Create a config
         let config = Config {
             server: crate::config::ServerConfig {
                 host: "localhost".to_string(),
@@ -468,7 +434,6 @@ mod tests {
             },
         };
 
-        // Create the SSL context
         let _ssl_ctx = create_psk_ssl_context(&config)?;
 
         Ok(())
