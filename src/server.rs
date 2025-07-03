@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::BufReader;
 use std::net::TcpListener;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::domain::eid::ports::{DIDAuthenticate, EIDService, EidService};
 use crate::eid::get_server_info::handler::get_server_info;
@@ -11,25 +12,32 @@ use crate::web::handlers::refresh::refresh_handler;
 use crate::web::handlers::sal::paos::paos_handler;
 use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
-use axum_server::tls_rustls::RustlsConfig;
 use color_eyre::eyre::{Context, Result, eyre};
 use handlers::did_auth::did_authenticate;
 use handlers::health::health_check;
-use rustls::ServerConfig;
-use rustls::crypto::aws_lc_rs as provider;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod, SslOptions, SslVerifyMode};
+use rustls::lock::Mutex;
 use rustls::server::{ClientHello, ResolvesServerCert};
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
 
-#[derive(Debug, Clone)]
+use axum_server::tls_openssl::OpenSSLConfig;
+
+// Global PSK store
+static PSK_STORE: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
+
+fn get_psk_store() -> &'static Mutex<HashMap<String, Vec<u8>>> {
+    PSK_STORE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 pub struct AppServerConfig {
     pub host: String,
     pub port: u16,
     pub cert_path: Option<String>,
     pub key_path: Option<String>,
+    pub psk_enabled: bool, // Add PSK enabled flag
 }
 
 #[derive(Debug, Clone)]
@@ -103,76 +111,54 @@ impl<S: EIDService + EidService + DIDAuthenticate + Clone + Send + Sync + 'stati
     }
 
     /// Loads TLS certificates for certificate-based TLS
-    async fn load_tls_config(cert_path: &str, key_path: &str) -> Result<RustlsConfig> {
-        tracing::debug!("Loading TLS certificate from: {}", cert_path);
-        // Read certificate file
-        let mut cert_file = File::open(Path::new(cert_path))
-            .map_err(|e| eyre!("Failed to open cert file: {}", e))
-            .context("Opening certificate file")?;
-        let mut certs_data = Vec::new();
-        cert_file
-            .read_to_end(&mut certs_data)
-            .map_err(|e| eyre!("Failed to read cert file: {}", e))
-            .context("Reading certificate file")?;
+    async fn load_tls_config(
+        cert_path: &str,
+        key_path: &str,
+        psk_enabled: bool,
+    ) -> Result<OpenSSLConfig> {
+        let mut acceptor = SslAcceptor::mozilla_modern(SslMethod::tls())?;
 
-        if certs_data.is_empty() {
-            return Err(eyre!("No certificates found in cert file"))
-                .context("Certificate validation");
+        // Configure certificate-based TLS
+        acceptor.set_private_key_file(key_path, SslFiletype::PEM)?;
+        acceptor.set_certificate_chain_file(cert_path)?;
+
+        if psk_enabled {
+            acceptor.set_psk_server_callback(|_ssl, identity, secret| {
+                let identity_str = identity
+                    .and_then(|id| String::from_utf8(id.to_vec()).ok())
+                    .unwrap_or_default();
+
+                tracing::debug!("PSK identity requested: {}", identity_str);
+
+                if let Some(psk) = get_psk_store().lock().unwrap().get(&identity_str) {
+                    if secret.len() < psk.len() {
+                        return Ok(0); // Return Result with Ok
+                    }
+                    secret[..psk.len()].copy_from_slice(psk);
+                    Ok(psk.len()) // Return Result with Ok
+                } else {
+                    tracing::warn!("No PSK found for identity: {}", identity_str);
+                    Ok(0) // Return Result with Ok
+                }
+            });
+
+            // Configure PSK cipher suites
+            acceptor.set_cipher_list(
+                "PSK-AES128-GCM-SHA256:PSK-AES256-GCM-SHA384:PSK-AES128-CBC-SHA256:PSK-AES256-CBC-SHA384"
+            )?;
+
+            // Enable PSK key exchange
+            acceptor.set_options(SslOptions::NO_TICKET);
         }
 
-        let certs: Vec<CertificateDer> =
-            rustls_pemfile::certs(&mut BufReader::new(certs_data.as_slice()))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| eyre!("Failed to parse certificates: {}", e))
-                .context("Parsing certificates")?
-                .into_iter()
-                .map(CertificateDer::from)
-                .collect();
+        // Common TLS settings
+        acceptor.set_verify(SslVerifyMode::NONE);
+        acceptor.set_options(
+            SslOptions::NO_COMPRESSION | SslOptions::SINGLE_ECDH_USE | SslOptions::SINGLE_DH_USE,
+        );
 
-        tracing::debug!("Loaded {} certificate(s)", certs.len());
-
-        tracing::debug!("Loading private key from: {}", key_path);
-        let mut key_file = File::open(Path::new(key_path))
-            .map_err(|e| eyre!("Failed to open key file: {}", e))
-            .context("Opening private key file")?;
-        let mut key_data = Vec::new();
-        key_file
-            .read_to_end(&mut key_data)
-            .map_err(|e| eyre!("Failed to read key file: {}", e))
-            .context("Reading private key file")?;
-
-        if key_data.is_empty() {
-            return Err(eyre!("No private key found in key file")).context("Private key not found");
-        }
-
-        let key = rustls_pemfile::private_key(&mut BufReader::new(key_data.as_slice()))
-            .map_err(|e| eyre!("Failed to parse private key: {}", e))
-            .context("Parsing private key")?
-            .ok_or_else(|| eyre!("No private key found"))?;
-        let key = PrivateKeyDer::from(key);
-
-        // Create a CertifiedKey for certificate-based TLS
-        let signing_key = provider::sign::any_supported_type(&key)
-            .map_err(|e| eyre!("Failed to create signing key: {}", e))?;
-        let certified_key = Arc::new(rustls::sign::CertifiedKey::new(certs, signing_key));
-
-        // Configure rustls ServerConfig with certificate-based TLS
-        let cert_resolver = Arc::new(CertResolver::new(certified_key.clone()));
-
-        // Create provider and server config
-        let provider = provider::default_provider();
-        let server_config = ServerConfig::builder_with_provider(Arc::new(provider))
-            .with_protocol_versions(rustls::DEFAULT_VERSIONS)
-            .map_err(|e| eyre!("Failed to set protocol versions: {}", e))?
-            .with_no_client_auth()
-            .with_cert_resolver(cert_resolver);
-
-        let tls_config = RustlsConfig::from_config(Arc::new(server_config));
-
-        tracing::info!("TLS configuration loaded with certificate support");
-        tracing::info!("Using default secure cipher suites and protocol versions");
-
-        Ok(tls_config)
+        // Build and convert to axum_server's OpenSSLConfig
+        Ok(OpenSSLConfig::from_acceptor(Arc::new(acceptor.build())))
     }
 
     /// Validates certificate chain and logs certificate information
@@ -231,7 +217,7 @@ impl<S: EIDService + EidService + DIDAuthenticate + Clone + Send + Sync + 'stati
         Self::validate_certificate_chain(cert_path)
             .context("Certificate chain validation failed")?;
 
-        let tls_config = Self::load_tls_config(cert_path, key_path)
+        let tls_config = Self::load_tls_config(cert_path, key_path, config.psk_enabled)
             .await
             .context("Loading TLS configuration")?;
 
@@ -240,7 +226,8 @@ impl<S: EIDService + EidService + DIDAuthenticate + Clone + Send + Sync + 'stati
         tracing::info!("Using private key: {}", key_path);
         tracing::info!("TLS configuration: Certificate-based TLS with default secure settings");
 
-        let server = axum_server::from_tcp_rustls(listener, tls_config)
+        let server = axum_server::Server::from_tcp(listener)
+            .openssl(tls_config)
             .serve(self.router.into_make_service());
 
         let handle = tokio::spawn(async move {
@@ -261,6 +248,5 @@ impl<S: EIDService + EidService + DIDAuthenticate + Clone + Send + Sync + 'stati
             .map_err(|e| eyre!("Server task failed: {:?}", e))
             .context("Running server task")?;
         Ok(())
-        
     }
 }

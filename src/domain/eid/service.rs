@@ -1,11 +1,13 @@
+use std::collections::HashMap;
 use std::fs;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
-use color_eyre::Result;
+use color_eyre::{Result, eyre};
 use rand::distr::Alphanumeric;
 use rand::{Rng, RngCore};
+use rustls::lock::Mutex;
 use std::default::Default;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -97,12 +99,34 @@ pub struct DIDAuthenticateService {
     sessions: Arc<RwLock<Vec<SessionInfo>>>,
 }
 
+// Global PSK store
+static PSK_STORE: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
+
 impl UseidService {
     pub fn new(config: EIDServiceConfig) -> Self {
         Self {
             config,
             session_manager: Arc::new(RwLock::new(SessionManager::new())),
         }
+    }
+
+    fn hex_decode(hex_str: &str) -> Result<Vec<u8>> {
+        if hex_str.len() % 2 != 0 {
+            return Err(eyre::eyre!("Invalid hex string length"));
+        }
+
+        let mut bytes = Vec::with_capacity(hex_str.len() / 2);
+        for i in (0..hex_str.len()).step_by(2) {
+            let byte_str = &hex_str[i..i + 2];
+            let byte = u8::from_str_radix(byte_str, 16)
+                .map_err(|e| eyre::eyre!("Invalid hex at position {}: {}", i, e))?;
+            bytes.push(byte);
+        }
+        Ok(bytes)
+    }
+
+    pub fn get_psk_store() -> &'static Mutex<HashMap<String, Vec<u8>>> {
+        PSK_STORE.get_or_init(|| Mutex::new(HashMap::new()))
     }
 
     /// Generate a random session ID
@@ -301,6 +325,19 @@ impl EIDService for UseidService {
 
         if !tc_token_url.starts_with("https://") {
             warn!("TcTokenURL is not HTTPS: {}", tc_token_url);
+        }
+
+        // Store PSK in global store
+        if !psk.is_empty() {
+            // Directly use ? for error propagation
+            let psk_bytes = Self::hex_decode(&psk)?;
+
+            // Handle mutex lock error separately
+            let mut store = Self::get_psk_store()
+                .lock()
+                .map_err(|_| eyre::eyre!("PSK store lock poisoned"))?;
+
+            store.insert(session_id.clone(), psk_bytes);
         }
 
         // Build response

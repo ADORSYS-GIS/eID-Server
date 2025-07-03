@@ -337,10 +337,24 @@ pub fn build_tc_token(response: &UseIDResponse) -> Result<String, String> {
     writer
         .write_event(Event::End(BytesEnd::new("PathSecurity-Protocol")))
         .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::Start(BytesStart::new("PathSecurity-Parameters")))
+        .map_err(|e| e.to_string())?;
 
     // PathSecurity-Parameters
     writer
         .write_event(Event::Start(BytesStart::new("PathSecurity-Parameters")))
+        .map_err(|e| e.to_string())?;
+
+    // Add PSKIdentity (Session ID)
+    writer
+        .write_event(Event::Start(BytesStart::new("PSKIdentity")))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::Text(BytesText::from_escaped(&response.session.id)))
+        .map_err(|e| e.to_string())?;
+    writer
+        .write_event(Event::End(BytesEnd::new("PSKIdentity")))
         .map_err(|e| e.to_string())?;
 
     // PSK

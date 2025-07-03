@@ -29,6 +29,7 @@ async fn main() -> color_eyre::Result<()> {
         port: config.server.port,
         cert_path: Some("certss/localhost.crt".to_string()),
         key_path: Some("certss/localhost.key".to_string()),
+        psk_enabled: true,
     };
 
     tracing::debug!(
