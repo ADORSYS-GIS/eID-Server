@@ -10,7 +10,7 @@ axum-server = { version = "0.6.0", features = ["tls-rustls"] }
 
 # Web framework dependencies
 hyper = { version = "0.14", features = ["client", "http1"] }
-tower-http = { version = "0.5.2", features = ["cors", "trace"] }
+tower-http = { version = "0.6.2", features = ["cors", "trace"] }
 
 # Async runtime
 tokio = { version = "1.38.0", features = ["full"] }
@@ -24,7 +24,7 @@ tower = "0.4.13"
 tokio-rustls = "0.25"  # Compatible with rustls 0.23
 
 # Error handling
-thiserror = "1.0.61"
+thiserror = "2.0.12"
 color-eyre = "0.6"
 
 # XML handling

@@ -1,7 +1,7 @@
 use eid_server::{
     config::Config,
     domain::eid::service::{EIDServiceConfig, UseidService},
-    server::{AppServerConfig, Server},
+    server::{Server, ServerConfig}, 
     telemetry,
 };
 
@@ -19,10 +19,7 @@ async fn main() -> color_eyre::Result<()> {
 
     // Create EIDService with default configuration
     let eid_service = UseidService::new(EIDServiceConfig::default());
-    let server_config = AppServerConfig {
-        host: config.server.host,
-        port: config.server.port,
-    };
+    
     // Create config directory if it doesn't exist
     let config_dir = std::path::Path::new("config");
     if !config_dir.exists() {
@@ -34,6 +31,12 @@ async fn main() -> color_eyre::Result<()> {
         psk_tls_server::run_psk_tls_server(&config, eid_service).await?;
         Ok(())
     } else {
+        // Create ServerConfig with references to config values
+        let server_config = ServerConfig {
+            host: &config.server.host,  // Use reference instead of owned value
+            port: config.server.port,
+        };
+        
         let server = Server::new(eid_service, server_config, Some(config.tls)).await?;
         server.run().await
     }

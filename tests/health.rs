@@ -1,20 +1,26 @@
 mod common;
-
-use reqwest::Client;
+use hyper::Client;
 
 #[tokio::test]
 async fn test_health_check_works() {
     let addr = common::spawn_server().await;
+    let client = Client::new();
 
-    // Create a custom client that ignores invalid certificates
-    let client = Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .unwrap();
+    let uri = format!("{}/health", addr)
+        .parse()
+        .expect("Failed to parse URI");
 
-    let response = client.get(format!("{addr}/health")).send().await.unwrap();
+    let response = client
+        .get(uri)
+        .await
+        .expect("Failed to send request");
 
     // Verify the response
     assert!(response.status().is_success());
-    assert_eq!(Some(0), response.content_length());
+    
+    // Check that body is empty
+    let body = hyper::body::to_bytes(response.into_body())
+        .await
+        .expect("Failed to read response body");
+    assert!(body.is_empty());
 }

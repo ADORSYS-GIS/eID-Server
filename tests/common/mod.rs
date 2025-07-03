@@ -1,7 +1,7 @@
 use eid_server::{
     config::Config,
     domain::eid::service::{EIDServiceConfig, UseidService},
-    server::{AppServerConfig, Server},
+    server::{Server, ServerConfig},
 };
 
 pub async fn spawn_server() -> String {
@@ -13,17 +13,20 @@ pub async fn spawn_server() -> String {
     };
     let eid_service = UseidService::new(EIDServiceConfig::default());
 
-    let server_config = AppServerConfig {
-        host: config.server.host,
+    // Create ServerConfig with reference to config values
+    let server_config = ServerConfig {
+        host: &config.server.host,
         port: config.server.port,
     };
 
-    let server = Server::new(eid_service, server_config.clone(), None)
+    // Create server without TLS
+    let server = Server::new(eid_service, server_config, None)
         .await
         .unwrap();
 
-    let (port, handle) = server.run_with_port(server_config.clone()).await.unwrap();
-    tokio::spawn(handle);
+    // Get the port the server is bound to
+    let port = server.port().unwrap();
 
-    format!("https://{}:{}", server_config.host, port)
+    // Return HTTP address (since we're not using TLS in tests)
+    format!("http://{}:{}", config.server.host, port)
 }
