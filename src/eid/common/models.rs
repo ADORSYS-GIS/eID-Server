@@ -217,7 +217,7 @@ pub struct PlaceType {
 pub enum AttributeRequester {
     REQUIRED,
     ALLOWED,
-    PROHIBITED,
+    NotRequested,
 }
 
 #[derive(Serialize, Clone)]
@@ -244,13 +244,13 @@ pub enum ResultCode {
     UnknownError(String),
 }
 
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, Debug)]
 pub struct ResultMajor {
     #[serde(rename = "ResultMajor")]
     pub result_major: String,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 pub struct Header {}
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
@@ -259,7 +259,7 @@ pub struct Session {
     pub id: String,
 }
 
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, Debug)]
 pub struct SessionResponse {
     #[serde(rename = "eid:ID")]
     pub id: String,
@@ -313,7 +313,7 @@ impl FromStr for AttributeRequester {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_uppercase().as_str() {
             "ALLOWED" => Ok(AttributeRequester::ALLOWED),
-            "PROHIBITED" => Ok(AttributeRequester::PROHIBITED),
+            "PROHIBITED" => Ok(AttributeRequester::NotRequested),
             "REQUIRED" => Ok(AttributeRequester::REQUIRED),
             _ => Err("unknown attribute ".to_owned()),
         }
@@ -349,7 +349,7 @@ impl Display for AttributeRequester {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let text = match self {
             AttributeRequester::ALLOWED => "ALLOWED",
-            AttributeRequester::PROHIBITED => "PROHIBITED",
+            AttributeRequester::NotRequested => "PROHIBITED",
             AttributeRequester::REQUIRED => "REQUIRED",
         };
         write!(f, "{text}")

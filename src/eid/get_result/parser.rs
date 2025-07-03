@@ -8,7 +8,7 @@ use quick_xml::de::from_str;
 
 /// Parses a SOAP `getResultRequest` XML into a `GetResultRequest` using serde deserialization.
 ///
-/// Uses `quick-xml`’s `de` feature to map the `<Body><getResultRequest>` element (ignoring
+/// Uses `quick-xml`'s `de` feature to map the `<Body><getResultRequest>` element (ignoring
 /// namespace prefixes) directly into Rust structs. If `<Session>` or `<RequestCounter>` are
 /// omitted, they default to an empty `Session.id` and `0`, respectively.
 ///

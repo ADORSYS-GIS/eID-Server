@@ -7,7 +7,7 @@ use super::{
     model::{UseIDResponse, UseIdBody, UseIdEnvelope},
 };
 
-/// Serializes a `UseIDResponse` into a complete SOAP XML envelope using `quick-xml`’s
+/// Serializes a `UseIDResponse` into a complete SOAP XML envelope using `quick-xml`'s
 /// Serde-based serializer, injecting the required namespaces and XML declaration.
 ///
 /// # Parameters

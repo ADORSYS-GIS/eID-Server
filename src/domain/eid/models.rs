@@ -1,7 +1,9 @@
 //! Canonical data structures comprising the domain.
 
-use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 /// ServerInfo model according to TR-03130 specification
 /// This structure represents the information returned by the getServerInfo endpoint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +34,12 @@ pub struct ServerInfo {
     pub additional_info: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SoapResponse {
+    pub body: String,
+    pub status: u16,
+}
+
 /// Document verification rights information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentVerificationRights {
@@ -42,6 +50,245 @@ pub struct DocumentVerificationRights {
     /// The version of document verification supported
     #[serde(rename = "Version", skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+}
+#[derive(Debug, Error)]
+pub enum AuthError {
+    #[error("Invalid connection handle: {reason}")]
+    InvalidConnection { reason: String },
+
+    #[error("Certificate validation failed: {details}")]
+    InvalidCertificate { details: String },
+
+    #[error("User cancelled authentication")]
+    UserCancellation,
+
+    #[error("Card communication error: {reason}")]
+    CardCommunicationError { reason: String },
+
+    #[error("Authentication failed: {reason}")]
+    AuthenticationFailed { reason: String },
+
+    #[error("Cryptographic operation failed: {operation}")]
+    CryptoError { operation: String },
+
+    #[error("Protocol violation: {details}")]
+    ProtocolError { details: String },
+
+    #[error("Timeout occurred during {operation}")]
+    TimeoutError { operation: String },
+
+    #[error("Internal server error: {message}")]
+    InternalError { message: String },
+
+    #[error("Trusted channel establishment failed: {reason}")]
+    TrustedChannelEstablishmentFailed { reason: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConnectionHandle {
+    pub channel_handle: Option<String>,
+    pub ifd_name: Option<String>,
+    pub slot_index: Option<u32>,
+}
+
+impl ConnectionHandle {
+    pub fn new(channel_handle: String, ifd_name: String, slot_index: u32) -> Self {
+        Self {
+            channel_handle: Some(channel_handle),
+            ifd_name: Some(ifd_name),
+            slot_index: Some(slot_index),
+        }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.channel_handle
+            .as_ref()
+            .map_or(false, |ch| !ch.is_empty())
+            && self.ifd_name.as_ref().map_or(false, |ifd| !ifd.is_empty())
+            && self.slot_index.is_some()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthenticationProtocolData {
+    pub certificate_description: String,
+    pub required_chat: String,
+    pub optional_chat: Option<String>,
+    pub transaction_info: Option<String>,
+}
+
+impl AuthenticationProtocolData {
+    pub fn new(
+        certificate_description: String,
+        required_chat: String,
+        optional_chat: Option<String>,
+        transaction_info: Option<String>,
+    ) -> Self {
+        Self {
+            certificate_description,
+            required_chat,
+            optional_chat,
+            transaction_info,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DIDAuthenticateRequest {
+    pub connection_handle: ConnectionHandle,
+    pub did_name: String,
+    pub authentication_protocol_data: AuthenticationProtocolData,
+}
+
+impl DIDAuthenticateRequest {
+    pub fn new(
+        connection_handle: ConnectionHandle,
+        did_name: String,
+        authentication_protocol_data: AuthenticationProtocolData,
+    ) -> Self {
+        Self {
+            connection_handle,
+            did_name,
+            authentication_protocol_data,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), AuthError> {
+        if !self.connection_handle.is_valid() {
+            return Err(AuthError::InvalidConnection {
+                reason: "Connection handle contains invalid data".to_string(),
+            });
+        }
+
+        if self.did_name.is_empty() {
+            return Err(AuthError::ProtocolError {
+                details: "DID name cannot be empty".to_string(),
+            });
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseProtocolData {
+    pub challenge: Option<String>,
+    pub certificate: Option<String>,
+    pub personal_data: Option<String>,
+    pub authentication_token: Option<String>,
+}
+
+impl ResponseProtocolData {
+    pub fn new() -> Self {
+        Self {
+            challenge: None,
+            certificate: None,
+            personal_data: None,
+            authentication_token: None,
+        }
+    }
+
+    pub fn with_personal_data(mut self, data: String) -> Self {
+        self.personal_data = Some(data);
+        self
+    }
+
+    pub fn with_certificate(mut self, cert: String) -> Self {
+        self.certificate = Some(cert);
+        self
+    }
+
+    pub fn with_authentication_token(mut self, token: String) -> Self {
+        self.authentication_token = Some(token);
+        self
+    }
+}
+
+impl Default for ResponseProtocolData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DIDAuthenticateResponse {
+    pub result_major: String,
+    pub result_minor: Option<String>,
+    pub authentication_protocol_data: ResponseProtocolData,
+    pub timestamp: u64,
+}
+
+impl DIDAuthenticateResponse {
+    pub fn success(data: ResponseProtocolData) -> Self {
+        Self {
+            result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok".to_string(),
+            result_minor: None,
+            authentication_protocol_data: data,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        }
+    }
+
+    pub fn error(error: &AuthError) -> Self {
+        let (major, minor) = error.to_result_codes();
+        Self {
+            result_major: major,
+            result_minor: minor,
+            authentication_protocol_data: ResponseProtocolData::new(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        }
+    }
+
+    pub fn is_success(&self) -> bool {
+        self.result_major.contains("ok")
+    }
+}
+
+impl AuthError {
+    /// Maps AuthError to eCard-API result codes
+    pub fn to_result_codes(&self) -> (String, Option<String>) {
+        match self {
+            AuthError::UserCancellation => (
+                "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
+                Some(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#cancellationByUser"
+                        .to_string(),
+                ),
+            ),
+            AuthError::InvalidCertificate { .. } => (
+                "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
+                Some(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#invalidCertificate"
+                        .to_string(),
+                ),
+            ),
+            AuthError::TrustedChannelEstablishmentFailed { .. } => (
+                "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
+                Some(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#trustedChannelEstablishmentFailed"
+                        .to_string(),
+                ),
+            ),
+            AuthError::AuthenticationFailed { .. } => (
+                "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
+                Some(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#authenticationFailed"
+                        .to_string(),
+                ),
+            ),
+            _ => (
+                "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
+                Some(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#generalError".to_string(),
+                ),
+            ),
+        }
+    }
 }
 
 impl Default for ServerInfo {
