@@ -65,17 +65,12 @@ impl Server {
             use_id: eid_service_arc.clone(),
             eid_service: eid_service_arc,
         };
-        let ecard_server_address = state
-            .use_id
-            .get_config()
-            .ecard_server_address
-            .unwrap_or("/eIDService/paos".to_owned());
 
         let router = axum::Router::new()
             .route("/health", get(health_check))
             .route("/eIDService/useID", post(handlers::useid::use_id_handler))
             .route("/eIDService/getServerInfo", get(get_server_info))
-            .route(&ecard_server_address, post(paos_handler))
+            .route("/eIDService/paos", post(paos_handler))
             .layer(cors)
             .layer(trace_layer)
             .with_state(state);
