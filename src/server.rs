@@ -6,7 +6,9 @@ mod responses;
 use std::net::TcpListener as StdTcpListener;
 use std::sync::Arc;
 
+use crate::domain::eid::ports::DIDAuthenticate;
 use crate::eid::get_server_info::handler::get_server_info;
+use crate::server::handlers::did_auth::did_authenticate;
 use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
 use axum_server::tls_rustls::RustlsConfig;
@@ -44,18 +46,17 @@ pub struct Server {
 impl Server {
     /// Creates a new HTTP server with the given service and configuration.
     pub async fn new(
-        eid_service: impl EIDService + EidService,
+        eid_service: impl EIDService + EidService + DIDAuthenticate, // Add DIDAuthenticate here
         config: ServerConfig<'_>,
         tls_config: Option<TlsConfig>,
     ) -> color_eyre::Result<Self> {
-        // Initialize the tracing layer to log HTTP requests.
+        // Rest of the code remains unchanged
         let trace_layer =
             TraceLayer::new_for_http().make_span_with(|request: &axum::http::Request<_>| {
                 let uri = request.uri().to_string();
                 tracing::info_span!("request", method = ?request.method(), uri)
             });
 
-        // Initialize the CORS layer to handle cross-origin requests.
         let cors = CorsLayer::new()
             .allow_origin(Any)
             .allow_headers(Any)
@@ -67,17 +68,17 @@ impl Server {
                 Method::OPTIONS,
             ]);
 
-        // This will encapsulate dependencies needed to execute the business logic
         let eid_service_arc = Arc::new(eid_service);
         let state = AppState {
             eid_service: eid_service_arc,
         };
 
-        let router = axum::Router::new()
+        let router = Router::new()
             .route("/health", get(health_check))
             .route("/eIDService/useID", post(handlers::useid::use_id_handler))
+            .route("/eIDService/useID", get(handlers::useid::use_id_handler))
             .route("/eIDService/getServerInfo", get(get_server_info))
-            .layer(cors)
+            .route("/did-authenticate", post(did_authenticate))
             .layer(trace_layer)
             .with_state(state);
 

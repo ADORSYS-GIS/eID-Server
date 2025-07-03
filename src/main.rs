@@ -1,7 +1,7 @@
 use eid_server::{
     config::Config,
     domain::eid::service::{EIDServiceConfig, UseidService},
-    server::{Server, ServerConfig},
+    server::{AppServerConfig, Server},
     telemetry,
 };
 
@@ -19,12 +19,10 @@ async fn main() -> color_eyre::Result<()> {
 
     // Create EIDService with default configuration
     let eid_service = UseidService::new(EIDServiceConfig::default());
-
-    let server_config = ServerConfig {
-        host: &config.server.host,
+    let server_config = AppServerConfig {
+        host: config.server.host,
         port: config.server.port,
     };
-
     // Create config directory if it doesn't exist
     let config_dir = std::path::Path::new("config");
     if !config_dir.exists() {
