@@ -1,14 +1,14 @@
 //! This module contains the HTTP server implementation.
 
-mod handlers;
-mod responses;
-
 use std::net::TcpListener as StdTcpListener;
+
 use std::sync::Arc;
 
 use crate::domain::eid::ports::DIDAuthenticate;
 use crate::eid::get_server_info::handler::get_server_info;
 use crate::server::handlers::did_auth::did_authenticate;
+use crate::web::handlers;
+use crate::web::handlers::sal::paos::paos_handler;
 use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
 use axum_server::tls_rustls::RustlsConfig;
@@ -79,6 +79,8 @@ impl Server {
             .route("/eIDService/useID", get(handlers::useid::use_id_handler))
             .route("/eIDService/getServerInfo", get(get_server_info))
             .route("/did-authenticate", post(did_authenticate))
+            .route("/eIDService/paos", post(paos_handler))
+            .layer(cors)
             .layer(trace_layer)
             .with_state(state);
 

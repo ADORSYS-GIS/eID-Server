@@ -41,3 +41,4 @@ async fn main() -> color_eyre::Result<()> {
         server.run().await
     }
 }
+

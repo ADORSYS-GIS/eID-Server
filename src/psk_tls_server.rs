@@ -96,9 +96,9 @@ pub async fn run_psk_tls_server(
 
     // Register existing sessions from the eid_service
     {
-        match eid_service.sessions.read() {
+        match eid_service.session_manager.read() {
             Ok(sessions) => {
-                for session in sessions.iter() {
+                for session in sessions.sessions.iter() {
                     let psk = &session.psk;
                     register_session_psk(session.id.clone(), psk.clone());
                 }

@@ -79,6 +79,9 @@ pub enum AuthError {
 
     #[error("Internal server error: {message}")]
     InternalError { message: String },
+
+    #[error("Session lock error: {0}")]
+    SessionLockError(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

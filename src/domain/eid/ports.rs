@@ -2,12 +2,22 @@
 
 use crate::eid::use_id::model::{UseIDRequest, UseIDResponse};
 use async_trait::async_trait;
+use std::sync::{Arc, RwLock};
+
+use crate::{
+    domain::eid::service::{EIDServiceConfig, SessionManager},
+};
 use color_eyre::Result;
 
 use super::models::{AuthError, DIDAuthenticateRequest, DIDAuthenticateResponse, ServerInfo};
 
 pub trait EIDService: Clone + Send + Sync + 'static {
     fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse>;
+
+    fn is_session_valid(&self, session_id: &str) -> Result<bool>;
+    fn get_use_id_service(&self) -> Self;
+    fn get_session_manager(&self) -> Arc<RwLock<SessionManager>>;
+    fn get_config(&self) -> EIDServiceConfig;
 }
 
 #[async_trait]
