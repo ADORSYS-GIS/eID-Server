@@ -17,6 +17,9 @@ pub enum TransmitError {
     #[error("Card communication error: {0}")]
     CardError(String),
 
+    #[error("Invalid PSK: {0}")]
+    InvalidPSK(String),
+
     #[error("Internal error: {0}")]
     InternalError(String),
 }

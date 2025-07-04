@@ -9,6 +9,8 @@ use tracing::{debug, error, info};
 pub struct TlsSessionInfo {
     pub session_id: String,
     pub cipher_suite: String,
+    pub psk_id: Option<String>,
+    pub psk_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,6 +62,31 @@ impl SessionManager {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             session_timeout,
         }
+    }
+
+    /// Validates PSK according to TR-03130 requirements
+    /// The eID-Server MUST verify that each SessionIdentifier of a PSK used by an eID-Client
+    /// matches a PSK ID previously negotiated at the eID-Interface for one specific session
+    pub async fn validate_psk(
+        &self,
+        psk_id: &str,
+        session_id: &str,
+    ) -> Result<bool, TransmitError> {
+        let sessions = self.sessions.read().await;
+
+        // Find session by ID and validate PSK
+        if let Some(session) = sessions.get(session_id) {
+            if let Some(security_context) = &session.security_context {
+                if let Some(stored_psk_id) = &security_context.psk_id {
+                    return Ok(stored_psk_id == psk_id);
+                }
+            }
+        }
+
+        // PSK validation failed - return error as per TR-03130
+        Err(TransmitError::SessionError(
+            "Invalid PSK or session not found".to_string(),
+        ))
     }
 
     pub async fn create_session(&self, tls_info: TlsSessionInfo) -> Result<Session, TransmitError> {
@@ -157,22 +184,33 @@ mod tests {
         let tls_info = TlsSessionInfo {
             session_id: "test-session".to_string(),
             cipher_suite: "TLS_AES_128_GCM_SHA256".to_string(),
+            psk_id: Some("test-psk-id".to_string()),
+            psk_key: Some("test-psk-key".to_string()),
         };
 
         // Create session
-        let session = manager.create_session(tls_info).await.unwrap();
+        let session = manager
+            .create_session(tls_info)
+            .await
+            .expect("Session creation should succeed");
         assert_eq!(session.state, SessionState::Created);
 
         // Get session
-        let retrieved = manager.get_session(&session.id).await.unwrap();
+        let retrieved = manager
+            .get_session(&session.id)
+            .await
+            .expect("Session retrieval should succeed");
         assert_eq!(retrieved.id, session.id);
 
         // Update state
         manager
             .update_session_state(&session.id, SessionState::Active)
             .await
-            .unwrap();
-        let updated = manager.get_session(&session.id).await.unwrap();
+            .expect("State update should succeed");
+        let updated = manager
+            .get_session(&session.id)
+            .await
+            .expect("Session retrieval should succeed");
         assert_eq!(updated.state, SessionState::Active);
 
         // Test expiration
@@ -187,9 +225,14 @@ mod tests {
         let tls_info = TlsSessionInfo {
             session_id: "test-session".to_string(),
             cipher_suite: "TLS_AES_128_GCM_SHA256".to_string(),
+            psk_id: Some("test-psk-id".to_string()),
+            psk_key: Some("test-psk-key".to_string()),
         };
 
-        let session = manager.create_session(tls_info).await.unwrap();
+        let session = manager
+            .create_session(tls_info)
+            .await
+            .expect("Session creation should succeed");
 
         // Try invalid transition
         assert!(

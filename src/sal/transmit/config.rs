@@ -18,10 +18,13 @@ impl Default for TransmitConfig {
             client_url: "http://127.0.0.1:24727/eID-Client".to_string(),
             max_apdu_size: 4096,
             session_timeout_secs: 30,
+            // According to TR-03130, eID-Server SHALL support TLS_RSA_PSK_WITH_AES_256_CBC_SHA
+            // and MAY support additional TLS_RSA_PSK_* cipher suites according to TR-03116, Part 4
             allowed_cipher_suites: vec![
-                "TLS_AES_128_GCM_SHA256".to_string(),
-                "TLS_AES_256_GCM_SHA384".to_string(),
-                "TLS_CHACHA20_POLY1305_SHA256".to_string(),
+                "TLS_RSA_PSK_WITH_AES_256_CBC_SHA".to_string(),
+                "TLS_RSA_PSK_WITH_AES_128_CBC_SHA".to_string(),
+                "TLS_RSA_PSK_WITH_AES_256_GCM_SHA384".to_string(),
+                "TLS_RSA_PSK_WITH_AES_128_GCM_SHA256".to_string(),
             ],
         }
     }

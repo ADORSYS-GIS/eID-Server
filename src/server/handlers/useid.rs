@@ -105,12 +105,6 @@ mod tests {
             common::models::{AttributeRequester, OperationsRequester, ResultCode},
             use_id::model::{AgeVerificationRequest, PlaceVerificationRequest, UseIDRequest},
         },
-        sal::transmit::{
-            channel::{HttpApduTransport, TransmitChannel},
-            config::TransmitConfig,
-            protocol::ProtocolHandler,
-            session::SessionManager,
-        },
     };
     use axum::{
         body::Body,
@@ -133,16 +127,11 @@ mod tests {
         let service = create_test_service();
         let service_arc = Arc::new(service);
 
-        // Create a TransmitChannel for testing
-        let protocol_handler = ProtocolHandler::new();
-        let session_manager = SessionManager::new(Duration::from_secs(60));
-        let config = TransmitConfig::default();
-        let apdu_transport = Arc::new(crate::sal::transmit::channel::TestApduTransport);
-        let transmit_channel = Arc::new(TransmitChannel::new(
-            protocol_handler,
-            session_manager,
-            apdu_transport,
-            config,
+        let transmit_channel = Arc::new(crate::sal::transmit::channel::TransmitChannel::new(
+            crate::sal::transmit::protocol::ProtocolHandler::new(),
+            crate::sal::transmit::session::SessionManager::new(Duration::from_secs(60)),
+            Arc::new(crate::sal::transmit::channel::TestApduTransport),
+            crate::sal::transmit::config::TransmitConfig::default(),
         ));
 
         AppState {
@@ -367,13 +356,5 @@ mod tests {
 
         let empty_headers = HeaderMap::new();
         assert!(!is_soap_content_type(&empty_headers));
-    }
-
-    #[tokio::test]
-    async fn test_use_id_handler() {
-        let config = TransmitConfig::default();
-        let _apdu_transport = Arc::new(crate::sal::transmit::channel::TestApduTransport);
-        let transport = HttpApduTransport::new(config);
-        let _transport = Arc::new(transport);
     }
 }

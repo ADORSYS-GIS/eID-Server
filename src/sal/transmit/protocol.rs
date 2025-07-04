@@ -237,6 +237,10 @@ impl ProtocolHandler {
                 "http://www.bsi.bund.de/ecard/api/1.1/resultminor/ifd#cardError",
                 Some(msg.clone()),
             ),
+            TransmitError::InvalidPSK(msg) => TransmitResult::error(
+                "http://www.bsi.bund.de/ecard/api/1.1/resultminor/useID#invalidPSK",
+                Some(msg.clone()),
+            ),
             TransmitError::InternalError(msg) => TransmitResult::error(
                 "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#internalError",
                 Some(msg.clone()),
@@ -311,7 +315,9 @@ mod tests {
         };
 
         // Format the response
-        let xml = handler.format_transmit_response(&response).unwrap();
+        let xml = handler
+            .format_transmit_response(&response)
+            .expect("Response formatting should succeed");
 
         // Verify XML structure (simplified check)
         assert!(xml.contains("<?xml version=\"1.0\" encoding=\"UTF-8\""));
@@ -344,7 +350,7 @@ mod tests {
         let result = handler.parse_transmit(&xml);
         assert!(result.is_ok(), "Valid XML should parse successfully");
 
-        let transmit = result.unwrap();
+        let transmit = result.expect("Valid XML should parse successfully");
         assert_eq!(transmit.slot_handle, "slot-123");
         assert_eq!(transmit.input_apdu_info.len(), 2);
         assert_eq!(

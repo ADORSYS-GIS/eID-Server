@@ -23,7 +23,7 @@ struct ClientResponse {
 
 #[async_trait]
 pub trait ApduTransport: Send + Sync {
-    async fn transmit_apdu(&self, apdu: Vec<u8>) -> Result<Vec<u8>, String>;
+    async fn transmit_apdu(&self, apdu: Vec<u8>, slot_handle: &str) -> Result<Vec<u8>, String>;
 }
 
 /// HTTP-based APDU transport implementation
@@ -51,7 +51,7 @@ impl HttpApduTransport {
 
 #[async_trait]
 impl ApduTransport for HttpApduTransport {
-    async fn transmit_apdu(&self, apdu: Vec<u8>) -> Result<Vec<u8>, String> {
+    async fn transmit_apdu(&self, apdu: Vec<u8>, slot_handle: &str) -> Result<Vec<u8>, String> {
         let apdu_hex = hex::encode_upper(&apdu);
         let client_url = &self.config.client_url;
 
@@ -59,13 +59,13 @@ impl ApduTransport for HttpApduTransport {
         let xml_payload = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <Transmit xmlns="urn:iso:std:iso-iec:24727:tech:schema">
-    <SlotHandle>slot-1</SlotHandle>
+    <SlotHandle>{}</SlotHandle>
     <InputAPDUInfo>
         <InputAPDU>{}</InputAPDU>
         <AcceptableStatusCode>9000</AcceptableStatusCode>
     </InputAPDUInfo>
 </Transmit>"#,
-            apdu_hex
+            slot_handle, apdu_hex
         );
 
         // Send request with retries
@@ -167,7 +167,9 @@ impl TransmitChannel {
         config: TransmitConfig,
     ) -> Self {
         // Validate configuration
-        config.validate().expect("Invalid transmit configuration");
+        if let Err(e) = config.validate() {
+            panic!("Invalid transmit configuration: {}", e);
+        }
 
         Self {
             protocol_handler: Arc::new(protocol_handler),
@@ -227,10 +229,12 @@ impl TransmitChannel {
         }
 
         // Get TLS session info from connection (use mock for now, but in production extract from connection)
-        // According to TR-03130, we need to validate the TLS channel security
+        // According to TR-03130, we need to validate the TLS channel security and PSK
         let tls_info = super::session::TlsSessionInfo {
             session_id: "mock-session-id".to_string(),
-            cipher_suite: "TLS_AES_128_GCM_SHA256".to_string(), // TR-03130 requires TLS 1.2 or higher
+            cipher_suite: "TLS_RSA_PSK_WITH_AES_256_CBC_SHA".to_string(), // TR-03130 required cipher suite
+            psk_id: Some("mock-psk-id".to_string()), // In production, extract from TLS-2 connection
+            psk_key: Some("mock-psk-key".to_string()), // In production, validate against negotiated PSK
         };
 
         // Get or create client session using SlotHandle as specified in TR-03112
@@ -276,7 +280,7 @@ impl TransmitChannel {
         // Process client APDU requests with timeout
         let output_apdu_result = timeout(
             std::time::Duration::from_secs(self.config.session_timeout_secs as u64),
-            self.process_client_apdus(&transmit.input_apdu_info),
+            self.process_client_apdus(&transmit.input_apdu_info, &transmit.slot_handle),
         )
         .await
         .map_err(|_| TransmitError::SessionError("Request timeout".to_string()))?;
@@ -294,7 +298,7 @@ impl TransmitChannel {
                 let error_result = self.protocol_handler.error_to_result(&e);
                 let error_response = TransmitResponse {
                     result: error_result,
-                    output_apdu: Vec::new(), // No APDUs in error case
+                    output_apdu: Vec::new(),
                 };
                 let xml_response = self
                     .protocol_handler
@@ -305,7 +309,7 @@ impl TransmitChannel {
 
         // Build successful response for eID-Client per TR-03130
         let response = TransmitResponse {
-            result: super::protocol::TransmitResult::ok(), // "ok" result as defined in TR-03112
+            result: super::protocol::TransmitResult::ok(),
             output_apdu,
         };
 
@@ -322,6 +326,7 @@ impl TransmitChannel {
     async fn process_client_apdus(
         &self,
         apdu_info: &[InputAPDUInfo],
+        slot_handle: &str,
     ) -> Result<Vec<String>, TransmitError> {
         // Check if the client sent any APDUs
         if apdu_info.is_empty() {
@@ -334,11 +339,9 @@ impl TransmitChannel {
 
         // TR-03112 specifies that APDUs should be processed sequentially
         for info in apdu_info {
-            match self.process_single_client_apdu(info).await {
+            match self.process_single_client_apdu(info, slot_handle).await {
                 Ok(output_apdu) => output_apdus.push(output_apdu),
                 Err(e) => {
-                    // According to TR-03130, we need to stop processing on error
-                    // and return what we have processed so far along with an error
                     return Err(e);
                 }
             }
@@ -355,6 +358,7 @@ impl TransmitChannel {
     async fn process_single_client_apdu(
         &self,
         info: &InputAPDUInfo,
+        slot_handle: &str,
     ) -> Result<String, TransmitError> {
         // Validate APDU format according to ISO 7816-4
         if info.input_apdu.is_empty() {
@@ -397,7 +401,7 @@ impl TransmitChannel {
 
         let response_bytes = timeout(
             timeout_duration,
-            self.apdu_transport.transmit_apdu(apdu_bytes),
+            self.apdu_transport.transmit_apdu(apdu_bytes, slot_handle),
         )
         .await
         .map_err(|_| TransmitError::CardError("APDU transmission timeout".to_string()))?
@@ -426,7 +430,7 @@ pub struct TestApduTransport;
 
 #[async_trait]
 impl ApduTransport for TestApduTransport {
-    async fn transmit_apdu(&self, apdu: Vec<u8>) -> Result<Vec<u8>, String> {
+    async fn transmit_apdu(&self, apdu: Vec<u8>, _slot_handle: &str) -> Result<Vec<u8>, String> {
         // Convert APDU to uppercase hex for easier comparison
         let apdu_hex = hex::encode_upper(&apdu);
 
@@ -434,15 +438,20 @@ impl ApduTransport for TestApduTransport {
         match apdu_hex.as_str() {
             // SELECT eID application
             "00A4040008A000000167455349" => {
-                Ok(hex::decode("6F108408A000000167455349A5049F6501FF9000").unwrap())
+                Ok(hex::decode("6F108408A000000167455349A5049F6501FF9000")
+                    .expect("Hardcoded test hex should decode successfully"))
             }
             // READ BINARY
-            "00B0000000" => Ok(hex::decode("0102030405060708090A0B0C0D0E0F109000").unwrap()),
-            "00B0000010" => Ok(hex::decode("1112131415161718191A1B1C1D1E1F209000").unwrap()),
+            "00B0000000" => Ok(hex::decode("0102030405060708090A0B0C0D0E0F109000")
+                .expect("Hardcoded test hex should decode successfully")),
+            "00B0000010" => Ok(hex::decode("1112131415161718191A1B1C1D1E1F209000")
+                .expect("Hardcoded test hex should decode successfully")),
             // SELECT eID.SIGN application
-            "00A4040008A000000167455349474E" => Ok(hex::decode("9000").unwrap()),
+            "00A4040008A000000167455349474E" => {
+                Ok(hex::decode("9000").expect("Hardcoded test hex should decode successfully"))
+            }
             // Default success response for unknown APDUs
-            _ => Ok(vec![0x90, 0x00]), // SW_SUCCESS
+            _ => Ok(vec![0x90, 0x00]),
         }
     }
 }
@@ -516,8 +525,8 @@ mod tests {
         let response = channel
             .handle_request(malformed_xml.as_bytes())
             .await
-            .unwrap();
-        let response_xml = String::from_utf8(response).unwrap();
+            .expect("Error handling should return valid XML response");
+        let response_xml = String::from_utf8(response).expect("Response should be valid UTF-8");
         // Should contain error result
         assert!(response_xml.contains(
             "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"
@@ -536,8 +545,8 @@ mod tests {
         let response = channel
             .handle_request(missing_slot.as_bytes())
             .await
-            .unwrap();
-        let response_xml = String::from_utf8(response).unwrap();
+            .expect("Error handling should return valid XML response");
+        let response_xml = String::from_utf8(response).expect("Response should be valid UTF-8");
         // Should contain error result for missing SlotHandle
         assert!(response_xml.contains(
             "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"
@@ -560,8 +569,8 @@ mod tests {
         let response = channel
             .handle_request(wrong_status_xml.as_bytes())
             .await
-            .unwrap();
-        let response_xml = String::from_utf8(response).unwrap();
+            .expect("Error handling should return valid XML response");
+        let response_xml = String::from_utf8(response).expect("Response should be valid UTF-8");
 
         // Should contain error for status code mismatch
         assert!(response_xml.contains(
@@ -595,8 +604,8 @@ mod tests {
         let response = channel
             .handle_request(invalid_apdu_xml.as_bytes())
             .await
-            .unwrap();
-        let response_xml = String::from_utf8(response).unwrap();
+            .expect("Error handling should return valid XML response");
+        let response_xml = String::from_utf8(response).expect("Response should be valid UTF-8");
 
         // Should contain error for invalid APDU
         assert!(response_xml.contains(
@@ -620,13 +629,46 @@ mod tests {
         let response = channel
             .handle_request(empty_apdu_xml.as_bytes())
             .await
-            .unwrap();
-        let response_xml = String::from_utf8(response).unwrap();
+            .expect("Error handling should return valid XML response");
+        let response_xml = String::from_utf8(response).expect("Response should be valid UTF-8");
 
         // Should contain error for empty APDU
         assert!(response_xml.contains(
             "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"
         ));
+    }
+
+    #[tokio::test]
+    async fn test_transmit_channel_custom_slot_handle() {
+        use super::super::config::TransmitConfig;
+        use super::super::protocol::ProtocolHandler;
+        use super::super::session::SessionManager;
+
+        let protocol_handler = ProtocolHandler::new();
+        let session_manager = SessionManager::new(std::time::Duration::from_secs(60));
+        let config = TransmitConfig::default();
+        let apdu_transport = Arc::new(TestApduTransport);
+        let channel =
+            TransmitChannel::new(protocol_handler, session_manager, apdu_transport, config);
+
+        // Test with custom slot handle
+        let test_request = r#"<?xml version="1.0" encoding="UTF-8"?>
+<Transmit xmlns="urn:iso:std:iso-iec:24727:tech:schema">
+    <SlotHandle>custom-slot-456</SlotHandle>
+    <InputAPDUInfo>
+        <InputAPDU>00A4040007A0000002471001</InputAPDU>
+        <AcceptableStatusCode>9000</AcceptableStatusCode>
+    </InputAPDUInfo>
+</Transmit>"#;
+
+        let result = channel.handle_request(test_request.as_bytes()).await;
+        assert!(result.is_ok(), "Request should be processed successfully");
+
+        let response = result.expect("Request should be processed successfully");
+        let response_str = String::from_utf8_lossy(&response);
+
+        // Verify that the response contains a successful result
+        assert!(response_str.contains("http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok"));
     }
 
     #[tokio::test]
