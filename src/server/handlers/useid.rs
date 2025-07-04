@@ -948,8 +948,7 @@ mod tests {
 
         assert!(
             tc_token.contains("<TCTokenType xmlns=\"http://www.bsi.bund.de/ecard/api/1.1\">"),
-            "Expected TCTokenType with namespace, got: {}",
-            tc_token
+            "Expected TCTokenType with namespace, got: {tc_token}"
         );
         assert!(
             tc_token.contains("<ServerAddress>https://test.eid.example.com/ecard</ServerAddress>")
