@@ -52,8 +52,8 @@ impl Server {
             .install_default()
             .map_err(|_| eyre!("Failed to install CryptoProvider"))?;
 
-        let cert_path = "certss/cert.pem";
-        let key_path = "certss/key.pem";
+        let cert_path = "Config/cert.pem";
+        let key_path = "Config/key.pem";
 
         let cert_file = File::open(Path::new(cert_path))
             .map_err(|e| eyre!("Failed to open cert file: {}", e))?;
@@ -121,7 +121,6 @@ impl Server {
             .route("/eIDService/getServerInfo", get(get_server_info))
             .route("/did-authenticate", post(did_authenticate))
             .route("/refresh", get(refresh_handler))
-
             .layer(cors_layer)
             .layer(trace_layer)
             .with_state(state);
