@@ -3,8 +3,9 @@ use crate::sal::transmit::session::SessionManager;
 use async_trait::async_trait;
 use hex;
 use quick_xml::de::from_str;
+use quick_xml::se::to_string;
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::timeout;
 use tracing::error;
@@ -19,6 +20,25 @@ use super::{
 struct ClientResponse {
     #[serde(rename = "OutputAPDU")]
     output_apdu: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename = "Transmit")]
+struct TransmitRequest {
+    #[serde(rename = "@xmlns")]
+    xmlns: String,
+    #[serde(rename = "SlotHandle")]
+    slot_handle: String,
+    #[serde(rename = "InputAPDUInfo")]
+    input_apdu_info: InputAPDUInfoRequest,
+}
+
+#[derive(Debug, Serialize)]
+struct InputAPDUInfoRequest {
+    #[serde(rename = "InputAPDU")]
+    input_apdu: String,
+    #[serde(rename = "AcceptableStatusCode")]
+    acceptable_status_code: String,
 }
 
 #[async_trait]
@@ -55,18 +75,22 @@ impl ApduTransport for HttpApduTransport {
         let apdu_hex = hex::encode_upper(&apdu);
         let client_url = &self.config.client_url;
 
-        // Create XML payload according to TR-03130
-        let xml_payload = format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
-<Transmit xmlns="urn:iso:std:iso-iec:24727:tech:schema">
-    <SlotHandle>{}</SlotHandle>
-    <InputAPDUInfo>
-        <InputAPDU>{}</InputAPDU>
-        <AcceptableStatusCode>9000</AcceptableStatusCode>
-    </InputAPDUInfo>
-</Transmit>"#,
-            slot_handle, apdu_hex
-        );
+        // Create XML payload according to TR-03130 using serde and quick_xml
+        let transmit_request = TransmitRequest {
+            xmlns: "urn:iso:std:iso-iec:24727:tech:schema".to_string(),
+            slot_handle: slot_handle.to_string(),
+            input_apdu_info: InputAPDUInfoRequest {
+                input_apdu: apdu_hex,
+                acceptable_status_code: "9000".to_string(),
+            },
+        };
+
+        let xml_payload = match to_string(&transmit_request) {
+            Ok(xml) => format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>{}", xml),
+            Err(e) => {
+                return Err(format!("Failed to serialize XML: {}", e));
+            }
+        };
 
         // Send request with retries
         let mut retries = 0;
