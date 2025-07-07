@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 # Web server framework
 axum = { version = "0.8.3", features = ["macros"] }
+tower = "0.5"
 
 # Web framework dependencies
 hyper = { version = "0.14", features = ["client", "http1"] }
@@ -37,8 +38,6 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22.1"
 rand = "0.9.1"
-tower = "0.5"
-
 
 [dev-dependencies]
 http-body-util = "0.1"

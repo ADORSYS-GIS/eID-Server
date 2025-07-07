@@ -68,9 +68,13 @@ impl Server {
 
         let router = axum::Router::new()
             .route("/health", get(health_check))
-            .route("/eIDService/useID", post(handlers::useid::use_id_handler))
-            .route("/eIDService/getServerInfo", get(get_server_info))
-            .route("/eIDService/paos", post(paos_handler))
+            .nest(
+                "/eIDService",
+                Router::new()
+                    .route("/useID", post(handlers::useid::use_id_handler))
+                    .route("/getServerInfo", get(get_server_info))
+                    .route("/paos", post(paos_handler)),
+            )
             .layer(cors)
             .layer(trace_layer)
             .with_state(state);

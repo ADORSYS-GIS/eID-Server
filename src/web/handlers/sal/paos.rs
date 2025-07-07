@@ -14,7 +14,7 @@ pub async fn paos_handler<S: EIDService + EidService>(
     State(state): State<AppState<S>>,
     body: String,
 ) -> impl IntoResponse {
-    // Parse the SOAP request
+    // Parse the SOAP request and handle potential error
     let paos_request = match parse_start_paos(&body) {
         Ok(request) => request,
         Err(err) => {
@@ -28,8 +28,7 @@ pub async fn paos_handler<S: EIDService + EidService>(
     };
 
     // Verify session identifier exists
-    let session_id = paos_request.session_identifier;
-    if session_id.is_empty() {
+    if paos_request.session_identifier.is_empty() {
         error!("Session identifier is required");
         return (
             StatusCode::BAD_REQUEST,
@@ -37,6 +36,7 @@ pub async fn paos_handler<S: EIDService + EidService>(
         )
             .into_response();
     }
+    let session_id = paos_request.session_identifier;
 
     // Verify session validity
     let is_valid = match state.use_id.is_session_valid(&session_id) {
@@ -75,12 +75,7 @@ pub async fn paos_handler<S: EIDService + EidService>(
             }
         };
 
-        // Find the session and update its connection handles
-        if let Some(session) = session_manager
-            .sessions
-            .iter_mut()
-            .find(|s| s.id == session_id)
-        {
+        if let Some(session) = session_manager.get_session_mut(&session_id) {
             for handle in paos_request.connection_handles {
                 session.connection_handles.push(ConnectionHandle {
                     connection_handle: handle,
@@ -106,7 +101,7 @@ pub async fn paos_handler<S: EIDService + EidService>(
             .into_response();
     }
 
-    (StatusCode::OK).into_response()
+    StatusCode::OK.into_response()
 }
 
 #[cfg(test)]
@@ -128,21 +123,23 @@ mod tests {
     use super::*;
 
     fn create_test_state(id: String) -> AppState<UseidService> {
+        // Create session manager and add test session
+        let mut session_manager = SessionManager::new();
+        session_manager.add_session(SessionInfo {
+            id: id.clone(),
+            expiry: Utc::now() + Duration::minutes(5),
+            psk: None,
+            operations: vec![],
+            connection_handles: vec![],
+        });
+
         let service = UseidService {
             config: EIDServiceConfig {
                 max_sessions: 10,
                 session_timeout_minutes: 5,
                 ecard_server_address: Some("https://test.eid.example.com/ecard".to_string()),
             },
-            session_manager: Arc::new(RwLock::new(SessionManager {
-                sessions: vec![SessionInfo {
-                    id,
-                    expiry: Utc::now() + Duration::minutes(5),
-                    psk: None,
-                    operations: vec![],
-                    connection_handles: vec![],
-                }],
-            })),
+            session_manager: Arc::new(RwLock::new(session_manager)),
         };
         let service_arc = Arc::new(service);
         AppState {

@@ -1,10 +1,14 @@
 //! Service layer that provides the business logic of the domain.
 
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::thread;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use color_eyre::Result;
 use rand::Rng;
+use rand::distr::Alphanumeric;
 
 use super::models::ServerInfo;
 use super::ports::{EIDService, EidService};
@@ -51,7 +55,57 @@ pub struct ConnectionHandle {
 
 #[derive(Clone, Debug)]
 pub struct SessionManager {
-    pub sessions: Vec<SessionInfo>,
+    sessions: HashMap<String, SessionInfo>,
+}
+
+impl SessionManager {
+    /// Creates a new SessionManager
+    pub fn new() -> Self {
+        Self {
+            sessions: HashMap::new(),
+        }
+    }
+
+    /// Adds a session to the manager
+    pub fn add_session(&mut self, session: SessionInfo) {
+        self.sessions.insert(session.id.clone(), session);
+    }
+
+    /// Retrieves a session by ID if it exists and hasn't expired
+    pub fn get_session(&self, session_id: &str) -> Option<SessionInfo> {
+        self.sessions.get(session_id).cloned()
+    }
+
+    /// Removes expired sessions
+    pub fn cleanup_expired(&mut self) {
+        let now = Utc::now();
+        self.sessions.retain(|_, session| session.expiry > now);
+    }
+
+    /// Checks if session exists and is valid
+    pub fn is_valid_session(&self, session_id: &str) -> bool {
+        if let Some(session) = self.sessions.get(session_id) {
+            session.expiry > Utc::now()
+        } else {
+            false
+        }
+    }
+
+    /// Returns current session count
+    pub fn session_count(&self) -> usize {
+        self.sessions.len()
+    }
+
+    /// Retrieves a mutable reference to a session by ID if it exists
+    pub fn get_session_mut(&mut self, session_id: &str) -> Option<&mut SessionInfo> {
+        self.sessions.get_mut(session_id)
+    }
+}
+
+impl Default for SessionManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Main service for handling useID requests
@@ -63,11 +117,27 @@ pub struct UseidService {
 
 impl UseidService {
     pub fn new(config: EIDServiceConfig) -> Self {
+        let session_manager = Arc::new(RwLock::new(SessionManager::new()));
+
+        // Clone Arc for the cleanup thread
+        let cleanup_manager = session_manager.clone();
+
+        // Spawn background thread for periodic session cleanup
+        thread::spawn(move || {
+            loop {
+                // Cleanup every 60 seconds
+                thread::sleep(Duration::from_secs(60));
+
+                // Cleanup expired sessions
+                if let Ok(mut mgr) = cleanup_manager.write() {
+                    mgr.cleanup_expired();
+                }
+            }
+        });
+
         Self {
             config,
-            session_manager: Arc::new(RwLock::new(SessionManager {
-                sessions: Vec::new(),
-            })),
+            session_manager,
         }
     }
 
@@ -75,7 +145,7 @@ impl UseidService {
     pub fn generate_psk(&self) -> String {
         // Generate a 32-character random PSK
         rand::rng()
-            .sample_iter(&rand::distr::Alphanumeric)
+            .sample_iter(Alphanumeric)
             .take(32)
             .map(char::from)
             .collect()
@@ -141,6 +211,21 @@ impl UseidService {
         }
         required
     }
+
+    /// Generates a unique session ID
+    fn generate_session_id() -> String {
+        let timestamp = Utc::now()
+            .timestamp_nanos_opt()
+            .expect("System time out of range for timestamp_nanos_opt()");
+
+        let random_part: String = rand::rng()
+            .sample_iter(Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect();
+
+        format!("{timestamp}-{random_part}")
+    }
 }
 
 // Implement the EIDService trait for UseidService
@@ -162,13 +247,14 @@ impl EIDService for UseidService {
     /// Check if a session is valid by its ID
     fn is_session_valid(&self, session_id: &str) -> Result<bool> {
         match self.session_manager.read() {
-            Ok(mgr) => Ok(mgr.sessions.iter().any(|s| s.id == session_id)),
+            Ok(mgr) => Ok(mgr.is_valid_session(session_id)),
             Err(e) => Err(color_eyre::eyre::eyre!(
                 "Session manager lock poisoned: {}",
                 e
             )),
         }
     }
+
     fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse> {
         // Validate the request: Check if any operations are REQUIRED
         let required_operations = Self::get_required_operations(&request._use_operations);
@@ -181,30 +267,8 @@ impl EIDService for UseidService {
             });
         }
 
-        // Check if we've reached the maximum number of sessions
-        if self.session_manager.read().unwrap().sessions.len() >= self.config.max_sessions {
-            return Ok(UseIDResponse {
-                ..Default::default()
-            });
-        }
-
-        fn generate_session_id() -> String {
-            let timestamp = Utc::now()
-                .timestamp_nanos_opt()
-                .expect("System time out of range for timestamp_nanos_opt()");
-
-            let random_part: String = rand::rng()
-                .sample_iter(&rand::distr::Alphanumeric)
-                .take(16)
-                .map(char::from)
-                .collect();
-
-            format!("{timestamp}-{random_part}")
-        }
-
-        let session_id = generate_session_id();
-
-        // Generate or use provided PSK
+        // Generate session ID and PSK
+        let session_id = Self::generate_session_id();
         let psk = match &request._psk {
             Some(psk) => psk.key.clone(),
             None => self.generate_psk(),
@@ -224,22 +288,30 @@ impl EIDService for UseidService {
 
         // Store the session
         {
-            let mut sessions = self.session_manager.write().unwrap().sessions.clone();
+            let mut manager = self
+                .session_manager
+                .write()
+                .map_err(|e| color_eyre::eyre::eyre!("Session manager lock poisoned: {}", e))?;
 
-            // Remove expired sessions first
-            let now = Utc::now();
-            sessions.retain(|session| session.expiry > now);
+            // Cleanup expired sessions before adding new one
+            manager.cleanup_expired();
 
-            // Add new session
-            sessions.push(session_info.clone());
+            // Check session limit
+            if manager.session_count() >= self.config.max_sessions {
+                return Ok(UseIDResponse {
+                    result: ResultMajor {
+                        // FIX: Use correct error result code
+                        result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error"
+                            .to_string(),
+                    },
+                    ..Default::default()
+                });
+            }
 
-            tracing::info!(
-                "Created new session: {}, expires: {}, operations: {:?}",
-                session_id,
-                expiry,
-                session_info.operations
-            );
+            manager.add_session(session_info);
         }
+
+        tracing::info!("Created new session: {}, expires: {}", session_id, expiry);
 
         // Build response
         Ok(UseIDResponse {
