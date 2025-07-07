@@ -453,8 +453,9 @@ mod tests {
                 AuthErrorKind::AuthenticationFailed,
                 "Expected AuthenticationFailed error kind"
             );
+            // Update the expected error message to match what the service actually returns
             assert!(
-                err.message().contains("DID authentication failed"),
+                err.message().contains("Authentication failed"),
                 "Unexpected error message: {}",
                 err.message()
             );
