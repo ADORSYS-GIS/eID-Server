@@ -89,16 +89,16 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
     fn parse_request(&self, body: &str) -> Result<SoapDIDAuthenticateRequest, AuthError> {
         // Basic validation: check if input resembles XML
         if body.trim().is_empty() || !body.contains('<') || !body.contains('>') {
-            return Err(AuthError::InvalidConnection {
-                reason: "Invalid XML: input is empty or lacks XML structure".to_string(),
-            });
+            return Err(AuthError::invalid_connection(
+                "Invalid XML: input is empty or lacks XML structure",
+            ));
         }
 
         // Check for SOAP envelope
         if !body.contains("soapenv:Envelope") {
-            return Err(AuthError::InvalidConnection {
-                reason: "Invalid XML: missing SOAP Envelope".to_string(),
-            });
+            return Err(AuthError::invalid_connection(
+                "Invalid XML: missing SOAP Envelope",
+            ));
         }
 
         let mut reader = Reader::from_str(body);
@@ -127,10 +127,9 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(e)) => {
                     let name = e.local_name().as_ref().to_vec();
-                    current_element =
-                        String::from_utf8(name).map_err(|_| AuthError::InvalidConnection {
-                            reason: "Invalid UTF-8 in element name".to_string(),
-                        })?;
+                    current_element = String::from_utf8(name).map_err(|_| {
+                        AuthError::invalid_connection("Invalid UTF-8 in element name")
+                    })?;
                     if current_element == "DIDAuthenticate" {
                         found_did_authenticate = true;
                     }
@@ -139,8 +138,8 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
                 Ok(Event::Text(e)) => {
                     let text = e
                         .unescape()
-                        .map_err(|_| AuthError::InvalidConnection {
-                            reason: "Failed to unescape text content".to_string(),
+                        .map_err(|_| {
+                            AuthError::invalid_connection("Failed to unescape text content")
                         })?
                         .to_string();
                     tracing::debug!("Text content for {}: {}", current_element, text);
@@ -172,16 +171,16 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
                 Ok(Event::Eof) => {
                     // Ensure we found the DIDAuthenticate element
                     if !found_did_authenticate {
-                        return Err(AuthError::InvalidConnection {
-                            reason: "Invalid XML: missing DIDAuthenticate element".to_string(),
-                        });
+                        return Err(AuthError::invalid_connection(
+                            "Invalid XML: missing DIDAuthenticate element",
+                        ));
                     }
                     break;
                 }
                 Err(e) => {
-                    return Err(AuthError::InvalidConnection {
-                        reason: format!("Failed to parse XML request: {e}"),
-                    });
+                    return Err(AuthError::invalid_connection(format!(
+                        "Failed to parse XML request: {e}"
+                    )));
                 }
                 _ => {}
             }
@@ -215,8 +214,8 @@ impl<T: DIDAuthenticate + Send + Sync> DIDAuthenticateHandler<T> {
             },
         };
 
-        let xml = to_string(&envelope).map_err(|e| AuthError::InvalidConnection {
-            reason: format!("Failed to serialize SOAP response: {e}"),
+        let xml = to_string(&envelope).map_err(|e| {
+            AuthError::protocol_error(format!("Failed to serialize SOAP response: {e}"))
         })?;
 
         // Prepend XML declaration
@@ -279,7 +278,8 @@ mod tests {
     use super::*;
     use crate::domain::eid::{
         models::{
-            AuthError, DIDAuthenticateRequest, DIDAuthenticateResponse, ResponseProtocolData,
+            AuthError, AuthErrorKind, DIDAuthenticateRequest, DIDAuthenticateResponse,
+            ResponseProtocolData,
         },
         ports::DIDAuthenticate,
         service::{EIDServiceConfig, UseidService},
@@ -353,22 +353,16 @@ mod tests {
             if self.should_succeed {
                 // Validate the request has required fields
                 if request.connection_handle.channel_handle.is_none() {
-                    return Err(AuthError::InvalidConnection {
-                        reason: "Missing channel handle".to_string(),
-                    });
+                    return Err(AuthError::invalid_connection("Missing channel handle"));
                 }
 
                 if request.did_name.is_empty() {
-                    return Err(AuthError::InvalidConnection {
-                        reason: "Missing DID name".to_string(),
-                    });
+                    return Err(AuthError::invalid_connection("Missing DID name"));
                 }
 
                 Ok(self.response_data.as_ref().unwrap().clone())
             } else {
-                Err(AuthError::InvalidConnection {
-                    reason: "Authentication failed".to_string(),
-                })
+                Err(AuthError::authentication_failed("Authentication failed"))
             }
         }
     }
@@ -453,10 +447,19 @@ mod tests {
         let result = handler.handle(&soap_request).await;
         assert!(result.is_err(), "Expected authentication failure");
 
-        if let Err(AuthError::InvalidConnection { reason }) = result {
-            assert_eq!(reason, "Authentication failed");
+        if let Err(err) = result {
+            assert_eq!(
+                err.kind(),
+                AuthErrorKind::AuthenticationFailed,
+                "Expected AuthenticationFailed error kind"
+            );
+            assert!(
+                err.message().contains("DID authentication failed"),
+                "Unexpected error message: {}",
+                err.message()
+            );
         } else {
-            panic!("Expected InvalidConnection error");
+            panic!("Expected an error");
         }
     }
 
@@ -535,11 +538,20 @@ mod tests {
         let result = handler.parse_request(invalid_xml);
         assert!(result.is_err());
 
-        if let Err(AuthError::InvalidConnection { reason }) = result {
-            assert!(
-                reason.contains("Failed to parse XML request") || reason.contains("Invalid XML"),
-                "Unexpected error reason: {reason}"
+        if let Err(err) = result {
+            assert_eq!(
+                err.kind(),
+                AuthErrorKind::InvalidConnection,
+                "Expected InvalidConnection error kind"
             );
+            assert_eq!(
+                err.message(),
+                "Invalid connection handle: Invalid XML: input is empty or lacks XML structure",
+                "Unexpected error message: {}",
+                err.message()
+            );
+        } else {
+            panic!("Expected an error");
         }
     }
 

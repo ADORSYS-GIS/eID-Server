@@ -51,34 +51,140 @@ pub struct DocumentVerificationRights {
     pub version: Option<String>,
 }
 
-#[derive(Debug, Error)]
-pub enum AuthError {
-    #[error("Invalid connection handle: {reason}")]
-    InvalidConnection { reason: String },
-
-    #[error("Certificate validation failed: {details}")]
-    InvalidCertificate { details: String },
-
-    #[error("User cancelled authentication")]
+/// Categorization of authentication error types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthErrorKind {
+    InvalidConnection,
+    InvalidCertificate,
     UserCancellation,
+    CardCommunicationError,
+    AuthenticationFailed,
+    CryptoError,
+    ProtocolError,
+    TimeoutError,
+    InternalError,
+}
 
-    #[error("Card communication error: {reason}")]
-    CardCommunicationError { reason: String },
+/// Unified authentication error type
+#[derive(Debug, Error)]
+#[error("{message}")]
+pub struct AuthError {
+    kind: AuthErrorKind,
+    message: String,
+}
 
-    #[error("Authentication failed: {reason}")]
-    AuthenticationFailed { reason: String },
+impl AuthError {
+    // Existing methods (unchanged)
+    pub fn new(kind: AuthErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
 
-    #[error("Cryptographic operation failed: {operation}")]
-    CryptoError { operation: String },
+    pub fn invalid_connection(reason: impl Into<String>) -> Self {
+        Self::new(
+            AuthErrorKind::InvalidConnection,
+            format!("Invalid connection handle: {}", reason.into()),
+        )
+    }
 
-    #[error("Protocol violation: {details}")]
-    ProtocolError { details: String },
+    pub fn invalid_certificate(details: impl Into<String>) -> Self {
+        Self::new(
+            AuthErrorKind::InvalidCertificate,
+            format!("Certificate validation failed: {}", details.into()),
+        )
+    }
 
-    #[error("Timeout occurred during {operation}")]
-    TimeoutError { operation: String },
+    pub fn user_cancellation() -> Self {
+        Self::new(
+            AuthErrorKind::UserCancellation,
+            "User cancelled authentication",
+        )
+    }
 
-    #[error("Internal server error: {message}")]
-    InternalError { message: String },
+    pub fn card_communication_error(reason: impl Into<String>) -> Self {
+        Self::new(
+            AuthErrorKind::CardCommunicationError,
+            format!("Card communication error: {}", reason.into()),
+        )
+    }
+
+    pub fn authentication_failed(reason: impl Into<String>) -> Self {
+        Self::new(
+            AuthErrorKind::AuthenticationFailed,
+            format!("Authentication failed: {}", reason.into()),
+        )
+    }
+
+    pub fn crypto_error(operation: impl Into<String>) -> Self {
+        Self::new(
+            AuthErrorKind::CryptoError,
+            format!("Cryptographic operation failed: {}", operation.into()),
+        )
+    }
+
+    pub fn protocol_error(details: impl Into<String>) -> Self {
+        Self::new(
+            AuthErrorKind::ProtocolError,
+            format!("Protocol violation: {}", details.into()),
+        )
+    }
+
+    pub fn timeout_error(operation: impl Into<String>) -> Self {
+        Self::new(
+            AuthErrorKind::TimeoutError,
+            format!("Timeout occurred during {}", operation.into()),
+        )
+    }
+
+    pub fn internal_error(message: impl Into<String>) -> Self {
+        Self::new(
+            AuthErrorKind::InternalError,
+            format!("Internal server error: {}", message.into()),
+        )
+    }
+
+    pub fn to_result_codes(&self) -> (String, Option<String>) {
+        match self.kind {
+            AuthErrorKind::UserCancellation => (
+                "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
+                Some(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#cancellationByUser"
+                        .to_string(),
+                ),
+            ),
+            AuthErrorKind::InvalidCertificate => (
+                "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
+                Some(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#invalidCertificate"
+                        .to_string(),
+                ),
+            ),
+            AuthErrorKind::AuthenticationFailed => (
+                "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
+                Some(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#authenticationFailed"
+                        .to_string(),
+                ),
+            ),
+            _ => (
+                "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
+                Some(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#generalError".to_string(),
+                ),
+            ),
+        }
+    }
+
+    // New accessor methods
+    pub fn kind(&self) -> AuthErrorKind {
+        self.kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -152,15 +258,13 @@ impl DIDAuthenticateRequest {
 
     pub fn validate(&self) -> Result<(), AuthError> {
         if !self.connection_handle.is_valid() {
-            return Err(AuthError::InvalidConnection {
-                reason: "Connection handle contains invalid data".to_string(),
-            });
+            return Err(AuthError::invalid_connection(
+                "Connection handle contains invalid data",
+            ));
         }
 
         if self.did_name.is_empty() {
-            return Err(AuthError::ProtocolError {
-                details: "DID name cannot be empty".to_string(),
-            });
+            return Err(AuthError::protocol_error("DID name cannot be empty"));
         }
 
         Ok(())
@@ -243,41 +347,6 @@ impl DIDAuthenticateResponse {
 
     pub fn is_success(&self) -> bool {
         self.result_major.contains("ok")
-    }
-}
-
-impl AuthError {
-    /// Maps AuthError to eCard-API result codes
-    pub fn to_result_codes(&self) -> (String, Option<String>) {
-        match self {
-            AuthError::UserCancellation => (
-                "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
-                Some(
-                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#cancellationByUser"
-                        .to_string(),
-                ),
-            ),
-            AuthError::InvalidCertificate { .. } => (
-                "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
-                Some(
-                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#invalidCertificate"
-                        .to_string(),
-                ),
-            ),
-            AuthError::AuthenticationFailed { .. } => (
-                "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
-                Some(
-                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/sal#authenticationFailed"
-                        .to_string(),
-                ),
-            ),
-            _ => (
-                "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
-                Some(
-                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#generalError".to_string(),
-                ),
-            ),
-        }
     }
 }
 

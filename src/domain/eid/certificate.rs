@@ -46,9 +46,7 @@ impl CertificateStore {
 
         // Skip X.509 parsing for CV certificates; assume CVCA is valid BER
         if certificate_der.is_empty() {
-            return Err(AuthError::InvalidCertificate {
-                details: "Certificate data is empty".to_string(),
-            });
+            return Err(AuthError::invalid_certificate("Certificate data is empty"));
         }
 
         let mut roots = self.trusted_roots.write().await;
@@ -72,21 +70,18 @@ impl CertificateStore {
 
     pub async fn load_cv_chain(&self) -> Result<Vec<u8>, AuthError> {
         let cert_paths = vec![
-            std::env::var("CV_TERM_PATH").map_err(|_| AuthError::InvalidCertificate {
-                details: "CV_TERM_PATH not set in .env".to_string(),
-            })?,
-            std::env::var("CV_DV_PATH").map_err(|_| AuthError::InvalidCertificate {
-                details: "CV_DV_PATH not set in .env".to_string(),
-            })?,
-            std::env::var("CVCA_PATH").map_err(|_| AuthError::InvalidCertificate {
-                details: "CVCA_PATH not set in .env".to_string(),
-            })?,
+            std::env::var("CV_TERM_PATH")
+                .map_err(|_| AuthError::invalid_certificate("CV_TERM_PATH not set in .env"))?,
+            std::env::var("CV_DV_PATH")
+                .map_err(|_| AuthError::invalid_certificate("CV_DV_PATH not set in .env"))?,
+            std::env::var("CVCA_PATH")
+                .map_err(|_| AuthError::invalid_certificate("CVCA_PATH not set in .env"))?,
         ];
 
         let mut chain = Vec::new();
         for path in cert_paths {
-            let cert_data = fs::read(&path).map_err(|e| AuthError::InvalidCertificate {
-                details: format!("Failed to read certificate at {path}: {e}"),
+            let cert_data = fs::read(&path).map_err(|e| {
+                AuthError::invalid_certificate(format!("Failed to read certificate at {path}: {e}"))
             })?;
             chain.extend_from_slice(&cert_data);
         }
@@ -104,9 +99,9 @@ impl CertificateStore {
         );
 
         if certificate_chain_der.is_empty() {
-            return Err(AuthError::InvalidCertificate {
-                details: "Certificate chain data is empty".to_string(),
-            });
+            return Err(AuthError::invalid_certificate(
+                "Certificate chain data is empty",
+            ));
         }
 
         // For CV certificates, delegate validation to the eID card
@@ -163,9 +158,9 @@ impl CertificateStore {
             ),
             oid => {
                 warn!("Unsupported signature algorithm: {}", oid);
-                Err(AuthError::InvalidCertificate {
-                    details: format!("Unsupported signature algorithm: {oid}"),
-                })
+                Err(AuthError::invalid_certificate(format!(
+                    "Unsupported signature algorithm: {oid}"
+                )))
             }
         }
     }
@@ -176,10 +171,9 @@ impl CertificateStore {
     ) -> Result<Vec<String>, AuthError> {
         debug!("Extracting certificate permissions");
 
-        let (_, cert) =
-            parse_x509_certificate(certificate_der).map_err(|e| AuthError::InvalidCertificate {
-                details: format!("Failed to parse certificate: {e}"),
-            })?;
+        let (_, cert) = parse_x509_certificate(certificate_der).map_err(|e| {
+            AuthError::invalid_certificate(format!("Failed to parse certificate: {e}"))
+        })?;
 
         let mut permissions = Vec::new();
         for extension in cert.extensions() {
@@ -239,9 +233,7 @@ impl CertificateStore {
         public_key
             .verify(data, signature)
             .map(|_| true)
-            .map_err(|_| AuthError::InvalidCertificate {
-                details: "RSA signature verification failed".to_string(),
-            })
+            .map_err(|_| AuthError::crypto_error("RSA signature verification failed"))
     }
 
     // Define verify_ecdsa_signature
@@ -256,9 +248,7 @@ impl CertificateStore {
         public_key
             .verify(data, signature)
             .map(|_| true)
-            .map_err(|_| AuthError::InvalidCertificate {
-                details: "ECDSA signature verification failed".to_string(),
-            })
+            .map_err(|_| AuthError::crypto_error("ECDSA signature verification failed"))
     }
 
     fn process_extended_key_usage(
@@ -346,9 +336,7 @@ impl CryptoProvider {
         let mut challenge = vec![0u8; CHALLENGE_SIZE];
         self.rng.fill(&mut challenge).map_err(|e| {
             error!("Failed to generate challenge: {:?}", e);
-            AuthError::CryptoError {
-                operation: "Challenge generation".to_string(),
-            }
+            AuthError::crypto_error("Challenge generation")
         })?;
 
         debug!("Successfully generated challenge");
@@ -371,21 +359,21 @@ impl CryptoProvider {
 
         // Input validation
         if data.is_empty() {
-            return Err(AuthError::CryptoError {
-                operation: "Signature verification - empty data".to_string(),
-            });
+            return Err(AuthError::crypto_error(
+                "Signature verification - empty data",
+            ));
         }
 
         if signature.is_empty() {
-            return Err(AuthError::CryptoError {
-                operation: "Signature verification - empty signature".to_string(),
-            });
+            return Err(AuthError::crypto_error(
+                "Signature verification - empty signature",
+            ));
         }
 
         if public_key_der.is_empty() {
-            return Err(AuthError::CryptoError {
-                operation: "Signature verification - empty public key".to_string(),
-            });
+            return Err(AuthError::crypto_error(
+                "Signature verification - empty public key",
+            ));
         }
 
         // Try different signature algorithms
@@ -419,18 +407,14 @@ impl CryptoProvider {
         );
 
         if peer_public_key.is_empty() {
-            return Err(AuthError::CryptoError {
-                operation: "ECDH - empty peer public key".to_string(),
-            });
+            return Err(AuthError::crypto_error("ECDH - empty peer public key"));
         }
 
         // Generate ephemeral private key
         let private_key = agreement::EphemeralPrivateKey::generate(&agreement::X25519, &*self.rng)
             .map_err(|e| {
                 error!("Failed to generate ephemeral private key: {:?}", e);
-                AuthError::CryptoError {
-                    operation: "ECDH ephemeral key generation".to_string(),
-                }
+                AuthError::crypto_error("ECDH ephemeral key generation")
             })?;
 
         // Create public key from peer's bytes
@@ -444,9 +428,7 @@ impl CryptoProvider {
             })
             .map_err(|e| {
                 error!("ECDH key agreement failed: {:?}", e);
-                AuthError::CryptoError {
-                    operation: "ECDH key agreement".to_string(),
-                }
+                AuthError::crypto_error("ECDH key agreement")
             })?;
 
         debug!("ECDH key exchange completed successfully");
@@ -464,9 +446,9 @@ impl CryptoProvider {
         );
 
         if shared_secret.is_empty() {
-            return Err(AuthError::CryptoError {
-                operation: "Key derivation - empty shared secret".to_string(),
-            });
+            return Err(AuthError::crypto_error(
+                "Key derivation - empty shared secret",
+            ));
         }
 
         // HKDF parameters
@@ -482,16 +464,12 @@ impl CryptoProvider {
         prk.expand(&[info_enc], hkdf::HKDF_SHA256)
             .map_err(|e| {
                 error!("Encryption key derivation failed: {:?}", e);
-                AuthError::CryptoError {
-                    operation: "Encryption key derivation".to_string(),
-                }
+                AuthError::crypto_error("Encryption key derivation")
             })?
             .fill(&mut enc_key)
             .map_err(|e| {
                 error!("Encryption key derivation fill failed: {:?}", e);
-                AuthError::CryptoError {
-                    operation: "Encryption key derivation fill".to_string(),
-                }
+                AuthError::crypto_error("Encryption key derivation fill")
             })?;
 
         // Expand phase - derive MAC key
@@ -499,16 +477,12 @@ impl CryptoProvider {
         prk.expand(&[info_mac], hkdf::HKDF_SHA256)
             .map_err(|e| {
                 error!("MAC key derivation failed: {:?}", e);
-                AuthError::CryptoError {
-                    operation: "MAC key derivation".to_string(),
-                }
+                AuthError::crypto_error("MAC key derivation")
             })?
             .fill(&mut mac_key)
             .map_err(|e| {
                 error!("MAC key derivation fill failed: {:?}", e);
-                AuthError::CryptoError {
-                    operation: "MAC key derivation fill".to_string(),
-                }
+                AuthError::crypto_error("MAC key derivation fill")
             })?;
 
         debug!("Successfully derived session keys");
@@ -522,16 +496,12 @@ impl CryptoProvider {
         let private_key = agreement::EphemeralPrivateKey::generate(&agreement::X25519, &*self.rng)
             .map_err(|e| {
                 error!("Keypair generation failed: {:?}", e);
-                AuthError::CryptoError {
-                    operation: "ECDH keypair generation".to_string(),
-                }
+                AuthError::crypto_error("ECDH keypair generation")
             })?;
 
         let public_key = private_key.compute_public_key().map_err(|e| {
             error!("Public key computation failed: {:?}", e);
-            AuthError::CryptoError {
-                operation: "Public key computation".to_string(),
-            }
+            AuthError::crypto_error("Public key computation")
         })?;
 
         let private_key_placeholder = vec![0u8; 32];
@@ -550,9 +520,9 @@ impl CryptoProvider {
             "SHA384" => &digest::SHA384,
             "SHA512" => &digest::SHA512,
             _ => {
-                return Err(AuthError::CryptoError {
-                    operation: format!("Unsupported hash algorithm: {algorithm}"),
-                });
+                return Err(AuthError::crypto_error(format!(
+                    "Unsupported hash algorithm: {algorithm}"
+                )));
             }
         };
 
@@ -660,9 +630,7 @@ impl CardCommunicator {
     ) -> Result<String, AuthError> {
         debug!("Sending DIDAuthenticate to AusweisApp2: {:?}", connection);
         if !connection.is_valid() {
-            return Err(AuthError::InvalidConnection {
-                reason: "Invalid connection handle".to_string(),
-            });
+            return Err(AuthError::invalid_connection("Invalid connection handle"));
         }
 
         let soap_request = self
@@ -680,17 +648,15 @@ impl CardCommunicator {
             .body(soap_request)
             .send()
             .await
-            .map_err(|e| AuthError::CardCommunicationError {
-                reason: format!("Failed to send request to AusweisApp2: {e}"),
+            .map_err(|e| {
+                AuthError::card_communication_error(format!(
+                    "Failed to send request to AusweisApp2: {e}"
+                ))
             })?;
 
-        let response_text =
-            response
-                .text()
-                .await
-                .map_err(|e| AuthError::CardCommunicationError {
-                    reason: format!("Failed to read AusweisApp2 response: {e}"),
-                })?;
+        let response_text = response.text().await.map_err(|e| {
+            AuthError::card_communication_error(format!("Failed to read AusweisApp2 response: {e}"))
+        })?;
 
         let personal_data = self.parse_soap_response(&response_text)?;
         Ok(personal_data)
@@ -707,8 +673,6 @@ impl CardCommunicator {
         let cv_chain = self.certificate_store.load_cv_chain().await?;
         let cv_chain_b64 = base64::engine::general_purpose::STANDARD.encode(&cv_chain);
 
-        let cert_desc = "<SubjectURL>https://eservice.example.com</SubjectURL><CommCertificates>{tls_cert_hash}</CommCertificates>";
-
         let envelope = SoapEnvelope {
             soapenv: "http://schemas.xmlsoap.org/soap/envelope/",
             ecard: "http://www.bsi.bund.de/ecard/api/1.1",
@@ -724,7 +688,7 @@ impl CardCommunicator {
                     authentication_protocol_data: AuthenticationProtocolDataXml {
                         protocol: "urn:iso:std:iso-iec:24727:part:3:profile:EAC1InputType",
                         certificate: cv_chain_b64,
-                        certificate_description: cert_desc.to_string(),
+                        certificate_description: auth_data.certificate_description.clone(),
                         required_chat: auth_data.required_chat.clone(),
                         optional_chat: auth_data.optional_chat.clone(),
                         authenticated_auxiliary_data: auth_data.transaction_info.clone(),
@@ -735,9 +699,7 @@ impl CardCommunicator {
 
         let xml = to_string(&envelope).map_err(|e| {
             error!("Failed to serialize SOAP request: {}", e);
-            AuthError::InvalidConnection {
-                reason: format!("Failed to serialize SOAP request: {e}"),
-            }
+            AuthError::protocol_error(format!("Failed to serialize SOAP request: {e}"))
         })?;
 
         debug!("Successfully built SOAP request");
@@ -751,52 +713,93 @@ impl CardCommunicator {
         let mut buf = Vec::new();
         let mut personal_data = String::new();
         let mut in_personal_data = false;
+        let mut in_result = false;
+        let mut result_major = None;
+        let mut result_minor = None;
         let mut depth = 0;
 
         loop {
             match reader.read_event_into(&mut buf) {
-                Ok(Event::Start(e)) => {
-                    if e.name().as_ref() == b"PersonalData" {
+                Ok(Event::Start(e)) => match e.name().as_ref() {
+                    b"PersonalData" => {
                         in_personal_data = true;
                         depth += 1;
                     }
-                }
+                    b"Result" => {
+                        in_result = true;
+                        depth += 1;
+                    }
+                    b"ResultMajor" => {
+                        if in_result {
+                            let text = reader.read_text(e.name()).map_err(|e| {
+                                AuthError::card_communication_error(format!(
+                                    "Failed to read ResultMajor: {e}"
+                                ))
+                            })?;
+                            result_major = Some(text.to_string());
+                        }
+                    }
+                    b"ResultMinor" => {
+                        if in_result {
+                            let text = reader.read_text(e.name()).map_err(|e| {
+                                AuthError::card_communication_error(format!(
+                                    "Failed to read ResultMinor: {e}"
+                                ))
+                            })?;
+                            result_minor = Some(text.to_string());
+                        }
+                    }
+                    _ => {}
+                },
                 Ok(Event::Text(e)) if in_personal_data => {
                     personal_data = e
                         .unescape()
-                        .map_err(|_| AuthError::CardCommunicationError {
-                            reason: "Failed to unescape PersonalData".to_string(),
+                        .map_err(|_| {
+                            AuthError::card_communication_error("Failed to unescape PersonalData")
                         })?
                         .to_string();
                 }
-                Ok(Event::End(e)) => {
-                    if e.name().as_ref() == b"PersonalData" {
+                Ok(Event::End(e)) => match e.name().as_ref() {
+                    b"PersonalData" => {
                         in_personal_data = false;
                         depth -= 1;
                     }
-                }
+                    b"Result" => {
+                        in_result = false;
+                        depth -= 1;
+                    }
+                    _ => {}
+                },
                 Ok(Event::Eof) => {
                     if depth != 0 {
-                        return Err(AuthError::CardCommunicationError {
-                            reason: "Malformed XML: Unclosed PersonalData tag".to_string(),
-                        });
+                        return Err(AuthError::card_communication_error(
+                            "Malformed XML: Unclosed tags",
+                        ));
                     }
                     break;
                 }
                 Err(e) => {
-                    return Err(AuthError::CardCommunicationError {
-                        reason: format!("Failed to parse AusweisApp2 response: {e}"),
-                    });
+                    return Err(AuthError::card_communication_error(format!(
+                        "Failed to parse AusweisApp2 response: {e}"
+                    )));
                 }
                 _ => {}
             }
             buf.clear();
         }
 
+        if let Some(major) = result_major {
+            if major.contains("error") {
+                return Err(AuthError::card_communication_error(format!(
+                    "SOAP response indicates error: major={major}, minor={result_minor:?}"
+                )));
+            }
+        }
+
         if personal_data.is_empty() {
-            return Err(AuthError::CardCommunicationError {
-                reason: "No PersonalData found in response".to_string(),
-            });
+            return Err(AuthError::card_communication_error(
+                "No PersonalData found in response",
+            ));
         }
         Ok(personal_data)
     }

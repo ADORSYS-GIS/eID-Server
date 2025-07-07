@@ -357,13 +357,11 @@ impl DIDAuthenticateService {
             .connection_handle
             .channel_handle
             .as_ref()
-            .ok_or_else(|| AuthError::InvalidConnection {
-                reason: "Missing channel handle".to_string(),
-            })?;
+            .ok_or_else(|| AuthError::invalid_connection("Missing channel handle"))?;
 
         let _session_info = {
-            let sessions = sessions.read().map_err(|e| AuthError::InternalError {
-                message: format!("Failed to acquire sessions lock: {e}"),
+            let sessions = sessions.read().map_err(|e| {
+                AuthError::internal_error(format!("Failed to acquire sessions lock: {e}"))
             })?;
             debug!(
                 "Available sessions: {:?}",
@@ -374,23 +372,19 @@ impl DIDAuthenticateService {
                 .find(|s| s.id == *session_id)
                 .ok_or_else(|| {
                     error!("Session {} not found", session_id);
-                    AuthError::InvalidConnection {
-                        reason: "Invalid or expired session".to_string(),
-                    }
+                    AuthError::invalid_connection("Invalid or expired session")
                 })?;
             if session.expiry < Utc::now() {
                 error!("Session {} expired at {}", session_id, session.expiry);
-                return Err(AuthError::TimeoutError {
-                    operation: "Session validation".to_string(),
-                });
+                return Err(AuthError::timeout_error("Session validation"));
             }
             session.clone()
         };
 
         let certificate_der = base64::engine::general_purpose::STANDARD
             .decode(&request.authentication_protocol_data.certificate_description)
-            .map_err(|e| AuthError::InvalidCertificate {
-                details: format!("Failed to decode certificate: {e}"),
+            .map_err(|e| {
+                AuthError::invalid_certificate(format!("Failed to decode certificate: {e}"))
             })?;
 
         let is_valid = self
@@ -398,9 +392,9 @@ impl DIDAuthenticateService {
             .validate_certificate_chain(certificate_der)
             .await?;
         if !is_valid {
-            return Err(AuthError::InvalidCertificate {
-                details: "Certificate chain validation failed".to_string(),
-            });
+            return Err(AuthError::invalid_certificate(
+                "Certificate chain validation failed",
+            ));
         }
 
         let personal_data = self
