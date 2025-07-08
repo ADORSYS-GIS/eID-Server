@@ -230,18 +230,31 @@ impl UseidService {
 
 // Implement the EIDService trait for UseidService
 impl EIDService for UseidService {
-    fn get_config(&self) -> EIDServiceConfig {
-        self.config.clone()
-    }
+    fn update_session_connection_handles(
+        &self,
+        session_id: &str,
+        connection_handles: Vec<String>,
+    ) -> Result<()> {
+        let mut manager = self
+            .session_manager
+            .write()
+            .map_err(|e| color_eyre::eyre::eyre!("Session manager lock poisoned: {}", e))?;
 
-    fn get_session_manager(&self) -> Arc<std::sync::RwLock<SessionManager>> {
-        self.session_manager.clone()
-    }
-
-    /// Returns a clone of the UseidService instance
-    /// This is useful for passing the service around without ownership issues
-    fn get_use_id_service(&self) -> Self {
-        self.clone()
+        if let Some(session) = manager.get_session_mut(session_id) {
+            for handle in connection_handles {
+                session.connection_handles.push(ConnectionHandle {
+                    connection_handle: handle,
+                });
+            }
+            tracing::debug!(
+                "Updated session {} with {} connection handles",
+                session_id,
+                session.connection_handles.len()
+            );
+            Ok(())
+        } else {
+            Err(color_eyre::eyre::eyre!("Session not found"))
+        }
     }
 
     /// Check if a session is valid by its ID

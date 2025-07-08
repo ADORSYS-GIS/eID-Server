@@ -2,10 +2,7 @@ use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use tracing::{debug, error, warn};
 
 use crate::{
-    domain::eid::{
-        ports::{EIDService, EidService},
-        service::ConnectionHandle,
-    },
+    domain::eid::ports::{EIDService, EidService},
     sal::paos::parser::parse_start_paos,
     server::AppState,
 };
@@ -60,40 +57,12 @@ pub async fn paos_handler<S: EIDService + EidService>(
             .into_response();
     }
 
-    // Update session manager with connection handles
-    let update_result = {
-        let session_manager_arc = state.use_id.get_session_manager();
-        let mut session_manager = match session_manager_arc.write() {
-            Ok(mgr) => mgr,
-            Err(err) => {
-                error!("Session manager lock poisoned: {}", err);
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Internal server error".to_string(),
-                )
-                    .into_response();
-            }
-        };
-
-        if let Some(session) = session_manager.get_session_mut(&session_id) {
-            for handle in paos_request.connection_handles {
-                session.connection_handles.push(ConnectionHandle {
-                    connection_handle: handle,
-                });
-            }
-            debug!(
-                "Updated session {} with {} connection handles",
-                session_id,
-                session.connection_handles.len()
-            );
-            Ok(())
-        } else {
-            error!("Session {} not found in session manager", session_id);
-            Err(())
-        }
-    };
-
-    if update_result.is_err() {
+    // Update session with connection handles using the service interface
+    if let Err(err) = state
+        .use_id
+        .update_session_connection_handles(&session_id, paos_request.connection_handles)
+    {
+        error!("Failed to update session connection handles: {}", err);
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Failed to update session with connection handles".to_string(),
@@ -101,6 +70,7 @@ pub async fn paos_handler<S: EIDService + EidService>(
             .into_response();
     }
 
+    debug!("Successfully updated session: {}", session_id);
     StatusCode::OK.into_response()
 }
 
