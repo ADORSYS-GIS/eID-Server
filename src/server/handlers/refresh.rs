@@ -1,8 +1,9 @@
 use axum::{http::StatusCode, response::Redirect};
 
-// Replace this URL with your actual eService or result page URL
-const ESERVICE_URL: &str = "https://localhost:8443/";
-
 pub async fn refresh_handler() -> (StatusCode, Redirect) {
-    (StatusCode::SEE_OTHER, Redirect::to(ESERVICE_URL))
+    // Read from environment variable or fallback to default URL
+    let url = std::env::var("REFRESH_REDIRECT_URL")
+        .unwrap_or_else(|_| "https://localhost:8443/".to_string());
+
+    (StatusCode::SEE_OTHER, Redirect::to(&url))
 }

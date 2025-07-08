@@ -32,6 +32,8 @@ use crate::domain::eid::ports::{DIDAuthenticate, EIDService, EidService};
 pub struct AppServerConfig {
     pub host: String,
     pub port: u16,
+    pub tls_cert_path: String,
+    pub tls_key_path: String,
 }
 
 #[derive(Debug, Clone)]
@@ -45,37 +47,34 @@ pub struct Server {
 }
 
 impl Server {
-    /// Loads TLS certificates from key.pem and cert.pem files.
-    fn load_tls_config() -> Result<RustlsConfig> {
+    /// Loads TLS certificates using provided paths
+    fn load_tls_config(cert_path: &str, key_path: &str) -> Result<RustlsConfig> {
         // Install the default CryptoProvider (ring)
         default_provider()
             .install_default()
             .map_err(|_| eyre!("Failed to install CryptoProvider"))?;
 
-        let cert_path = "Config/cert.pem";
-        let key_path = "Config/key.pem";
-
         let cert_file = File::open(Path::new(cert_path))
-            .map_err(|e| eyre!("Failed to open cert file: {}", e))?;
+            .map_err(|e| eyre!("Failed to open cert file at '{}': {}", cert_path, e))?;
         let mut cert_reader = BufReader::new(cert_file);
         let certs: Vec<CertificateDer> = certs(&mut cert_reader)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| eyre!("Error reading certs: {e}"))?
+            .map_err(|e| eyre!("Error reading certs from '{}': {e}", cert_path))?
             .into_iter()
             .collect();
 
-        let key_file =
-            File::open(Path::new(key_path)).map_err(|e| eyre!("Failed to open key file: {}", e))?;
+        let key_file = File::open(Path::new(key_path))
+            .map_err(|e| eyre!("Failed to open key file at '{}': {}", key_path, e))?;
         let mut key_reader = BufReader::new(key_file);
         let mut keys: Vec<PrivateKeyDer> = pkcs8_private_keys(&mut key_reader)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| eyre!("Error reading private key: {}", e))?
+            .map_err(|e| eyre!("Error reading private key from '{}': {}", key_path, e))?
             .into_iter()
             .map(PrivateKeyDer::from)
             .collect();
 
         if keys.is_empty() {
-            return Err(eyre!("No private key found in key.pem"));
+            return Err(eyre!("No private key found in '{}'", key_path));
         }
 
         let server_config = ServerConfig::builder()
@@ -87,10 +86,7 @@ impl Server {
     }
 
     /// Creates a new HTTPS server.
-    pub async fn new(
-        eid_service: impl EIDService + EidService + DIDAuthenticate,
-        _config: AppServerConfig,
-    ) -> Result<Self> {
+    pub async fn new(eid_service: impl EIDService + EidService + DIDAuthenticate) -> Result<Self> {
         let trace_layer =
             TraceLayer::new_for_http().make_span_with(|request: &'_ axum::extract::Request<_>| {
                 let uri = request.uri().to_string();
@@ -138,7 +134,7 @@ impl Server {
         listener.set_nonblocking(true)?;
         let bound_port = listener.local_addr()?.port();
 
-        let tls_config = Self::load_tls_config()?;
+        let tls_config = Self::load_tls_config(&config.tls_cert_path, &config.tls_key_path)?;
 
         tracing::debug!("Server listening on https://{}:{}", config.host, bound_port);
 

@@ -11,6 +11,8 @@ axum-server = { version = "0.7.0", features = ["tls-rustls"] }
 # Web framework dependencies
 hyper = { version = "1.4", features = ["client", "http1"] }
 tower-http = { version = "0.6.2", features = ["trace", "cors"] }
+async-trait = "0.1"
+reqwest = { version = "0.12.8", default-features = false, features = ["json", "rustls-tls"] }
 
 # Async runtime
 tokio = { version = "1.46", features = ["full"] }
@@ -43,8 +45,6 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22.1"
 rand = "0.9.1"
-async-trait = "0.1"
-reqwest = { version = "0.12.8", default-features = false, features = ["json", "rustls-tls"] }
 urlencoding = "2.1"
 flate2 = "1.0"
 
@@ -57,7 +57,6 @@ pem = "3.0"
 
 [dev-dependencies]
 http-body-util = "0.1"
-color-eyre = "0.6"
 base64 = "0.22.1"
 url = "2.5.4"
 libflate = "2.1.0"

@@ -10,6 +10,8 @@ pub struct Config {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    pub tls_cert_path: String, 
+    pub tls_key_path: String,
 }
 
 impl Config {
@@ -19,12 +21,12 @@ impl Config {
             // Set default values
             .set_default("server.host", "localhost")?
             .set_default("server.port", 3000)?
-            // Add a config file under config/settings.toml
-            // or any other format supported by `config` crate
+            // Add default values for TLS paths
+            .set_default("server.tls_cert_path", "Config/cert.pem")?
+            .set_default("server.tls_key_path", "Config/key.pem")?
+            // Add a config file
             .add_source(File::with_name("config/settings").required(false))
-            // This will allow us to override config values via environment variables
-            // The environment variables should be prefixed with 'APP_'
-            // Example: APP_SERVER_HOST=127.0.0.1
+            // Add environment variables
             .add_source(Environment::with_prefix("APP").separator("_"))
             .build()?;
 
