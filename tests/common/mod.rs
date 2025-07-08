@@ -14,8 +14,8 @@ pub async fn spawn_server() -> String {
         config.server.host = "localhost".to_string();
         config.server.port = 0;
         // Set TLS paths to test certificates
-        config.server.tls_cert_path = format!("{}/tests/tls/cert.pem", base_dir);
-        config.server.tls_key_path = format!("{}/tests/tls/key.pem", base_dir);
+        config.server.tls_cert_path = format!("{base_dir}/tests/tls/cert.pem");
+        config.server.tls_key_path = format!("{base_dir}/tests/tls/key.pem");
         config
     };
     let eid_service = UseidService::new(EIDServiceConfig::default());
@@ -27,9 +27,7 @@ pub async fn spawn_server() -> String {
         tls_key_path: config.server.tls_key_path,
     };
 
-    let server = Server::new(eid_service)
-        .await
-        .unwrap();
+    let server = Server::new(eid_service).await.unwrap();
 
     let (port, handle) = server.run_with_port(server_config.clone()).await.unwrap();
     tokio::spawn(handle);

@@ -10,7 +10,7 @@ pub struct Config {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
-    pub tls_cert_path: String, 
+    pub tls_cert_path: String,
     pub tls_key_path: String,
 }
 
