@@ -13,9 +13,9 @@ pub async fn spawn_server() -> String {
         let mut config = Config::load().unwrap();
         config.server.host = "localhost".to_string();
         config.server.port = 0;
-        // Set TLS paths to test certificates
-        config.server.tls_cert_path = format!("{base_dir}/tests/tls/cert.pem");
-        config.server.tls_key_path = format!("{base_dir}/tests/tls/key.pem");
+        // Fixed paths - added "/tests/tls/" directory
+        config.server.tls_cert_path = format!("{base_dir}/Config/cert.pem");
+        config.server.tls_key_path = format!("{base_dir}/Config/key.pem");
         config
     };
     let eid_service = UseidService::new(EIDServiceConfig::default());
