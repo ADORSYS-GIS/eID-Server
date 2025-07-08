@@ -5,4 +5,3 @@ pub mod eid;
 pub mod sal;
 pub mod server;
 pub mod telemetry;
-pub mod web;

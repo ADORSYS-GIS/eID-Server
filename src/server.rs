@@ -1,10 +1,12 @@
 //! This module contains the HTTP server implementation.
 
+mod handlers;
+mod responses;
+
 use std::sync::Arc;
 
 use crate::eid::get_server_info::handler::get_server_info;
-use crate::web::handlers;
-use crate::web::handlers::sal::paos::paos_handler;
+use crate::server::handlers::sal::paos::paos_handler;
 use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
 use color_eyre::eyre::eyre;
