@@ -36,7 +36,7 @@ use super::model::{UseIDRequest, UseIDRequestEnvelope};
 #[allow(dead_code)]
 pub fn parse_use_id_request(xml: &str) -> Result<UseIDRequest, UseIdError> {
     let env: UseIDRequestEnvelope = from_str(xml)
-        .map_err(|e| UseIdError::GenericError(format!("XML deserialization failed: {}", e)))?;
+        .map_err(|e| UseIdError::GenericError(format!("XML deserialization failed: {e}")))?;
 
     let req = env._body;
     let result = UseIDRequest {

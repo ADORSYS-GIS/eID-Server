@@ -70,7 +70,7 @@ pub fn build_use_id_response(response: &UseIDResponse) -> Result<String, UseIdEr
     };
 
     let xml_inner = to_string(&envelope)
-        .map_err(|e| UseIdError::GenericError(format!("Failed to build XML message: {}", e)))?;
+        .map_err(|e| UseIdError::GenericError(format!("Failed to build XML message: {e}")))?;
 
     let xml_with_ns = xml_inner.replacen(
         "<soapenv:Envelope",
@@ -82,8 +82,7 @@ pub fn build_use_id_response(response: &UseIDResponse) -> Result<String, UseIdEr
     );
 
     Ok(format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>{}",
-        xml_with_ns
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>{xml_with_ns}"        
     ))
 }
 
