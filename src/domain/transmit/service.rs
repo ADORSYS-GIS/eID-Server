@@ -128,9 +128,10 @@ impl HttpTransmitService {
             )));
         }
 
-        response.text().await.map_err(|e| {
-            TransmitError::NetworkError(format!("Failed to read response body: {e}"))
-        })
+        response
+            .text()
+            .await
+            .map_err(|e| TransmitError::NetworkError(format!("Failed to read response body: {e}")))
     }
 }
 
