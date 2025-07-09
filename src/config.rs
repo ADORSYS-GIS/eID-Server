@@ -38,7 +38,7 @@ pub struct TransmitConfig {
 
 impl Default for TransmitConfig {
     fn default() -> Self {
-        // Read URLs from environment variables with fallback to defaults
+        // Read client URL from environment variable with fallback to default
         let client_url = env::var("EID_CLIENT_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:24727/eID-Client".to_string());
 
@@ -54,6 +54,25 @@ impl Default for TransmitConfig {
             min_tls_version: "TLSv1.2".to_string(),
             client_url,
         }
+    }
+}
+
+impl TransmitConfig {
+    /// Validates the configuration settings
+    pub fn validate(&self) -> Result<(), String> {
+        if self.client_url.is_empty() {
+            return Err("Client URL cannot be empty".to_string());
+        }
+        if self.max_apdu_size == 0 {
+            return Err("Max APDU size must be greater than 0".to_string());
+        }
+        if self.session_timeout_secs == 0 {
+            return Err("Session timeout must be greater than 0".to_string());
+        }
+        if self.allowed_cipher_suites.is_empty() {
+            return Err("At least one cipher suite must be allowed".to_string());
+        }
+        Ok(())
     }
 }
 
@@ -83,7 +102,6 @@ impl Config {
             .add_source(Environment::with_prefix("APP").separator("_"))
             .build()?;
 
-        // Try to deserialize, if it fails due to missing fields, use defaults
         match config.clone().try_deserialize::<Config>() {
             Ok(config) => Ok(config),
             Err(_) => {

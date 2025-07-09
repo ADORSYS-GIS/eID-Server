@@ -131,7 +131,7 @@ mod tests {
             crate::sal::transmit::protocol::ProtocolHandler::new(),
             crate::sal::transmit::session::SessionManager::new(Duration::from_secs(60)),
             Arc::new(crate::sal::transmit::test_service::TestTransmitService),
-            crate::sal::transmit::config::TransmitConfig::default(),
+            crate::config::TransmitConfig::default(),
         ));
 
         AppState {

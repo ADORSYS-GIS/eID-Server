@@ -18,11 +18,11 @@ use tower_http::{
     trace::TraceLayer,
 };
 
+use crate::config::TransmitConfig;
 use crate::domain::eid::ports::{EIDService, EidService};
 use crate::domain::transmit::service::{HttpTransmitService, TransmitServiceConfig};
 use crate::sal::transmit::{
-    channel::TransmitChannel, config::TransmitConfig, protocol::ProtocolHandler,
-    session::SessionManager,
+    channel::TransmitChannel, protocol::ProtocolHandler, session::SessionManager,
 };
 
 #[derive(Debug, Clone)]
@@ -74,9 +74,8 @@ impl Server {
 
         // Initialize the TransmitChannel components
         let protocol_handler = ProtocolHandler::new();
-        let session_manager = SessionManager::new(Duration::from_secs(
-            config.transmit.session_timeout_secs,
-        ));
+        let session_manager =
+            SessionManager::new(Duration::from_secs(config.transmit.session_timeout_secs));
         let transmit_service_config = TransmitServiceConfig::from(config.transmit.clone());
         let transmit_service = Arc::new(
             HttpTransmitService::new(transmit_service_config)
@@ -147,6 +146,9 @@ mod tests {
                     "TLS_AES_256_GCM_SHA384".to_string(),
                     "TLS_CHACHA20_POLY1305_SHA256".to_string(),
                 ],
+                max_requests_per_minute: 60,
+                require_client_certificate: true,
+                min_tls_version: "TLSv1.2".to_string(),
             },
         };
 
@@ -167,6 +169,9 @@ mod tests {
             session_timeout_secs: 600,
             allowed_cipher_suites: vec!["TLS_AES_128_GCM_SHA256".to_string()],
             client_url: "http://localhost:24727/eID-Client".to_string(),
+            max_requests_per_minute: 60,
+            require_client_certificate: true,
+            min_tls_version: "TLSv1.2".to_string(),
         };
 
         let config = ServerConfig {

@@ -1,5 +1,5 @@
+use crate::config::TransmitConfig;
 use crate::domain::transmit::ports::TransmitService;
-use crate::sal::transmit::config::TransmitConfig;
 use crate::sal::transmit::session::SessionManager;
 use async_trait::async_trait;
 use hex;
@@ -632,9 +632,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_transmit_channel_custom_slot_handle() {
-        use super::super::config::TransmitConfig;
         use super::super::protocol::ProtocolHandler;
         use super::super::session::SessionManager;
+        use crate::config::TransmitConfig;
 
         let protocol_handler = ProtocolHandler::new();
         let session_manager = SessionManager::new(std::time::Duration::from_secs(60));

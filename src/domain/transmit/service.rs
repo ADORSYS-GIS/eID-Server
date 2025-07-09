@@ -10,7 +10,7 @@ use std::time::Duration;
 use tracing::error;
 
 use super::ports::{TransmitError, TransmitResult, TransmitService};
-use crate::sal::transmit::config::TransmitConfig;
+use crate::config::TransmitConfig;
 
 /// Configuration for the transmit service
 #[derive(Debug, Clone)]
@@ -175,6 +175,9 @@ mod tests {
             session_timeout_secs: 60,
             max_apdu_size: 4096,
             allowed_cipher_suites: vec!["TLS_AES_128_GCM_SHA256".to_string()],
+            max_requests_per_minute: 60,
+            require_client_certificate: true,
+            min_tls_version: "TLSv1.2".to_string(),
         };
 
         let service_config = TransmitServiceConfig::from(transmit_config);

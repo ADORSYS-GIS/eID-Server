@@ -1,7 +1,6 @@
 use eid_server::{
-    config::Config,
+    config::{Config, TransmitConfig},
     domain::eid::service::{EIDServiceConfig, UseidService},
-    sal::transmit::config::TransmitConfig,
     server::{Server, ServerConfig},
 };
 
