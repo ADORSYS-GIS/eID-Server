@@ -324,7 +324,7 @@ pub fn build_tc_token(response: &UseIDResponse) -> Result<String, String> {
         xmlns: "http://www.bsi.bund.de/ecard/api/1.1",
         server_address: server_address.to_string(),
         session_identifier: response.session.id.clone(),
-        refresh_address: "https://localhost:3000/refresh",
+        refresh_address: "https://localhost:8000/refresh",
         binding: "urn:liberty:paos:2006-08",
         path_security_protocol: "urn:ietf:rfc:4279",
         path_security_parameters: PathSecurityParameters {
@@ -646,8 +646,8 @@ fn build_use_id_response_local(response: &UseIDResponse) -> Result<String, Strin
         dss: "urn:oasis:names:tc:dss:1.0:core:schema",
         body: SoapBody {
             use_id_response: UseIDResponseXml {
-                communication_error_address: "https://localhost:3000/error",
-                refresh_address: "https://localhost:3000/refresh",
+                communication_error_address: "https://localhost:8000/error",
+                refresh_address: "https://localhost:8000/refresh",
                 ecard_server_address: ecard_server_address.to_string(),
                 session: SessionXml {
                     id: response.session.id.clone(),
@@ -700,6 +700,7 @@ mod tests {
         let service_arc = Arc::new(service);
         AppState {
             eid_service: service_arc.clone(),
+            psk_store: None,
         }
     }
 
@@ -770,7 +771,7 @@ mod tests {
         );
         assert!(body_str.contains("<SessionIdentifier>"));
         assert!(
-            body_str.contains("<RefreshAddress>https://localhost:3000/refresh</RefreshAddress>")
+            body_str.contains("<RefreshAddress>https://localhost:8000/refresh</RefreshAddress>")
         );
         assert!(body_str.contains("<Binding>urn:liberty:paos:2006-08</Binding>"));
         assert!(
@@ -954,7 +955,7 @@ mod tests {
         );
         assert!(tc_token.contains("<SessionIdentifier>test-session-id</SessionIdentifier>"));
         assert!(
-            tc_token.contains("<RefreshAddress>https://localhost:3000/refresh</RefreshAddress>")
+            tc_token.contains("<RefreshAddress>https://localhost:8000/refresh</RefreshAddress>")
         );
         assert!(tc_token.contains("<Binding>urn:liberty:paos:2006-08</Binding>"));
         assert!(

@@ -4,9 +4,7 @@ use crate::eid::use_id::model::{UseIDRequest, UseIDResponse};
 use async_trait::async_trait;
 use std::sync::{Arc, RwLock};
 
-use crate::{
-    domain::eid::service::{EIDServiceConfig, SessionManager},
-};
+use crate::domain::eid::service::{EIDServiceConfig, SessionManager};
 use color_eyre::Result;
 
 use super::models::{AuthError, DIDAuthenticateRequest, DIDAuthenticateResponse, ServerInfo};

@@ -147,6 +147,7 @@ mod tests {
         let service_arc = Arc::new(service);
         AppState {
             eid_service: service_arc,
+            psk_store: None,
         }
     }
 

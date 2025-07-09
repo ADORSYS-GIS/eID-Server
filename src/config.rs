@@ -31,7 +31,7 @@ impl Config {
             .set_default("tls.cert_path", "config/cert.pem")?
             .set_default("tls.key_path", "config/key.pem")?
             .set_default("tls.psk", "supersecretpsk")?
-            .set_default("tls.psk_identity", "psk_identity")?
+            .set_default("tls.psk_identity", "eID-Server-PSK")?
             // Add a config file under config/settings.toml
             // or any other format supported by `config` crate
             .add_source(File::with_name("config/settings").required(false))

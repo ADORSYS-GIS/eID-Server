@@ -1,12 +1,10 @@
 use eid_server::{
     config::Config,
     domain::eid::service::{EIDServiceConfig, UseidService},
-    server::{Server, ServerConfig}, 
+    psk_tls_server::create_test_tls_config,
+    server::{Server, ServerConfig},
     telemetry,
 };
-
-// Use the psk_tls_server module from the library
-use eid_server::psk_tls_server;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
@@ -19,7 +17,7 @@ async fn main() -> color_eyre::Result<()> {
 
     // Create EIDService with default configuration
     let eid_service = UseidService::new(EIDServiceConfig::default());
-    
+
     // Create config directory if it doesn't exist
     let config_dir = std::path::Path::new("config");
     if !config_dir.exists() {
@@ -27,18 +25,24 @@ async fn main() -> color_eyre::Result<()> {
         println!("Created config directory");
     }
 
-    if !config.tls.psk_identity.is_empty() {
-        psk_tls_server::run_psk_tls_server(&config, eid_service).await?;
-        Ok(())
-    } else {
-        // Create ServerConfig with references to config values
-        let server_config = ServerConfig {
-            host: &config.server.host,  // Use reference instead of owned value
-            port: config.server.port,
-        };
-        
-        let server = Server::new(eid_service, server_config, Some(config.tls)).await?;
-        server.run().await
-    }
-}
+    // Create ServerConfig with references to config values
+    let server_config = ServerConfig {
+        host: &config.server.host, // Use reference instead of owned value
+        port: config.server.port,
+        tls_enabled: true,
+    };
 
+    // if !config.tls.psk_identity.is_empty() {
+    // Use TLS configuration if PSK identity is provided
+    // Create test TLS configuration with self-signed certificate
+    let tls_psk_config = create_test_tls_config()
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to create TLS config: {}", e))?;
+
+    let server = Server::new_with_tls(eid_service, server_config, Some(tls_psk_config)).await?;
+    server.run().await
+    // } else {
+    //     // Use regular HTTP server
+    //     let server = Server::new(eid_service, server_config).await?;
+    //     server.run().await
+    // }
+}

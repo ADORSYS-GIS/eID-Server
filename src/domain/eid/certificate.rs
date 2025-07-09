@@ -3,7 +3,7 @@ use std::{fs, sync::Arc};
 use base64::Engine;
 use hyper::{
     Body, Client, Method, Request,
-    body::{self, HttpBody},
+    body::{self},
     client::HttpConnector,
     header,
 };

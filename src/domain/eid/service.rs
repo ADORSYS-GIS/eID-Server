@@ -37,7 +37,7 @@ impl Default for EIDServiceConfig {
         Self {
             max_sessions: 1000,
             session_timeout_minutes: 5,
-            ecard_server_address: Some("https://localhost:3000".to_string()),
+            ecard_server_address: Some("https://localhost:8000".to_string()),
         }
     }
 }
@@ -69,7 +69,7 @@ impl SessionInfo {
             expiry: Utc::now() + Duration::minutes(timeout_minutes),
             psk,
             operations,
-             connection_handles: vec![],
+            connection_handles: vec![],
         }
     }
 }
@@ -215,7 +215,6 @@ impl EIDService for UseidService {
         // Check if we've reached the maximum number of sessions
         if self.session_manager.read().unwrap().sessions.len() >= self.config.max_sessions {
             return Err(color_eyre::eyre::eyre!("Maximum session limit reached"));
-
         }
 
         // Generate session ID
@@ -339,7 +338,7 @@ impl DIDAuthenticateService {
         }
     }
 
-       pub async fn new_with_defaults(sessions: Arc<RwLock<Vec<SessionInfo>>>) -> Self {
+    pub async fn new_with_defaults(sessions: Arc<RwLock<Vec<SessionInfo>>>) -> Self {
         dotenvy::dotenv().expect("Failed to load .env file");
         let certificate_store = CertificateStore::new();
 
@@ -355,12 +354,13 @@ impl DIDAuthenticateService {
             std::env::var("AUSWEISAPP2_ENDPOINT").expect("AUSWEISAPP2_ENDPOINT not set in .env");
 
         // Use CardCommunicator's public constructor
-        let card_communicator = CardCommunicator::new(&ausweisapp2_endpoint, certificate_store.clone());
+        let card_communicator =
+            CardCommunicator::new(&ausweisapp2_endpoint, certificate_store.clone());
 
         Self {
             certificate_store: certificate_store.clone(),
             crypto_provider: CryptoProvider::default(),
-            card_communicator, 
+            card_communicator,
             sessions,
         }
     }
@@ -499,16 +499,17 @@ impl DIDAuthenticate for UseidService {
         // Access sessions through session_manager
         let sessions = {
             // Lock the RwLock for reading
-            let session_manager = self.session_manager.read()
-                .map_err(|e| AuthError::SessionLockError(format!("Failed to acquire read lock: {}", e)))?;
-                
+            let session_manager = self.session_manager.read().map_err(|e| {
+                AuthError::SessionLockError(format!("Failed to acquire read lock: {}", e))
+            })?;
+
             // Clone the sessions vector
             session_manager.sessions.clone()
         };
-        
+
         // Wrap the sessions in Arc<RwLock> as expected by new_with_defaults
         let sessions_arc = Arc::new(RwLock::new(sessions));
-        
+
         let did_service = DIDAuthenticateService::new_with_defaults(sessions_arc).await;
         Ok(did_service.authenticate(request).await)
     }

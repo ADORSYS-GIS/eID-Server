@@ -20,9 +20,7 @@ pub async fn spawn_server() -> String {
     };
 
     // Create server without TLS
-    let server = Server::new(eid_service, server_config, None)
-        .await
-        .unwrap();
+    let server = Server::new(eid_service, server_config, None).await.unwrap();
 
     // Get the port the server is bound to
     let port = server.port().unwrap();

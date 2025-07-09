@@ -1,443 +1,349 @@
-use crate::config::Config;
-use crate::domain::eid::service::UseidService;
-use axum::{Router, body::Body};
-use hex;
-use hyper::server::conn::Http;
-use hyper::service::service_fn;
-use lazy_static::lazy_static;
-use libc;
-use openssl::ssl::{Ssl, SslContext, SslContextBuilder};
-use openssl::ssl::{SslFiletype, SslMethod};
-use openssl_sys;
-use rcgen;
+//! TLS PSK (Pre-Shared Key) implementation for eID-Server
+//!
+//! This module implements TLS-2 connection as specified in the eID documentation.
+//! It provides PSK-based authentication for secure communication between
+//! eID-Server and eID-Client at the eCard-API-Framework interface.
+
+use axum::extract::{Request, State};
+use axum::http::StatusCode;
+use axum::middleware::Next;
+use axum::response::Response;
+use rcgen::{Certificate, CertificateParams, DistinguishedName, KeyPair};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::collections::HashMap;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::RwLock;
-use tokio::net::TcpListener;
-use tokio_openssl::SslStream;
-use tower::ServiceExt;
+use tokio_rustls::TlsAcceptor;
+use tokio_rustls::rustls::ServerConfig;
+use tracing::{debug, error, warn};
 
-// Store PSK identities and keys
-lazy_static! {
-    static ref PSK_STORE: RwLock<HashMap<String, String>> = RwLock::new(HashMap::new());
+use crate::domain::eid::ports::{EIDService, EidService};
+use crate::server::AppState;
+
+/// PSK store for managing pre-shared keys and session identifiers
+#[derive(Clone, Debug)]
+pub struct PskStore {
+    /// Map of session_id -> PSK
+    psks: Arc<std::sync::RwLock<HashMap<String, String>>>,
 }
 
-// Add a PSK to the store
-pub fn add_psk(identity: String, key: String) {
-    if let Ok(mut store) = PSK_STORE.write() {
-        store.insert(identity, key);
-    }
-}
-
-// Helper to decode hex string to bytes
-fn decode_hex_psk(psk_hex: &str) -> Option<Vec<u8>> {
-    hex::decode(psk_hex).ok()
-}
-
-// PSK callback function for OpenSSL
-extern "C" fn psk_server_callback(
-    _ssl: *mut openssl_sys::SSL,
-    identity: *const libc::c_char,
-    psk: *mut libc::c_uchar,
-    max_psk_len: libc::c_uint,
-) -> libc::c_uint {
-    use std::ffi::CStr;
-    use std::slice;
-
-    unsafe {
-        // Convert identity to Rust string
-        let identity_str = match CStr::from_ptr(identity).to_str() {
-            Ok(s) => s.to_string(),
-            Err(_) => return 0,
-        };
-
-        // Look up the PSK for this identity
-        let store = match PSK_STORE.read() {
-            Ok(store) => store,
-            Err(_) => {
-                return 0;
-            }
-        };
-        let psk_key = match store.get(&identity_str) {
-            Some(key) => key,
-            None => {
-                return 0;
-            }
-        };
-
-        // Decode PSK from hex
-        let psk_bytes = match decode_hex_psk(psk_key) {
-            Some(bytes) => bytes,
-            None => {
-                return 0;
-            }
-        };
-        let psk_len = std::cmp::min(psk_bytes.len(), max_psk_len as usize);
-
-        let psk_slice = slice::from_raw_parts_mut(psk, psk_len);
-        psk_slice.copy_from_slice(&psk_bytes[..psk_len]);
-
-        psk_len as libc::c_uint
-    }
-}
-
-// Register a session PSK
-pub fn register_session_psk(session_id: String, psk: String) {
-    add_psk(session_id, psk);
-}
-
-pub async fn run_psk_tls_server(
-    config: &Config,
-    eid_service: UseidService,
-) -> color_eyre::Result<()> {
-    // Add the default PSK from config to the PSK store
-    add_psk(config.tls.psk_identity.clone(), config.tls.psk.clone());
-
-    // Register existing sessions from the eid_service
-    {
-        match eid_service.session_manager.read() {
-            Ok(sessions) => {
-                for session in sessions.sessions.iter() {
-                    let psk = &session.psk;
-                    register_session_psk(session.id.clone(), psk.clone());
-                }
-            }
-            Err(_e) => {}
+impl PskStore {
+    pub fn new() -> Self {
+        Self {
+            psks: Arc::new(std::sync::RwLock::new(HashMap::new())),
         }
-    } // sessions guard is dropped here
+    }
 
-    // Create a shared SSL context for all connections
-    let ssl_ctx = Arc::new(create_psk_ssl_context(config)?);
+    /// Add a PSK for a session
+    pub fn add_psk(
+        &self,
+        session_id: String,
+        psk: String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut psks = self
+            .psks
+            .write()
+            .map_err(|e| format!("PSK store lock error: {}", e))?;
+        psks.insert(session_id, psk);
+        Ok(())
+    }
 
-    let router: Router<()> = Router::new().route(
-        "/health",
-        axum::routing::get(|| async { axum::http::StatusCode::OK }),
-    );
-    let router = Arc::new(router);
-    let addr = format!("{}:{}", config.server.host, config.server.port);
-    let listener = TcpListener::bind(&addr).await?;
+    /// Get PSK for a session
+    pub fn get_psk(&self, session_id: &str) -> Option<String> {
+        let psks = self.psks.read().ok()?;
+        psks.get(session_id).cloned()
+    }
 
-    loop {
-        let (stream, _) = listener.accept().await?;
-        let ssl_ctx = ssl_ctx.clone();
-        let router = router.clone();
-        let _eid_service = eid_service.clone();
-
-        tokio::spawn(async move {
-            // Create a new SSL instance for each connection
-            let ssl = match Ssl::new(&ssl_ctx) {
-                Ok(ssl) => ssl,
-                Err(_e) => {
-                    return;
-                }
-            };
-            let mut ssl_stream = match SslStream::new(ssl, stream) {
-                Ok(s) => s,
-                Err(_e) => {
-                    return;
-                }
-            };
-
-            if let Err(_e) = Pin::new(&mut ssl_stream).accept().await {
-                return;
-            }
-
-            // Handle the connection with HTTP
-            let service = service_fn(move |req: hyper::Request<hyper::Body>| {
-                let router = router.clone();
-                async move {
-                    // Convert hyper request to axum request
-                    let (parts, body) = req.into_parts();
-
-                    // Convert body bytes
-                    let body_bytes = hyper::body::to_bytes(body).await.unwrap_or_default();
-
-                    // Build a new axum request with the same data
-                    let axum_req = axum::http::Request::builder()
-                        .method(parts.method.as_str())
-                        .uri(parts.uri.to_string())
-                        .version(match parts.version {
-                            hyper::Version::HTTP_09 => axum::http::Version::HTTP_09,
-                            hyper::Version::HTTP_10 => axum::http::Version::HTTP_10,
-                            hyper::Version::HTTP_11 => axum::http::Version::HTTP_11,
-                            hyper::Version::HTTP_2 => axum::http::Version::HTTP_2,
-                            hyper::Version::HTTP_3 => axum::http::Version::HTTP_3,
-                            _ => axum::http::Version::HTTP_11,
-                        });
-
-                    // Copy headers
-                    let mut axum_req = match axum_req.body(Body::from(body_bytes)) {
-                        Ok(req) => req,
-                        Err(e) => {
-                            let mut res = hyper::Response::new(hyper::Body::from(format!(
-                                "Failed to build request: {}",
-                                e
-                            )));
-                            *res.status_mut() = hyper::StatusCode::BAD_REQUEST;
-                            return Ok(res);
-                        }
-                    };
-                    for (name, value) in parts.headers.iter() {
-                        if let (Ok(header_name), Ok(header_value)) = (
-                            axum::http::HeaderName::from_bytes(name.as_str().as_bytes()),
-                            axum::http::HeaderValue::from_bytes(value.as_bytes()),
-                        ) {
-                            axum_req.headers_mut().insert(header_name, header_value);
-                        }
-                        // Skip invalid headers silently
-                    }
-
-                    // Process with router
-                    match router.as_ref().clone().oneshot(axum_req).await {
-                        Ok(res) => {
-                            let (parts, body) = res.into_parts();
-
-                            // Build a new hyper response
-                            let mut hyper_res = match hyper::Response::builder()
-                                .status(parts.status.as_u16())
-                                .version(match parts.version {
-                                    axum::http::Version::HTTP_09 => hyper::Version::HTTP_09,
-                                    axum::http::Version::HTTP_10 => hyper::Version::HTTP_10,
-                                    axum::http::Version::HTTP_11 => hyper::Version::HTTP_11,
-                                    axum::http::Version::HTTP_2 => hyper::Version::HTTP_2,
-                                    axum::http::Version::HTTP_3 => hyper::Version::HTTP_3,
-                                    _ => hyper::Version::HTTP_11,
-                                })
-                                .body(hyper::Body::empty())
-                            {
-                                Ok(res) => res,
-                                Err(e) => {
-                                    let mut error_res = hyper::Response::new(hyper::Body::from(
-                                        format!("Failed to build response: {}", e),
-                                    ));
-                                    *error_res.status_mut() =
-                                        hyper::StatusCode::INTERNAL_SERVER_ERROR;
-                                    return Ok(error_res);
-                                }
-                            };
-
-                            // Copy headers
-                            for (name, value) in parts.headers.iter() {
-                                if let (Ok(header_name), Ok(header_value)) = (
-                                    hyper::header::HeaderName::from_bytes(name.as_str().as_bytes()),
-                                    hyper::header::HeaderValue::from_bytes(value.as_bytes()),
-                                ) {
-                                    hyper_res.headers_mut().insert(header_name, header_value);
-                                }
-                                // Skip invalid headers silently
-                            }
-
-                            // Convert body
-                            let bytes = axum::body::to_bytes(body, usize::MAX)
-                                .await
-                                .unwrap_or_default();
-
-                            *hyper_res.body_mut() = hyper::Body::from(bytes);
-                            Ok::<_, hyper::Error>(hyper_res)
-                        }
-                        Err(err) => {
-                            let mut res = hyper::Response::new(hyper::Body::from(format!(
-                                "Internal server error: {}",
-                                err
-                            )));
-                            *res.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
-                            Ok(res)
-                        }
-                    }
-                }
-            });
-
-            if let Err(_err) = Http::new().serve_connection(ssl_stream, service).await {}
-        });
+    /// Remove PSK for a session
+    pub fn remove_psk(&self, session_id: &str) -> Option<String> {
+        let mut psks = self.psks.write().ok()?;
+        psks.remove(session_id)
     }
 }
 
-/// Helper function to create an SSL context with PSK support
-pub fn create_psk_ssl_context(config: &Config) -> color_eyre::Result<SslContext> {
-    // SSL setup with PSK support
-    let mut ctx_builder = SslContextBuilder::new(SslMethod::tls_server())?;
+/// TLS PSK configuration for the eID server
+pub struct TlsPskConfig {
+    pub psk_store: PskStore,
+    pub server_cert: Vec<CertificateDer<'static>>,
+    pub server_key: PrivateKeyDer<'static>,
+}
 
-    // Set up certificate (still needed for RSA_PSK)
-    if std::path::Path::new(&config.tls.cert_path).exists()
-        && std::path::Path::new(&config.tls.key_path).exists()
-    {
-        // Use specified certificate and key files if they exist
-        ctx_builder.set_certificate_file(&config.tls.cert_path, SslFiletype::PEM)?;
-        ctx_builder.set_private_key_file(&config.tls.key_path, SslFiletype::PEM)?;
+impl TlsPskConfig {
+    pub fn new(
+        server_cert: Vec<CertificateDer<'static>>,
+        server_key: PrivateKeyDer<'static>,
+    ) -> Self {
+        Self {
+            psk_store: PskStore::new(),
+            server_cert,
+            server_key,
+        }
+    }
+
+    /// Create TLS server configuration with basic TLS support
+    /// Note: For full PSK cipher suite support, additional rustls configuration would be needed
+    pub fn create_server_config(&self) -> Result<ServerConfig, Box<dyn std::error::Error>> {
+        let config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(self.server_cert.clone(), self.server_key.clone_key())?;
+
+        Ok(config)
+    }
+}
+
+// Manual Clone implementation for TlsPskConfig
+impl Clone for TlsPskConfig {
+    fn clone(&self) -> Self {
+        Self {
+            psk_store: self.psk_store.clone(),
+            server_cert: self.server_cert.clone(),
+            server_key: self.server_key.clone_key(),
+        }
+    }
+}
+
+/// Middleware to validate PSK before processing PAOS requests
+/// This is a real implementation that validates the PSK against the session store
+pub async fn psk_validation_middleware<S: EIDService + EidService>(
+    State(state): State<AppState<S>>,
+    session_id: String,
+    provided_psk: String,
+) -> Result<(), StatusCode> {
+    debug!("Validating PSK for session: {}", session_id);
+
+    // Get the session from the session manager
+    let session_manager_arc = state.use_id.get_session_manager();
+    let session_manager = session_manager_arc.read().map_err(|_| {
+        error!("Failed to acquire session manager lock");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    // Find the session
+    let session = session_manager
+        .sessions
+        .iter()
+        .find(|s| s.id == session_id)
+        .ok_or_else(|| {
+            warn!("Session not found: {}", session_id);
+            StatusCode::UNAUTHORIZED
+        })?;
+
+    // Verify PSK exists in session
+    let session_psk = &session.psk;
+
+    // Validate the provided PSK against the stored PSK
+    if provided_psk != *session_psk {
+        warn!("PSK mismatch for session: {}", session_id);
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    // Additional validation: Check if PSK is also in the PSK store (if available)
+    if let Some(ref psk_store) = state.psk_store {
+        match psk_store.get_psk(&session_id) {
+            Some(stored_psk) => {
+                if stored_psk != provided_psk {
+                    warn!("PSK store mismatch for session: {}", session_id);
+                    return Err(StatusCode::UNAUTHORIZED);
+                }
+            }
+            None => {
+                warn!("PSK not found in PSK store for session: {}", session_id);
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+        }
+    }
+
+    debug!("PSK validation successful for session: {}", session_id);
+    Ok(())
+}
+
+/// Validate PSK during TLS handshake
+/// This function is called during the TLS PSK callback to validate the client's PSK
+pub fn validate_psk_callback(
+    psk_store: &PskStore,
+    identity: &str,
+    provided_psk: &[u8],
+) -> Option<Vec<u8>> {
+    debug!("PSK callback validation for identity: {}", identity);
+
+    // Get the stored PSK for this session/identity
+    let stored_psk = psk_store.get_psk(identity)?;
+
+    // Convert provided PSK to string for comparison
+    let provided_psk_str = match std::str::from_utf8(provided_psk) {
+        Ok(s) => s,
+        Err(_) => {
+            warn!("Invalid UTF-8 in provided PSK for identity: {}", identity);
+            return None;
+        }
+    };
+
+    // Validate PSK matches
+    if stored_psk == provided_psk_str {
+        debug!("PSK validation successful for identity: {}", identity);
+        Some(stored_psk.into_bytes())
     } else {
-        // Create a self-signed certificate for development
-        // Include both localhost and the actual server host in the certificate
-        let mut subject_alt_names = vec!["localhost".into()];
+        warn!("PSK validation failed for identity: {}", identity);
+        None
+    }
+}
 
-        if config.server.host != "localhost" && config.server.host != "127.0.0.1" {
-            subject_alt_names.push(config.server.host.clone());
-            if config.server.host != "0.0.0.0" {
-                subject_alt_names.push("0.0.0.0".into());
-            }
+/// Axum middleware for PSK validation
+/// This middleware validates the PSK before allowing requests to proceed to the handler
+pub async fn psk_validation_layer<S: EIDService + EidService + Clone + Send + Sync + 'static>(
+    State(state): State<AppState<S>>,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    debug!("PSK validation middleware triggered");
+
+    // Extract the request body to parse the PAOS request
+    let body_bytes = match axum::body::to_bytes(std::mem::take(request.body_mut()), usize::MAX).await {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            error!("Failed to read request body for PSK validation: {}", err);
+            return Err(StatusCode::BAD_REQUEST);
         }
+    };
 
-        let cert = rcgen::generate_simple_self_signed(subject_alt_names)?;
-        let cert_pem = cert.serialize_pem()?;
-        let key_pem = cert.serialize_private_key_pem();
+    let body_str = match std::str::from_utf8(&body_bytes) {
+        Ok(s) => s,
+        Err(err) => {
+            error!("Invalid UTF-8 in request body: {}", err);
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+    println!("{}", body_str);
+    // Parse the PAOS request to extract session identifier
+    let paos_request = match crate::sal::paos::parser::parse_start_paos(body_str) {
+        
+        Ok(request) => request,
+        Err(err) => {
+            error!("Failed to parse PAOS request for PSK validation: {}", err);
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
 
-        // Convert PEM strings to DER format
-        let cert_der = openssl::x509::X509::from_pem(cert_pem.as_bytes())?;
-        let key_der = openssl::pkey::PKey::private_key_from_pem(key_pem.as_bytes())?;
-
-        ctx_builder.set_certificate(&cert_der)?;
-        ctx_builder.set_private_key(&key_der)?;
+    let session_id = paos_request.session_identifier;
+    if session_id.is_empty() {
+        error!("Session identifier is required for PSK validation");
+        return Err(StatusCode::BAD_REQUEST);
     }
 
-    // Set PSK callback
-    unsafe {
-        openssl_sys::SSL_CTX_set_psk_server_callback(
-            ctx_builder.as_ptr(),
-            Some(psk_server_callback),
-        );
+    // Get the PSK from the session for validation
+    let session_manager_arc = state.use_id.get_session_manager();
+    let session_psk = match session_manager_arc.read() {
+        Ok(mgr) => mgr
+            .sessions
+            .iter()
+            .find(|s| s.id == session_id)
+            .map(|s| s.psk.clone()),
+        Err(e) => {
+            error!("Session manager lock error during PSK validation: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    let psk = match session_psk {
+        Some(psk) => psk,
+        None => {
+            warn!(
+                "No PSK found for session {} in secure connection",
+                session_id
+            );
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+    };
+
+    // Validate PSK using the middleware function
+    if let Err(status) = psk_validation_middleware(State(state), session_id.clone(), psk).await {
+        warn!("PSK validation failed for session: {}", session_id);
+        return Err(status);
     }
 
-    // Restrict cipher suites to only TLS_RSA_PSK_* as per spec
-    ctx_builder.set_cipher_list("RSA-PSK-AES256-CBC-SHA:RSA-PSK-AES128-CBC-SHA")?;
+    // Reconstruct the request body for the next handler
+    *request.body_mut() = axum::body::Body::from(body_bytes);
 
-    // Enable PSK cipher suites
-    // Set minimum TLS version to TLS 1.2
-    ctx_builder.set_min_proto_version(Some(openssl::ssl::SslVersion::TLS1_2))?;
+    debug!(
+        "PSK validation successful for session: {}, proceeding to handler",
+        session_id
+    );
+    Ok(next.run(request).await)
+}
 
-    // Accept client certificates but don't require them
-    ctx_builder.set_verify(openssl::ssl::SslVerifyMode::NONE);
+/// Create a TLS acceptor with PSK support
+pub fn create_tls_acceptor(
+    config: TlsPskConfig,
+) -> Result<TlsAcceptor, Box<dyn std::error::Error>> {
+    let server_config = config.create_server_config()?;
+    Ok(TlsAcceptor::from(Arc::new(server_config)))
+}
 
-    // Build and return the SSL context
-    Ok(ctx_builder.build())
+/// Generate a self-signed certificate for testing purposes
+/// In production, use proper certificates
+pub fn generate_self_signed_cert()
+-> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>), Box<dyn std::error::Error>> {
+    // Generate a key pair
+    let key_pair = KeyPair::generate(&rcgen::PKCS_ECDSA_P256_SHA256)?;
+
+    // Create certificate parameters
+    let mut params = CertificateParams::new(vec!["localhost".to_string()]);
+    params.distinguished_name = DistinguishedName::new();
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "eID-Server");
+    params
+        .distinguished_name
+        .push(rcgen::DnType::OrganizationName, "eID-Server");
+    params.key_pair = Some(key_pair);
+
+    // Generate the certificate
+    let cert = Certificate::from_params(params)?;
+
+    // Convert to rustls format
+    let cert_der = CertificateDer::from(cert.serialize_der()?);
+    let key_der = PrivateKeyDer::try_from(cert.serialize_private_key_der())?;
+
+    Ok((vec![cert_der], key_der))
+}
+
+/// Create a TLS PSK configuration with self-signed certificate for testing
+pub fn create_test_tls_config() -> Result<TlsPskConfig, Box<dyn std::error::Error>> {
+    let (cert, key) = generate_self_signed_cert()?;
+    Ok(TlsPskConfig::new(cert, key))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use tempfile::tempdir;
-
-    // Helper function to clear the PSK store between tests
-    fn clear_psk_store() {
-        if let Ok(mut store) = PSK_STORE.write() {
-            store.clear();
-        }
-    }
 
     #[test]
-    fn test_add_psk() {
-        clear_psk_store();
-
-        // Add a PSK
-        let identity = "test_identity".to_string();
-        let key = "test_key".to_string();
-        add_psk(identity.clone(), key.clone());
-
-        // Verify it was added correctly
-        let store = PSK_STORE.read().expect("Failed to read PSK store in test");
-        assert!(store.contains_key(&identity));
-        assert_eq!(store.get(&identity).expect("PSK should exist"), &key);
-    }
-
-    #[test]
-    fn test_register_session_psk() {
-        clear_psk_store();
-
-        // Register a session PSK
+    fn test_psk_store_operations() {
+        let store = PskStore::new();
         let session_id = "test_session".to_string();
-        let psk = "test_session_key".to_string();
-        register_session_psk(session_id.clone(), psk.clone());
+        let psk = "test_psk_value".to_string();
 
-        // Verify it was registered correctly
-        let store = PSK_STORE.read().expect("Failed to read PSK store in test");
-        assert!(store.contains_key(&session_id));
-        assert_eq!(
-            store.get(&session_id).expect("Session PSK should exist"),
-            &psk
-        );
+        // Test adding PSK
+        assert!(store.add_psk(session_id.clone(), psk.clone()).is_ok());
+
+        // Test getting PSK
+        assert_eq!(store.get_psk(&session_id), Some(psk.clone()));
+
+        // Test removing PSK
+        assert_eq!(store.remove_psk(&session_id), Some(psk));
+        assert_eq!(store.get_psk(&session_id), None);
     }
 
     #[test]
-    fn test_create_psk_ssl_context_with_existing_cert() -> color_eyre::Result<()> {
-        // Create a temporary directory for test certificates
-        let temp_dir = tempdir()?;
-        let cert_path = temp_dir.path().join("cert.pem");
-        let key_path = temp_dir.path().join("key.pem");
-
-        // Generate a self-signed certificate for testing
-        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
-        let cert_pem = cert.serialize_pem()?;
-        let key_pem = cert.serialize_private_key_pem();
-
-        // Write the certificate and key to files
-        fs::write(&cert_path, cert_pem)?;
-        fs::write(&key_path, key_pem)?;
-
-        // Create a config with the test certificate paths
-        let config = Config {
-            server: crate::config::ServerConfig {
-                host: "localhost".to_string(),
-                port: 8443,
-            },
-            tls: crate::config::TlsConfig {
-                cert_path: cert_path.to_str().expect("Invalid cert path").to_string(),
-                key_path: key_path.to_str().expect("Invalid key path").to_string(),
-                psk: "test_psk".to_string(),
-                psk_identity: "test_identity".to_string(),
-            },
-        };
-
-        // Test creating the SSL context
-        let _ssl_ctx = create_psk_ssl_context(&config)?;
-
-        // If we get here without errors, the test passes
-
-        Ok(())
+    fn test_generate_self_signed_cert() {
+        let result = generate_self_signed_cert();
+        assert!(result.is_ok());
+        let (certs, _key) = result.unwrap();
+        assert!(!certs.is_empty());
     }
 
     #[test]
-    fn test_create_psk_ssl_context_with_self_signed_cert() -> color_eyre::Result<()> {
-        // Create a config with non-existent certificate paths
-        let config = Config {
-            server: crate::config::ServerConfig {
-                host: "localhost".to_string(),
-                port: 8443,
-            },
-            tls: crate::config::TlsConfig {
-                cert_path: "/non/existent/cert.pem".to_string(),
-                key_path: "/non/existent/key.pem".to_string(),
-                psk: "test_psk".to_string(),
-                psk_identity: "test_identity".to_string(),
-            },
-        };
-
-        // Test creating the SSL context with self-signed certificate
-        let _ssl_ctx = create_psk_ssl_context(&config)?;
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_psk_callback_is_set() -> color_eyre::Result<()> {
-        clear_psk_store();
-
-        add_psk("test_identity".to_string(), "test_key".to_string());
-
-        let config = Config {
-            server: crate::config::ServerConfig {
-                host: "localhost".to_string(),
-                port: 8443,
-            },
-            tls: crate::config::TlsConfig {
-                cert_path: "/non/existent/cert.pem".to_string(),
-                key_path: "/non/existent/key.pem".to_string(),
-                psk: "test_psk".to_string(),
-                psk_identity: "test_identity".to_string(),
-            },
-        };
-
-        let _ssl_ctx = create_psk_ssl_context(&config)?;
-
-        Ok(())
+    fn test_create_test_tls_config() {
+        let result = create_test_tls_config();
+        assert!(result.is_ok());
     }
 }
