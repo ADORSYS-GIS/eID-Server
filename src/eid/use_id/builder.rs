@@ -82,7 +82,7 @@ pub fn build_use_id_response(response: &UseIDResponse) -> Result<String, UseIdEr
     );
 
     Ok(format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>{xml_with_ns}"        
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>{xml_with_ns}"
     ))
 }
 

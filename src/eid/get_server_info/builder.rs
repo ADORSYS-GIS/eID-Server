@@ -43,7 +43,7 @@ pub fn build_get_server_info_response(
     );
 
     Ok(format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{xml_with_ns}"      
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{xml_with_ns}"
     ))
 }
 
