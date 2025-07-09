@@ -7,7 +7,7 @@ pub struct TransmitConfig {
     /// Maximum size of APDU messages in bytes
     pub max_apdu_size: usize,
     /// Session timeout in seconds
-    pub session_timeout_secs: u32,
+    pub session_timeout_secs: u64,
     /// Allowed TLS cipher suites
     pub allowed_cipher_suites: Vec<String>,
 }

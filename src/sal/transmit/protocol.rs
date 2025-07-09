@@ -10,14 +10,14 @@ pub const ECARDAPI_NS: &str = "http://www.bsi.bund.de/ecard/api/1.1";
 
 /// Result structure as defined in TR-03112 Part 1, Section A
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct TransmitResult {
-    #[serde(rename = "ResultMajor")]
     pub result_major: String,
 
-    #[serde(rename = "ResultMinor", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub result_minor: Option<String>,
 
-    #[serde(rename = "ResultMessage", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub result_message: Option<String>,
 }
 
@@ -135,18 +135,18 @@ impl ProtocolHandler {
     /// Parses a request from the eID-Client
     pub fn parse_request(&self, request: &[u8]) -> Result<ParsedRequest, TransmitError> {
         serde_json::from_slice(request)
-            .map_err(|e| TransmitError::ProtocolError(format!("Failed to parse request: {}", e)))
+            .map_err(|e| TransmitError::TransmitError(format!("Failed to parse request: {}", e)))
     }
 
     /// Formats a response to be sent to the eID-Client
     pub fn format_response(&self, response: Response) -> Result<Vec<u8>, TransmitError> {
         serde_json::to_vec(&response)
-            .map_err(|e| TransmitError::ProtocolError(format!("Failed to format response: {}", e)))
+            .map_err(|e| TransmitError::TransmitError(format!("Failed to format response: {}", e)))
     }
 
     /// Processes data from the eID-Client
     pub fn process_data(&self, data: Option<String>) -> Result<String, TransmitError> {
-        data.ok_or_else(|| TransmitError::InvalidRequest("No data provided".to_string()))
+        data.ok_or_else(|| TransmitError::TransmitError("No data provided".to_string()))
     }
 
     /// Parses a Transmit request from the eID-Client with XML namespace handling
@@ -155,7 +155,7 @@ impl ProtocolHandler {
         // Parse XML with namespace awareness
         from_str(xml).map_err(|e| {
             // Map quick_xml errors to our TransmitError
-            TransmitError::InvalidRequest(format!("Malformed XML: {}", e))
+            TransmitError::TransmitError(format!("Malformed XML: {}", e))
         })
     }
 
@@ -167,7 +167,7 @@ impl ProtocolHandler {
     ) -> Result<String, TransmitError> {
         // Serialize the main body with Serde
         let mut xml = to_xml_string(response)
-            .map_err(|e| TransmitError::ProtocolError(format!("XML serialization error: {}", e)))?;
+            .map_err(|e| TransmitError::TransmitError(format!("XML serialization error: {}", e)))?;
         // Inject namespaces and schema location into the root tag
         xml = xml.replacen(
             "<TransmitResponse>",
@@ -191,7 +191,7 @@ impl ProtocolHandler {
 
         // Check major version - must match exactly
         if req_parts.first() != our_parts.first() {
-            return Err(TransmitError::ProtocolError(format!(
+            return Err(TransmitError::TransmitError(format!(
                 "Incompatible protocol major version: {} vs {}",
                 request_version, self.protocol_version
             )));
@@ -203,7 +203,7 @@ impl ProtocolHandler {
                 (req_minor.parse::<u32>(), our_minor.parse::<u32>())
             {
                 if our_minor_num < req_minor_num {
-                    return Err(TransmitError::ProtocolError(format!(
+                    return Err(TransmitError::TransmitError(format!(
                         "Incompatible protocol minor version: {} vs {}",
                         request_version, self.protocol_version
                     )));
@@ -217,28 +217,8 @@ impl ProtocolHandler {
     /// Converts a TransmitError into a proper TransmitResult for the XML response
     pub fn error_to_result(&self, error: &TransmitError) -> TransmitResult {
         match error {
-            TransmitError::InvalidRequest(msg) => TransmitResult::error(
-                "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#invalidRequest",
-                Some(msg.clone()),
-            ),
-            TransmitError::ProtocolError(msg) => TransmitResult::error(
-                "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#protocolError",
-                Some(msg.clone()),
-            ),
-            TransmitError::SessionError(msg) => TransmitResult::error(
-                "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#sessionError",
-                Some(msg.clone()),
-            ),
-            TransmitError::InvalidStatusCode { expected, actual } => TransmitResult::error(
-                "http://www.bsi.bund.de/ecard/api/1.1/resultminor/ifd#invalidStatusCode",
-                Some(format!("Expected {}, got {}", expected, actual)),
-            ),
-            TransmitError::CardError(msg) => TransmitResult::error(
-                "http://www.bsi.bund.de/ecard/api/1.1/resultminor/ifd#cardError",
-                Some(msg.clone()),
-            ),
-            TransmitError::InvalidPSK(msg) => TransmitResult::error(
-                "http://www.bsi.bund.de/ecard/api/1.1/resultminor/useID#invalidPSK",
+            TransmitError::TransmitError(msg) => TransmitResult::error(
+                "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#transmitError",
                 Some(msg.clone()),
             ),
             TransmitError::InternalError(msg) => TransmitResult::error(

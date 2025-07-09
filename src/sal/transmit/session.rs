@@ -1,8 +1,7 @@
 use crate::sal::transmit::error::TransmitError;
-use std::collections::HashMap;
+use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
 #[derive(Debug, Clone)]
@@ -50,16 +49,18 @@ impl Session {
     }
 }
 
+/// Session manager using DashMap for robust concurrent session management
+/// This provides better security, maintenance, and follows best practices
 #[derive(Debug, Clone)]
 pub struct SessionManager {
-    sessions: Arc<RwLock<HashMap<String, Session>>>,
+    sessions: Arc<DashMap<String, Session>>,
     session_timeout: Duration,
 }
 
 impl SessionManager {
     pub fn new(session_timeout: Duration) -> Self {
         Self {
-            sessions: Arc::new(RwLock::new(HashMap::new())),
+            sessions: Arc::new(DashMap::new()),
             session_timeout,
         }
     }
@@ -72,10 +73,8 @@ impl SessionManager {
         psk_id: &str,
         session_id: &str,
     ) -> Result<bool, TransmitError> {
-        let sessions = self.sessions.read().await;
-
         // Find session by ID and validate PSK
-        if let Some(session) = sessions.get(session_id) {
+        if let Some(session) = self.sessions.get(session_id) {
             if let Some(security_context) = &session.security_context {
                 if let Some(stored_psk_id) = &security_context.psk_id {
                     return Ok(stored_psk_id == psk_id);
@@ -84,7 +83,7 @@ impl SessionManager {
         }
 
         // PSK validation failed - return error as per TR-03130
-        Err(TransmitError::SessionError(
+        Err(TransmitError::TransmitError(
             "Invalid PSK or session not found".to_string(),
         ))
     }
@@ -98,26 +97,28 @@ impl SessionManager {
             state: SessionState::Created,
             security_context: Some(tls_info),
         };
-        let mut sessions = self.sessions.write().await;
-        sessions.insert(session_id, session.clone());
+        self.sessions.insert(session_id, session.clone());
         info!("Created new session: {}", session.id);
         Ok(session)
     }
 
     pub async fn get_session(&self, session_id: &str) -> Result<Session, TransmitError> {
-        let sessions = self.sessions.read().await;
-        match sessions.get(session_id) {
+        match self.sessions.get(session_id) {
             Some(session) => {
                 if session.is_expired(self.session_timeout) {
                     error!("Session {} expired", session_id);
-                    Err(TransmitError::SessionError("Session expired".to_string()))
+                    // Remove expired session
+                    self.sessions.remove(session_id);
+                    Err(TransmitError::TransmitError("Session expired".to_string()))
                 } else {
                     Ok(session.clone())
                 }
             }
             None => {
                 error!("Session {} not found", session_id);
-                Err(TransmitError::SessionError("Session not found".to_string()))
+                Err(TransmitError::TransmitError(
+                    "Session not found".to_string(),
+                ))
             }
         }
     }
@@ -127,8 +128,7 @@ impl SessionManager {
         session_id: &str,
         new_state: SessionState,
     ) -> Result<(), TransmitError> {
-        let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(session_id) {
+        if let Some(mut session) = self.sessions.get_mut(session_id) {
             if session.can_transition_to(&new_state) {
                 debug!(
                     "Updating session {} state from {:?} to {:?}",
@@ -142,27 +142,28 @@ impl SessionManager {
                     "Invalid state transition for session {}: {:?} -> {:?}",
                     session_id, session.state, new_state
                 );
-                Err(TransmitError::SessionError(
+                Err(TransmitError::TransmitError(
                     "Invalid state transition".to_string(),
                 ))
             }
         } else {
             error!("Session {} not found", session_id);
-            Err(TransmitError::SessionError("Session not found".to_string()))
+            Err(TransmitError::TransmitError(
+                "Session not found".to_string(),
+            ))
         }
     }
 
     pub async fn cleanup_expired_sessions(&self) {
-        let mut sessions = self.sessions.write().await;
-        let expired_count = sessions.len();
-        sessions.retain(|id, session| {
+        let expired_count = self.sessions.len();
+        self.sessions.retain(|id, session| {
             let is_expired = session.is_expired(self.session_timeout);
             if is_expired {
                 debug!("Cleaning up expired session: {}", id);
             }
             !is_expired
         });
-        let remaining_count = sessions.len();
+        let remaining_count = self.sessions.len();
         if expired_count != remaining_count {
             info!(
                 "Cleaned up {} expired sessions, {} remaining",

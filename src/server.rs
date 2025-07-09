@@ -19,7 +19,7 @@ use tower_http::{
 };
 
 use crate::domain::eid::ports::{EIDService, EidService};
-use crate::sal::transmit::HttpApduTransport;
+use crate::domain::transmit::service::{HttpTransmitService, TransmitServiceConfig};
 use crate::sal::transmit::{
     channel::TransmitChannel, config::TransmitConfig, protocol::ProtocolHandler,
     session::SessionManager,
@@ -75,13 +75,17 @@ impl Server {
         // Initialize the TransmitChannel components
         let protocol_handler = ProtocolHandler::new();
         let session_manager = SessionManager::new(Duration::from_secs(
-            config.transmit.session_timeout_secs as u64,
+            config.transmit.session_timeout_secs,
         ));
-        let apdu_transport = Arc::new(HttpApduTransport::new(config.transmit.clone()));
+        let transmit_service_config = TransmitServiceConfig::from(config.transmit.clone());
+        let transmit_service = Arc::new(
+            HttpTransmitService::new(transmit_service_config)
+                .map_err(|e| eyre!("Failed to create transmit service: {}", e))?,
+        );
         let transmit_channel = Arc::new(TransmitChannel::new(
             protocol_handler,
             session_manager,
-            apdu_transport,
+            transmit_service,
             config.transmit.clone(),
         ));
 

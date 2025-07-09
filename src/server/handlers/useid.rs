@@ -130,7 +130,7 @@ mod tests {
         let transmit_channel = Arc::new(crate::sal::transmit::channel::TransmitChannel::new(
             crate::sal::transmit::protocol::ProtocolHandler::new(),
             crate::sal::transmit::session::SessionManager::new(Duration::from_secs(60)),
-            Arc::new(crate::sal::transmit::channel::TestApduTransport),
+            Arc::new(crate::sal::transmit::test_service::TestTransmitService),
             crate::sal::transmit::config::TransmitConfig::default(),
         ));
 

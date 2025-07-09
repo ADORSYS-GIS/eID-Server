@@ -1,4 +1,4 @@
-use config::ConfigError as ExternalConfigError;
+use config::{Config as ConfigLib, ConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
 use std::env;
 use thiserror::Error;
@@ -10,7 +10,7 @@ pub enum AppConfigError {
     #[error("Environment variable error: {0}")]
     EnvVar(#[from] std::env::VarError),
     #[error("Configuration error: {0}")]
-    Config(#[from] ExternalConfigError),
+    Config(#[from] ConfigError),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -67,80 +67,42 @@ impl Default for ServerConfig {
     }
 }
 
-impl ServerConfig {
-    pub fn from_env() -> Self {
-        let host = std::env::var("APP_SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-
-        let port = std::env::var("EID_SERVER_PORT")
-            .unwrap_or_else(|_| "8080".to_string())
-            .parse()
-            .unwrap_or(8080);
-
-        let transmit = TransmitConfig {
-            max_apdu_size: std::env::var("APP_TRANSMIT_MAX_APDU_SIZE")
-                .unwrap_or_else(|_| "4096".to_string())
-                .parse()
-                .unwrap_or(4096),
-            session_timeout_secs: std::env::var("APP_TRANSMIT_SESSION_TIMEOUT")
-                .unwrap_or_else(|_| "300".to_string())
-                .parse()
-                .unwrap_or(300),
-            max_requests_per_minute: std::env::var("APP_TRANSMIT_MAX_REQUESTS_PER_MINUTE")
-                .unwrap_or_else(|_| "60".to_string())
-                .parse()
-                .unwrap_or(60),
-            allowed_cipher_suites: std::env::var("APP_TRANSMIT_ALLOWED_CIPHER_SUITES")
-                .unwrap_or_else(|_| "TLS_AES_128_GCM_SHA256,TLS_AES_256_GCM_SHA384".to_string())
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .collect(),
-            require_client_certificate: std::env::var("APP_TRANSMIT_REQUIRE_CLIENT_CERTIFICATE")
-                .unwrap_or_else(|_| "true".to_string())
-                .parse()
-                .unwrap_or(true),
-            min_tls_version: std::env::var("APP_TRANSMIT_MIN_TLS_VERSION")
-                .unwrap_or_else(|_| "TLSv1.2".to_string()),
-            client_url: std::env::var("EID_CLIENT_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:24727/eID-Client".to_string()),
-        };
-
-        Self {
-            host,
-            port,
-            transmit,
-        }
-    }
-}
-
 impl Config {
     pub fn load() -> Result<Self, AppConfigError> {
-        // Load configuration from environment variables
-        let client_url = env::var("EID_CLIENT_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:24727/eID-Client".to_string());
+        // Build the config
+        let config = ConfigLib::builder()
+            // Set default values
+            .set_default("server.host", "127.0.0.1")?
+            .set_default("server.port", 8080)?
+            // Add a config file under config/settings.toml
+            // or any other format supported by `config` crate
+            .add_source(File::with_name("config/settings").required(false))
+            // This will allow us to override config values via environment variables
+            // The environment variables should be prefixed with 'APP_'
+            // Example: APP_SERVER_HOST=127.0.0.1
+            .add_source(Environment::with_prefix("APP").separator("_"))
+            .build()?;
 
-        let config = Config {
-            server: ServerConfig {
-                host: env::var("APP_SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
-                port: env::var("EID_SERVER_PORT")
-                    .unwrap_or_else(|_| "8080".to_string())
-                    .parse()?,
-                transmit: TransmitConfig {
-                    client_url,
-                    max_apdu_size: 4096,
-                    max_requests_per_minute: 60,
-                    require_client_certificate: true,
-                    min_tls_version: "TLSv1.2".to_string(),
-                    session_timeout_secs: 30,
-                    allowed_cipher_suites: vec![
-                        "TLS_AES_128_GCM_SHA256".to_string(),
-                        "TLS_AES_256_GCM_SHA384".to_string(),
-                        "TLS_CHACHA20_POLY1305_SHA256".to_string(),
-                    ],
-                },
-            },
-        };
+        // Try to deserialize, if it fails due to missing fields, use defaults
+        match config.clone().try_deserialize::<Config>() {
+            Ok(config) => Ok(config),
+            Err(_) => {
+                // Fallback to using Default implementations
+                let mut base_config = Config {
+                    server: ServerConfig::default(),
+                };
 
-        Ok(config)
+                // Override with any values from config
+                if let Ok(host) = config.get_string("server.host") {
+                    base_config.server.host = host;
+                }
+                if let Ok(port) = config.get_int("server.port") {
+                    base_config.server.port = port as u16;
+                }
+
+                Ok(base_config)
+            }
+        }
     }
 }
 
