@@ -36,10 +36,10 @@ where
             (StatusCode::OK, response)
         }
         Err(e) => {
-            error!("Error handling transmit request: {}", e);
+            error!("Error handling transmit request: {e}");
             (
                 StatusCode::BAD_REQUEST,
-                format!("Error: {}", e).into_bytes(),
+                format!("Error: {e}").into_bytes(),
             )
         }
     }

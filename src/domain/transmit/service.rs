@@ -73,7 +73,7 @@ impl HttpTransmitService {
             .min_tls_version(reqwest::tls::Version::TLS_1_2)
             .build()
             .map_err(|e| {
-                TransmitError::NetworkError(format!("Failed to create HTTP client: {}", e))
+                TransmitError::NetworkError(format!("Failed to create HTTP client: {e}"))
             })?;
 
         Ok(Self { client, config })
@@ -93,20 +93,20 @@ impl HttpTransmitService {
         };
 
         let xml = to_string(&transmit_request).map_err(|e| {
-            TransmitError::SerializationError(format!("Failed to serialize XML: {}", e))
+            TransmitError::SerializationError(format!("Failed to serialize XML: {e}"))
         })?;
 
-        Ok(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>{}", xml))
+        Ok(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>{xml}"))
     }
 
     /// Parses the XML response from the eID-Client
     fn parse_response(&self, response_text: &str) -> TransmitResult<Vec<u8>> {
         let client_response: ClientResponse = from_str(response_text).map_err(|e| {
-            TransmitError::SerializationError(format!("Failed to parse XML response: {}", e))
+            TransmitError::SerializationError(format!("Failed to parse XML response: {e}"))
         })?;
 
         hex::decode(&client_response.output_apdu)
-            .map_err(|e| TransmitError::InvalidApdu(format!("Failed to decode APDU hex: {}", e)))
+            .map_err(|e| TransmitError::InvalidApdu(format!("Failed to decode APDU hex: {e}")))
     }
 
     /// Sends a single HTTP request to the eID-Client
@@ -118,7 +118,7 @@ impl HttpTransmitService {
             .body(xml_payload.to_string())
             .send()
             .await
-            .map_err(|e| TransmitError::NetworkError(format!("HTTP request failed: {}", e)))?;
+            .map_err(|e| TransmitError::NetworkError(format!("HTTP request failed: {e}")))?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -129,7 +129,7 @@ impl HttpTransmitService {
         }
 
         response.text().await.map_err(|e| {
-            TransmitError::NetworkError(format!("Failed to read response body: {}", e))
+            TransmitError::NetworkError(format!("Failed to read response body: {e}"))
         })
     }
 }

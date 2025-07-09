@@ -61,7 +61,7 @@ impl HttpApduTransport {
             .tls_built_in_root_certs(true)
             .min_tls_version(reqwest::tls::Version::TLS_1_2)
             .build()
-            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+            .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
 
         Ok(Self { client, config })
     }
@@ -84,9 +84,9 @@ impl ApduTransport for HttpApduTransport {
         };
 
         let xml_payload = match to_string(&transmit_request) {
-            Ok(xml) => format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>{}", xml),
+            Ok(xml) => format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>{xml}"),
             Err(e) => {
-                return Err(format!("Failed to serialize XML: {}", e));
+                return Err(format!("Failed to serialize XML: {e}"));
             }
         };
 
@@ -107,8 +107,8 @@ impl ApduTransport for HttpApduTransport {
                 Ok(response) => {
                     if !response.status().is_success() {
                         let status = response.status();
-                        error!("HTTP request failed with status: {}", status);
-                        last_error = Some(format!("HTTP request failed with status: {}", status));
+                        error!("HTTP request failed with status: {status}");
+                        last_error = Some(format!("HTTP request failed with status: {status}"));
                         retries += 1;
                         continue;
                     }
@@ -117,8 +117,8 @@ impl ApduTransport for HttpApduTransport {
                     let response_text = match response.text().await {
                         Ok(text) => text,
                         Err(e) => {
-                            error!("Failed to read response body: {}", e);
-                            last_error = Some(format!("Failed to read response body: {}", e));
+                            error!("Failed to read response body: {e}");
+                            last_error = Some(format!("Failed to read response body: {e}"));
                             retries += 1;
                             continue;
                         }
@@ -128,8 +128,8 @@ impl ApduTransport for HttpApduTransport {
                     let client_response: ClientResponse = match from_str(&response_text) {
                         Ok(resp) => resp,
                         Err(e) => {
-                            error!("Failed to parse XML response: {}", e);
-                            last_error = Some(format!("Failed to parse XML response: {}", e));
+                            error!("Failed to parse XML response: {e}");
+                            last_error = Some(format!("Failed to parse XML response: {e}"));
                             retries += 1;
                             continue;
                         }
@@ -141,16 +141,16 @@ impl ApduTransport for HttpApduTransport {
                             return Ok(apdu_response);
                         }
                         Err(e) => {
-                            error!("Failed to decode APDU hex: {}", e);
-                            last_error = Some(format!("Failed to decode APDU hex: {}", e));
+                            error!("Failed to decode APDU hex: {e}");
+                            last_error = Some(format!("Failed to decode APDU hex: {e}"));
                             retries += 1;
                             continue;
                         }
                     }
                 }
                 Err(e) => {
-                    error!("HTTP request failed: {}", e);
-                    last_error = Some(format!("HTTP request failed: {}", e));
+                    error!("HTTP request failed: {e}");
+                    last_error = Some(format!("HTTP request failed: {e}"));
                     retries += 1;
                     continue;
                 }
@@ -190,7 +190,7 @@ impl TransmitChannel {
     ) -> Self {
         // Validate configuration
         if let Err(e) = config.validate() {
-            panic!("Invalid transmit configuration: {}", e);
+            panic!("Invalid transmit configuration: {e}");
         }
 
         Self {
@@ -215,7 +215,7 @@ impl TransmitChannel {
     /// * `Err(TransmitError)` - If the request cannot be processed
     pub async fn handle_request(&self, request: &[u8]) -> Result<Vec<u8>, TransmitError> {
         let xml_str = std::str::from_utf8(request)
-            .map_err(|e| TransmitError::TransmitError(format!("Invalid UTF-8: {}", e)))?;
+            .map_err(|e| TransmitError::TransmitError(format!("Invalid UTF-8: {e}")))?;
 
         // Parse the Transmit request
         let transmit = match self.protocol_handler.parse_transmit(xml_str) {
@@ -286,7 +286,7 @@ impl TransmitChannel {
             Err(e) => {
                 let error_result = super::protocol::TransmitResult::error(
                     "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#invalidContext",
-                    Some(format!("Session error: {}", e)),
+                    Some(format!("Session error: {e}")),
                 );
                 let error_response = TransmitResponse {
                     result: error_result,
@@ -398,7 +398,7 @@ impl TransmitChannel {
 
         // Convert hex string to bytes
         let apdu_bytes = hex::decode(&info.input_apdu)
-            .map_err(|e| TransmitError::TransmitError(format!("Invalid APDU hex: {}", e)))?;
+            .map_err(|e| TransmitError::TransmitError(format!("Invalid APDU hex: {e}")))?;
 
         // Validate APDU size
         if apdu_bytes.len() > self.config.max_apdu_size {
