@@ -437,8 +437,7 @@ impl TransmitChannel {
             let actual_status = &response_hex[response_hex.len() - 4..];
             if actual_status != expected_status {
                 return Err(TransmitError::TransmitError(format!(
-                    "Invalid APDU status code: expected {}, got {}",
-                    expected_status, actual_status
+                    "Invalid APDU status code: expected {expected_status}, got {actual_status}"
                 )));
             }
         }
@@ -466,7 +465,7 @@ mod tests {
         // Create a valid XML request according to TR-03130
         let xml = format!(
             r#"
-            <Transmit xmlns="{0}">
+            <Transmit xmlns="{ISO24727_3_NS}">
                 <SlotHandle>slot-1</SlotHandle>
                 <InputAPDUInfo>
                     <InputAPDU>00A4040008A000000167455349</InputAPDU>
@@ -476,8 +475,7 @@ mod tests {
                     <InputAPDU>00B0000000</InputAPDU>
                 </InputAPDUInfo>
             </Transmit>
-        "#,
-            ISO24727_3_NS
+        "#
         );
 
         let response_bytes = channel
@@ -530,8 +528,7 @@ mod tests {
 
         // Test 2: Missing SlotHandle should return proper error
         let missing_slot = format!(
-            r#"<Transmit xmlns="{0}"><InputAPDUInfo><InputAPDU>00A4040008A000000167455349</InputAPDU></InputAPDUInfo></Transmit>"#,
-            ISO24727_3_NS
+            r#"<Transmit xmlns="{ISO24727_3_NS}"><InputAPDUInfo><InputAPDU>00A4040008A000000167455349</InputAPDU></InputAPDUInfo></Transmit>"#,
         );
 
         let response = channel
@@ -547,15 +544,14 @@ mod tests {
         // Test 3: Status code verification failure
         let wrong_status_xml = format!(
             r#"
-            <Transmit xmlns="{0}">
+            <Transmit xmlns="{ISO24727_3_NS}">
                 <SlotHandle>slot-1</SlotHandle>
                 <InputAPDUInfo>
                     <InputAPDU>00A4040008A00000016745XXXX</InputAPDU>
                     <AcceptableStatusCode>9000</AcceptableStatusCode>
                 </InputAPDUInfo>
             </Transmit>
-        "#,
-            ISO24727_3_NS
+        "#
         );
 
         let response = channel
@@ -583,14 +579,13 @@ mod tests {
         // Test with invalid APDU format (odd-length hex string)
         let invalid_apdu_xml = format!(
             r#"
-            <Transmit xmlns="{0}">
+            <Transmit xmlns="{ISO24727_3_NS}">
                 <SlotHandle>slot-1</SlotHandle>
                 <InputAPDUInfo>
                     <InputAPDU>00A4040</InputAPDU>
                 </InputAPDUInfo>
             </Transmit>
-        "#,
-            ISO24727_3_NS
+        "#
         );
 
         let response = channel
@@ -608,14 +603,13 @@ mod tests {
         // Test with empty APDU
         let empty_apdu_xml = format!(
             r#"
-            <Transmit xmlns="{0}">
+            <Transmit xmlns="{ISO24727_3_NS}">
                 <SlotHandle>slot-1</SlotHandle>
                 <InputAPDUInfo>
                     <InputAPDU></InputAPDU>
                 </InputAPDUInfo>
             </Transmit>
-        "#,
-            ISO24727_3_NS
+        "#
         );
 
         let response = channel
@@ -675,7 +669,7 @@ mod tests {
         // Test with multiple APDUs in sequence (SELECT + READ BINARY)
         let multi_apdu_xml = format!(
             r#"
-            <Transmit xmlns="{0}">
+            <Transmit xmlns="{ISO24727_3_NS}">
                 <SlotHandle>slot-1</SlotHandle>
                 <InputAPDUInfo>
                     <InputAPDU>00A4040008A000000167455349</InputAPDU>
@@ -687,8 +681,7 @@ mod tests {
                     <InputAPDU>00B0000010</InputAPDU>
                 </InputAPDUInfo>
             </Transmit>
-        "#,
-            ISO24727_3_NS
+        "#
         );
 
         let response_bytes = channel

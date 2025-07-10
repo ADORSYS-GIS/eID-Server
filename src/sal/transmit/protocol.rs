@@ -135,13 +135,13 @@ impl ProtocolHandler {
     /// Parses a request from the eID-Client
     pub fn parse_request(&self, request: &[u8]) -> Result<ParsedRequest, TransmitError> {
         serde_json::from_slice(request)
-            .map_err(|e| TransmitError::TransmitError(format!("Failed to parse request: {}", e)))
+            .map_err(|e| TransmitError::TransmitError(format!("Failed to parse request: {e}")))
     }
 
     /// Formats a response to be sent to the eID-Client
     pub fn format_response(&self, response: Response) -> Result<Vec<u8>, TransmitError> {
         serde_json::to_vec(&response)
-            .map_err(|e| TransmitError::TransmitError(format!("Failed to format response: {}", e)))
+            .map_err(|e| TransmitError::TransmitError(format!("Failed to format response: {e}")))
     }
 
     /// Processes data from the eID-Client
@@ -155,7 +155,7 @@ impl ProtocolHandler {
         // Parse XML with namespace awareness
         from_str(xml).map_err(|e| {
             // Map quick_xml errors to our TransmitError
-            TransmitError::TransmitError(format!("Malformed XML: {}", e))
+            TransmitError::TransmitError(format!("Malformed XML: {e}"))
         })
     }
 
@@ -167,7 +167,7 @@ impl ProtocolHandler {
     ) -> Result<String, TransmitError> {
         // Serialize the main body with Serde
         let mut xml = to_xml_string(response)
-            .map_err(|e| TransmitError::TransmitError(format!("XML serialization error: {}", e)))?;
+            .map_err(|e| TransmitError::TransmitError(format!("XML serialization error: {e}")))?;
         // Inject namespaces and schema location into the root tag
         xml = xml.replacen(
             "<TransmitResponse>",
@@ -313,7 +313,7 @@ mod tests {
 
         // Create a valid Transmit request XML
         let xml = format!(
-            r#"<Transmit xmlns="{}">  
+            r#"<Transmit xmlns="{ISO24727_3_NS}">  
             <SlotHandle>slot-123</SlotHandle>
             <InputAPDUInfo>
                 <InputAPDU>00A4040008A000000167455349</InputAPDU>
@@ -323,7 +323,6 @@ mod tests {
                 <InputAPDU>00B0000000</InputAPDU>
             </InputAPDUInfo>
         </Transmit>"#,
-            ISO24727_3_NS
         );
 
         // Parse the request

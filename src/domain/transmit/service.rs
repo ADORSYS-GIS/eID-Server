@@ -123,8 +123,7 @@ impl HttpTransmitService {
         if !response.status().is_success() {
             let status = response.status();
             return Err(TransmitError::NetworkError(format!(
-                "HTTP request failed with status: {}",
-                status
+                "HTTP request failed with status: {status}"
             )));
         }
 

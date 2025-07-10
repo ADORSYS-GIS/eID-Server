@@ -38,7 +38,7 @@ pub struct PlaceVerificationRequest {
     pub _community_id: String,
 }
 
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, Debug)]
 pub struct UseIDResponse {
     #[serde(rename = "eid:Session")]
     pub session: SessionResponse,

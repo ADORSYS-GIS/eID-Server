@@ -23,6 +23,8 @@ pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub transmit: TransmitConfig,
+    pub tls_cert_path: String,
+    pub tls_key_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,6 +83,8 @@ impl Default for ServerConfig {
         Self {
             host: "127.0.0.1".to_string(),
             port: 8080,
+            tls_cert_path: "Config/cert.pem".to_string(),
+            tls_key_path: "Config/key.pem".to_string(),
             transmit: TransmitConfig::default(),
         }
     }
@@ -91,14 +95,14 @@ impl Config {
         // Build the config
         let config = ConfigLib::builder()
             // Set default values
-            .set_default("server.host", "127.0.0.1")?
-            .set_default("server.port", 8080)?
-            // Add a config file under config/settings.toml
-            // or any other format supported by `config` crate
+            .set_default("server.host", "localhost")?
+            .set_default("server.port", 3000)?
+            // Add default values for TLS paths
+            .set_default("server.tls_cert_path", "Config/cert.pem")?
+            .set_default("server.tls_key_path", "Config/key.pem")?
+            // Add a config file
             .add_source(File::with_name("config/settings").required(false))
-            // This will allow us to override config values via environment variables
-            // The environment variables should be prefixed with 'APP_'
-            // Example: APP_SERVER_HOST=127.0.0.1
+            // Add environment variables
             .add_source(Environment::with_prefix("APP").separator("_"))
             .build()?;
 
@@ -137,7 +141,7 @@ mod tests {
         // Just verify we can load the config and it has some host value
         assert!(!config.server.host.is_empty());
         // Default port should be 8080 unless overridden
-        assert!(config.server.port >= 8080);
+        assert!(config.server.port >= 3000);
     }
 
     #[test]
@@ -145,7 +149,7 @@ mod tests {
         // Set environment variables for this test
         unsafe {
             env::set_var("APP_SERVER_HOST", "0.0.0.0");
-            env::set_var("APP_SERVER_PORT", "8080");
+            env::set_var("APP_SERVER_PORT", "3000");
             env::set_var("EID_CLIENT_URL", "http://127.0.0.1:24727/eID-Client");
         }
 

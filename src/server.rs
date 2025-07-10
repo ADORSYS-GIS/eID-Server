@@ -3,32 +3,44 @@
 mod handlers;
 mod responses;
 
+use std::fs::File;
+use std::io::BufReader;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::eid::get_server_info::handler::get_server_info;
+use crate::server::handlers::refresh::refresh_handler;
 use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
-use color_eyre::eyre::eyre;
+use axum_server::tls_rustls::RustlsConfig;
+use color_eyre::eyre::{Result, eyre};
+use handlers::did_auth::did_authenticate;
 use handlers::health::health_check;
 use handlers::transmit::transmit_handler;
-use tokio::net::TcpListener;
+use rustls::ServerConfig;
+use rustls::crypto::ring::default_provider;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls_pemfile::{certs, pkcs8_private_keys};
+use std::net::TcpListener;
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
 
 use crate::config::TransmitConfig;
-use crate::domain::eid::ports::{EIDService, EidService};
+use crate::domain::eid::ports::{DIDAuthenticate, EIDService, EidService};
 use crate::domain::transmit::service::{HttpTransmitService, TransmitServiceConfig};
 use crate::sal::transmit::{
     channel::TransmitChannel, protocol::ProtocolHandler, session::SessionManager,
 };
 
 #[derive(Debug, Clone)]
-pub struct ServerConfig<'a> {
-    pub host: &'a str,
+pub struct AppServerConfig {
+    pub host: String,
     pub port: u16,
+    pub tls_cert_path: String,
+    pub tls_key_path: String,
     pub transmit: TransmitConfig,
 }
 
@@ -41,24 +53,59 @@ pub struct AppState<S: EIDService + EidService> {
 
 pub struct Server {
     router: Router,
-    listener: TcpListener,
 }
 
 impl Server {
-    /// Creates a new HTTP server with the given service and configuration.
+    /// Loads TLS certificates using provided paths
+    fn load_tls_config(cert_path: &str, key_path: &str) -> Result<RustlsConfig> {
+        // Install the default CryptoProvider (ring)
+        default_provider()
+            .install_default()
+            .map_err(|_| eyre!("Failed to install CryptoProvider"))?;
+
+        let cert_file = File::open(Path::new(cert_path))
+            .map_err(|e| eyre!("Failed to open cert file at '{}': {}", cert_path, e))?;
+        let mut cert_reader = BufReader::new(cert_file);
+        let certs: Vec<CertificateDer> = certs(&mut cert_reader)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| eyre!("Error reading certs from '{}': {e}", cert_path))?
+            .into_iter()
+            .collect();
+
+        let key_file = File::open(Path::new(key_path))
+            .map_err(|e| eyre!("Failed to open key file at '{}': {}", key_path, e))?;
+        let mut key_reader = BufReader::new(key_file);
+        let mut keys: Vec<PrivateKeyDer> = pkcs8_private_keys(&mut key_reader)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| eyre!("Error reading private key from '{}': {}", key_path, e))?
+            .into_iter()
+            .map(PrivateKeyDer::from)
+            .collect();
+
+        if keys.is_empty() {
+            return Err(eyre!("No private key found in '{}'", key_path));
+        }
+
+        let server_config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, keys.remove(0))
+            .map_err(|e| eyre!("Failed to build TLS config: {}", e))?;
+
+        Ok(RustlsConfig::from_config(Arc::new(server_config)))
+    }
+
+    /// Creates a new HTTPS server.
     pub async fn new(
-        eid_service: impl EIDService + EidService,
-        config: ServerConfig<'_>,
-    ) -> color_eyre::Result<Self> {
-        // Initialize the tracing layer to log HTTP requests.
+        eid_service: impl EIDService + EidService + DIDAuthenticate,
+        config: AppServerConfig,
+    ) -> Result<Self> {
         let trace_layer =
-            TraceLayer::new_for_http().make_span_with(|request: &axum::extract::Request<_>| {
+            TraceLayer::new_for_http().make_span_with(|request: &'_ axum::extract::Request<_>| {
                 let uri = request.uri().to_string();
-                tracing::info_span!("request", method = ?request.method(), uri)
+                tracing::info_span!("request", method = %request.method(), uri)
             });
 
-        // Initialize the CORS layer to handle cross-origin requests.
-        let cors = CorsLayer::new()
+        let cors_layer = CorsLayer::new()
             .allow_origin(Any)
             .allow_headers(Any)
             .allow_methods([
@@ -94,35 +141,50 @@ impl Server {
             transmit_channel,
         };
 
-        let router = axum::Router::new()
+        let router = Router::new()
             .route("/health", get(health_check))
             .route("/eIDService/useID", post(handlers::useid::use_id_handler))
+            .route("/eIDService/useID", get(handlers::useid::use_id_handler))
             .route("/eIDService/getServerInfo", get(get_server_info))
             .route("/eIDService/transmit", post(transmit_handler))
-            .layer(cors)
+            .route("/did-authenticate", post(did_authenticate))
+            .route("/refresh", get(refresh_handler))
+            .layer(cors_layer)
             .layer(trace_layer)
             .with_state(state);
 
-        let listener = TcpListener::bind(format!("{}:{}", config.host, config.port))
-            .await
-            .map_err(|err| eyre!("failed to bind to port {}\n{:?}", config.port, err))?;
-        Ok(Self { router, listener })
+        Ok(Self { router })
     }
 
-    /// Returns the port the server is listening on.
-    pub fn port(&self) -> color_eyre::Result<u16> {
-        self.listener
-            .local_addr()
-            .map(|addr| addr.port())
-            .map_err(|err| err.into())
+    /// Runs the HTTPS server and returns the bound port.
+    pub async fn run_with_port(
+        self,
+        config: AppServerConfig,
+    ) -> Result<(u16, tokio::task::JoinHandle<()>)> {
+        let addr = format!("{}:{}", config.host, config.port);
+        let listener = TcpListener::bind(&addr)?;
+        listener.set_nonblocking(true)?;
+        let bound_port = listener.local_addr()?.port();
+
+        let tls_config = Self::load_tls_config(&config.tls_cert_path, &config.tls_key_path)?;
+
+        tracing::debug!("Server listening on https://{}:{}", config.host, bound_port);
+
+        let server = axum_server::from_tcp_rustls(listener, tls_config)
+            .serve(self.router.into_make_service());
+
+        let handle = tokio::spawn(async move {
+            server.await.expect("Failed to run server");
+        });
+
+        Ok((bound_port, handle))
     }
 
-    /// Runs the server.
-    pub async fn run(self) -> color_eyre::Result<()> {
-        tracing::debug!("listening on {}", self.listener.local_addr().unwrap());
-        axum::serve(self.listener, self.router)
-            .await
-            .map_err(|err| eyre!("failed to launch server: {:?}", err))?;
+    /// Runs the HTTPS server.
+    pub async fn run(self, config: AppServerConfig) -> Result<()> {
+        let (port, handle) = self.run_with_port(config).await?;
+        tracing::info!("Server running on port {}", port);
+        handle.await?;
         Ok(())
     }
 }
@@ -134,9 +196,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_creation() {
-        let config = ServerConfig {
-            host: "127.0.0.1",
+        let config = AppServerConfig {
+            host: "127.0.0.1".to_string(),
             port: 0, // Use port 0 to get a random available port
+            tls_cert_path: "test_cert.pem".to_string(),
+            tls_key_path: "test_key.pem".to_string(),
             transmit: TransmitConfig {
                 client_url: "http://127.0.0.1:24727/eID-Client".to_string(),
                 max_apdu_size: 4096,
@@ -153,13 +217,9 @@ mod tests {
         };
 
         let eid_service = UseidService::new(EIDServiceConfig::default());
-        let server = Server::new(eid_service, config)
+        let _server = Server::new(eid_service, config)
             .await
             .expect("Failed to create server");
-
-        // Verify we got a valid port
-        let port = server.port().expect("Failed to get port");
-        assert!(port > 0);
     }
 
     #[tokio::test]
@@ -174,19 +234,17 @@ mod tests {
             min_tls_version: "TLSv1.2".to_string(),
         };
 
-        let config = ServerConfig {
-            host: "127.0.0.1",
+        let config = AppServerConfig {
+            host: "127.0.0.1".to_string(),
             port: 0,
+            tls_cert_path: "test_cert.pem".to_string(),
+            tls_key_path: "test_key.pem".to_string(),
             transmit: transmit_config,
         };
 
         let eid_service = UseidService::new(EIDServiceConfig::default());
-        let server = Server::new(eid_service, config)
+        let _server = Server::new(eid_service, config)
             .await
             .expect("Failed to create server");
-
-        // Verify we got a valid port
-        let port = server.port().expect("Failed to get port");
-        assert!(port > 0);
     }
 }
