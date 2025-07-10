@@ -1,7 +1,7 @@
 use eid_server::{
     config::Config,
     domain::eid::service::{EIDServiceConfig, UseidService},
-    server::{Server, ServerConfig},
+    server::{AppServerConfig, Server},
     telemetry,
 };
 
@@ -16,11 +16,12 @@ async fn main() -> color_eyre::Result<()> {
 
     // Create EIDService with default configuration
     let eid_service = UseidService::new(EIDServiceConfig::default());
-
-    let server_config = ServerConfig {
-        host: &config.server.host,
+    let server_config = AppServerConfig {
+        host: config.server.host,
         port: config.server.port,
+        tls_cert_path: config.server.tls_cert_path,
+        tls_key_path: config.server.tls_key_path,
     };
-    let server = Server::new(eid_service, server_config).await?;
-    server.run().await
+    let server = Server::new(eid_service).await?;
+    server.run(server_config).await
 }

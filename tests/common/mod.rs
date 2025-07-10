@@ -1,33 +1,36 @@
 use eid_server::{
     config::Config,
     domain::eid::service::{EIDServiceConfig, UseidService},
-    server::{Server, ServerConfig},
+    server::{AppServerConfig, Server},
 };
+use std::env;
 
-// Helper function to spawn a test server on a random port
 pub async fn spawn_server() -> String {
+    // Get project root directory
+    let base_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+
     let config = {
         let mut config = Config::load().unwrap();
         config.server.host = "localhost".to_string();
-        // Use a random OS port
         config.server.port = 0;
+        // Fixed paths - added "/tests/tls/" directory
+        config.server.tls_cert_path = format!("{base_dir}/Config/cert.pem");
+        config.server.tls_key_path = format!("{base_dir}/Config/key.pem");
         config
     };
     let eid_service = UseidService::new(EIDServiceConfig::default());
 
-    let server_config = ServerConfig {
-        host: &config.server.host,
+    let server_config = AppServerConfig {
+        host: config.server.host,
         port: config.server.port,
+        tls_cert_path: config.server.tls_cert_path,
+        tls_key_path: config.server.tls_key_path,
     };
 
-    let server = Server::new(eid_service, server_config.clone())
-        .await
-        .unwrap();
+    let server = Server::new(eid_service).await.unwrap();
 
-    let port = server.port().unwrap();
-    tokio::spawn(async move {
-        server.run().await.expect("failed to run server");
-    });
+    let (port, handle) = server.run_with_port(server_config.clone()).await.unwrap();
+    tokio::spawn(handle);
 
-    format!("http://{}:{}", server_config.host, port)
+    format!("https://{}:{}", server_config.host, port)
 }

@@ -1,17 +1,25 @@
-//! Service layer that provides the business logic of the domain.
-
+use std::fs;
 use std::sync::{Arc, RwLock};
 
-use chrono::{DateTime, Utc};
+use base64::Engine;
+use chrono::{DateTime, Duration, Utc};
 use color_eyre::Result;
-use rand::Rng;
+use rand::distr::Alphanumeric;
+use rand::{Rng, RngCore};
+use std::default::Default;
+use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
-use super::models::ServerInfo;
-use super::ports::{EIDService, EidService};
+use super::certificate::{CardCommunicator, CertificateStore, CryptoProvider};
+use super::models::{
+    AuthError, DIDAuthenticateRequest, DIDAuthenticateResponse, ResponseProtocolData, ServerInfo,
+};
+use super::ports::{DIDAuthenticate, EIDService, EidService};
 use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
 };
 use crate::eid::use_id::model::{Psk, UseIDRequest, UseIDResponse};
+use async_trait::async_trait;
 
 // Configuration for the eID Service
 #[derive(Clone, Debug)]
@@ -29,7 +37,7 @@ impl Default for EIDServiceConfig {
         Self {
             max_sessions: 1000,
             session_timeout_minutes: 5,
-            ecard_server_address: None,
+            ecard_server_address: Some("https://localhost:3000".to_string()),
         }
     }
 }
@@ -39,8 +47,19 @@ impl Default for EIDServiceConfig {
 pub struct SessionInfo {
     pub id: String,
     pub expiry: DateTime<Utc>,
-    pub psk: Option<String>,
+    pub psk: String,
     pub operations: Vec<String>,
+}
+
+impl SessionInfo {
+    pub fn new(id: String, psk: String, operations: Vec<String>, timeout_minutes: i64) -> Self {
+        SessionInfo {
+            id,
+            expiry: Utc::now() + Duration::minutes(timeout_minutes),
+            psk,
+            operations,
+        }
+    }
 }
 
 /// Main service for handling useID requests
@@ -48,6 +67,14 @@ pub struct SessionInfo {
 pub struct UseidService {
     pub config: EIDServiceConfig,
     pub sessions: Arc<RwLock<Vec<SessionInfo>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DIDAuthenticateService {
+    certificate_store: CertificateStore,
+    crypto_provider: CryptoProvider,
+    card_communicator: CardCommunicator,
+    sessions: Arc<RwLock<Vec<SessionInfo>>>,
 }
 
 impl UseidService {
@@ -58,14 +85,24 @@ impl UseidService {
         }
     }
 
+    /// Generate a random session ID
+    pub fn generate_session_id(&self) -> String {
+        let timestamp = Utc::now()
+            .timestamp_nanos_opt()
+            .expect("System time out of range for timestamp_nanos_opt()");
+        let _random_part: String = rand::rng()
+            .sample_iter(&Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect();
+        format!("{timestamp}-{}", Uuid::new_v4())
+    }
+
     /// Generate a random PSK for secure communication
     pub fn generate_psk(&self) -> String {
-        // Generate a 32-character random PSK
-        rand::rng()
-            .sample_iter(&rand::distr::Alphanumeric)
-            .take(32)
-            .map(char::from)
-            .collect()
+        let mut bytes = [0u8; 32];
+        rand::rng().fill_bytes(&mut bytes);
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
     /// Helper function to extract required operations from OperationsRequester
@@ -135,95 +172,283 @@ impl EIDService for UseidService {
     fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse> {
         // Validate the request: Check if any operations are REQUIRED
         let required_operations = Self::get_required_operations(&request._use_operations);
-        if required_operations.is_empty() {
-            return Ok(UseIDResponse {
-                result: ResultMajor {
-                    result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok".to_string(),
-                },
-                ..Default::default()
-            });
-        }
+        debug!("Required operations: {:?}", required_operations);
 
         // Check if we've reached the maximum number of sessions
         if self.sessions.read().unwrap().len() >= self.config.max_sessions {
-            return Ok(UseIDResponse {
-                ..Default::default()
-            });
+            return Err(color_eyre::eyre::eyre!("Maximum session limit reached"));
         }
 
-        fn generate_session_id() -> String {
-            let timestamp = Utc::now()
-                .timestamp_nanos_opt()
-                .expect("System time out of range for timestamp_nanos_opt()");
-
-            let random_part: String = rand::rng()
-                .sample_iter(&rand::distr::Alphanumeric)
-                .take(16)
-                .map(char::from)
-                .collect();
-
-            format!("{timestamp}-{random_part}")
+        // Generate session ID
+        let session_id = self.generate_session_id();
+        if session_id.is_empty() {
+            error!("Generated empty session ID");
+            return Err(color_eyre::eyre::eyre!("Failed to generate session ID"));
         }
-
-        let session_id = generate_session_id();
+        debug!("Generated session_id: {}", session_id);
 
         // Generate or use provided PSK
         let psk = match &request._psk {
             Some(psk) => psk.key.clone(),
             None => self.generate_psk(),
         };
+        if psk.is_empty() {
+            error!("Generated empty PSK");
+            return Err(color_eyre::eyre::eyre!("Failed to generate PSK"));
+        }
+        debug!("Generated PSK: {}", psk);
 
-        // Calculate session expiry time
-        let expiry = Utc::now() + chrono::Duration::minutes(self.config.session_timeout_minutes);
-
-        // Create session info
-        let session_info = SessionInfo {
-            id: session_id.clone(),
-            expiry,
-            psk: Some(psk.clone()),
-            operations: required_operations,
-        };
+        // Store session with PSK
+        let session_info = SessionInfo::new(
+            session_id.clone(),
+            psk.clone(),
+            required_operations.clone(),
+            30,
+        );
 
         // Store the session
         {
             let mut sessions = self.sessions.write().unwrap();
-
-            // Remove expired sessions first
             let now = Utc::now();
             sessions.retain(|session| session.expiry > now);
-
-            // Add new session
             sessions.push(session_info.clone());
-
-            tracing::info!(
+            info!(
                 "Created new session: {}, expires: {}, operations: {:?}",
-                session_id,
-                expiry,
-                session_info.operations
+                session_id, session_info.expiry, session_info.operations
             );
         }
 
+        // Construct TcTokenURL
+        let tc_token_url = self.config.ecard_server_address.clone().map(|addr| {
+            format!(
+                "{}?sessionId={}&binding=urn:liberty:paos:2006-08",
+                addr.trim_end_matches('/'),
+                session_id
+            )
+        });
+        debug!(
+            "Config ecard_server_address: {:?}",
+            self.config.ecard_server_address
+        );
+        debug!("Constructed tc_token_url: {:?}", tc_token_url);
+
+        // Validate TcTokenURL
+        let tc_token_url = tc_token_url.ok_or_else(|| {
+            error!("eCard server address not configured");
+            color_eyre::eyre::eyre!("eCard server address not configured")
+        })?;
+        // Remove XML escaping since CDATA will handle raw characters
+        debug!("Raw tc_token_url: {}", tc_token_url);
+
+        if !tc_token_url.starts_with("https://") {
+            warn!("TcTokenURL is not HTTPS: {}", tc_token_url);
+        }
+
         // Build response
-        Ok(UseIDResponse {
+        let response = UseIDResponse {
             result: ResultMajor {
                 result_major: ResultCode::Ok.to_string(),
             },
             session: SessionResponse {
                 id: session_id.clone(),
             },
-            ecard_server_address: self.config.ecard_server_address.clone(),
+            ecard_server_address: Some(tc_token_url),
             psk: Psk {
                 id: session_id,
                 key: psk,
             },
-        })
+        };
+        debug!("Response before return: {:?}", response);
+
+        // Validate response
+        if response.session.id.is_empty() {
+            error!("Response contains empty session ID");
+            return Err(color_eyre::eyre::eyre!(
+                "Response contains empty session ID"
+            ));
+        }
+        if response.psk.id.is_empty() || response.psk.key.is_empty() {
+            error!("Response contains empty PSK fields");
+            return Err(color_eyre::eyre::eyre!(
+                "Response contains empty PSK fields"
+            ));
+        }
+
+        Ok(response)
     }
 }
 
 // Implement the EidService trait for UseidService
 impl EidService for UseidService {
     fn get_server_info(&self) -> ServerInfo {
-        // Return default ServerInfo which contains the basic implementation details
         ServerInfo::default()
+    }
+}
+
+impl DIDAuthenticateService {
+    pub fn new(
+        certificate_store: CertificateStore,
+        crypto_provider: CryptoProvider,
+        card_communicator: CardCommunicator,
+        sessions: Arc<RwLock<Vec<SessionInfo>>>,
+    ) -> Self {
+        Self {
+            certificate_store,
+            crypto_provider,
+            card_communicator,
+            sessions,
+        }
+    }
+
+    pub async fn new_with_defaults(sessions: Arc<RwLock<Vec<SessionInfo>>>) -> Self {
+        dotenvy::dotenv().expect("Failed to load .env file");
+        let certificate_store = CertificateStore::new();
+
+        // Load CVCA as trusted root
+        let cvca_path = std::env::var("CVCA_PATH").expect("CVCA_PATH not set in .env");
+        let cvca_data = fs::read(&cvca_path).expect("Failed to read CVCA certificate");
+        if let Err(e) = certificate_store.add_trusted_root(cvca_data).await {
+            tracing::error!("Failed to add trusted root certificate: {:?}", e);
+            panic!("Cannot proceed without trusted CVCA certificate");
+        }
+
+        let ausweisapp2_endpoint =
+            std::env::var("AUSWEISAPP2_ENDPOINT").expect("AUSWEISAPP2_ENDPOINT not set in .env");
+
+        Self {
+            certificate_store: certificate_store.clone(),
+            crypto_provider: CryptoProvider::default(),
+            card_communicator: CardCommunicator::new(&ausweisapp2_endpoint, certificate_store),
+            sessions,
+        }
+    }
+
+    pub async fn authenticate(&self, request: DIDAuthenticateRequest) -> DIDAuthenticateResponse {
+        info!(
+            "Starting DID authentication process for request: {:?}",
+            request
+        );
+
+        match self
+            .authenticate_internal(request, self.sessions.clone())
+            .await
+        {
+            Ok(response_data) => {
+                info!("DID authentication completed successfully");
+                DIDAuthenticateResponse::success(response_data)
+            }
+            Err(e) => {
+                error!("DID authentication failed: {:?}", e);
+                DIDAuthenticateResponse::error(&e)
+            }
+        }
+    }
+
+    async fn authenticate_internal(
+        &self,
+        request: DIDAuthenticateRequest,
+        sessions: Arc<RwLock<Vec<SessionInfo>>>,
+    ) -> Result<ResponseProtocolData, AuthError> {
+        request.validate()?;
+        debug!("Request validation passed");
+
+        // Validate session
+        let session_id = request
+            .connection_handle
+            .channel_handle
+            .as_ref()
+            .ok_or_else(|| AuthError::invalid_connection("Missing channel handle"))?;
+
+        let _session_info = {
+            let sessions = sessions.read().map_err(|e| {
+                AuthError::internal_error(format!("Failed to acquire sessions lock: {e}"))
+            })?;
+            debug!(
+                "Available sessions: {:?}",
+                sessions.iter().map(|s| &s.id).collect::<Vec<_>>()
+            );
+            let session = sessions
+                .iter()
+                .find(|s| s.id == *session_id)
+                .ok_or_else(|| {
+                    error!("Session {} not found", session_id);
+                    AuthError::invalid_connection("Invalid or expired session")
+                })?;
+            if session.expiry < Utc::now() {
+                error!("Session {} expired at {}", session_id, session.expiry);
+                return Err(AuthError::timeout_error("Session validation"));
+            }
+            session.clone()
+        };
+
+        let certificate_der = base64::engine::general_purpose::STANDARD
+            .decode(&request.authentication_protocol_data.certificate_description)
+            .map_err(|e| {
+                AuthError::invalid_certificate(format!("Failed to decode certificate: {e}"))
+            })?;
+
+        let is_valid = self
+            .certificate_store
+            .validate_certificate_chain(certificate_der)
+            .await?;
+        if !is_valid {
+            return Err(AuthError::invalid_certificate(
+                "Certificate chain validation failed",
+            ));
+        }
+
+        let personal_data = self
+            .card_communicator
+            .send_did_authenticate(
+                &request.connection_handle,
+                &request.did_name,
+                &request.authentication_protocol_data,
+            )
+            .await?;
+
+        // Generate authentication token
+        let auth_token = self
+            .crypto_provider
+            .generate_challenge()
+            .await?
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+
+        Ok(ResponseProtocolData {
+            challenge: None,
+            certificate: Some(
+                request
+                    .authentication_protocol_data
+                    .certificate_description
+                    .clone(),
+            ),
+            personal_data: Some(personal_data),
+            authentication_token: Some(auth_token),
+        })
+    }
+}
+
+#[async_trait]
+impl DIDAuthenticate for UseidService {
+    async fn handle_did_authenticate(
+        &self,
+        request: DIDAuthenticateRequest,
+    ) -> Result<DIDAuthenticateResponse, AuthError> {
+        if let Err(e) = request.validate() {
+            return Ok(DIDAuthenticateResponse {
+                result_major: String::from(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error",
+                ),
+                result_minor: Some(format!(
+                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/common#parameterError: {e}"
+                )),
+                authentication_protocol_data: ResponseProtocolData::default(),
+                timestamp: Utc::now().timestamp() as u64,
+            });
+        }
+
+        let did_service = DIDAuthenticateService::new_with_defaults(self.sessions.clone()).await;
+        Ok(did_service.authenticate(request).await)
     }
 }

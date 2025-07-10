@@ -5,15 +5,18 @@ edition = "2024"
 
 [dependencies]
 # Web server framework
-axum = { version = "0.8.3", features = ["macros"] }
+axum = { version = "0.8.4", features = ["macros"] }
+axum-server = { version = "0.7.0", features = ["tls-rustls"] }
 
 # Web framework dependencies
-hyper = { version = "0.14", features = ["client", "http1"] }
+hyper = { version = "1.4", features = ["client", "http1"] }
 tower-http = { version = "0.6.2", features = ["trace", "cors"] }
+async-trait = "0.1"
+reqwest = { version = "0.12.8", default-features = false, features = ["json", "rustls-tls"] }
 
 # Async runtime
-tokio = { version = "1", features = ["full"] }
-
+tokio = { version = "1.46", features = ["full"] }
+tokio-rustls = "0.26"
 # Error handling
 thiserror = "2.0.12"
 color-eyre = "0.6"
@@ -28,20 +31,37 @@ serde_json = "1.0"
 # Configuration
 config = "0.15"
 
-# Logging and tracing
+tempfile = "3.20.0"
+
+# Logging and metrics
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+dotenvy = "0.15"
+rustls-pemfile = "2.0"
+rustls = "0.23.28" 
 
 # Utilities
 uuid = { version = "1.6", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22.1"
 rand = "0.9.1"
+urlencoding = "2.1"
+flate2 = "1.0"
 
+# Cryptographic dependencies
+ring = "0.17"
+x509-parser = "0.15"
+lru = "0.12"
+hex = "0.4"
+pem = "3.0"
 
 [dev-dependencies]
 http-body-util = "0.1"
-reqwest = { version = "0.12", features = ["json"] }
+base64 = "0.22.1"
+url = "2.5.4"
+libflate = "2.1.0"
+openssl = "0.10.72"
+reqwest = { version = "0.12.8", features = ["json", "blocking", "rustls-tls"] }
 
 [profile.dev.package.backtrace]
 opt-level = 3
