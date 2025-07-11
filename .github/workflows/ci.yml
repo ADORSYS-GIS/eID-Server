@@ -26,13 +26,27 @@ jobs:
       - name: Fetch Repository
         uses: actions/checkout@v4
 
-      - name: Cache Rust Dependencies
-        uses: ./.github/actions/cache
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Clean build artifacts
+        run: |
+          cargo clean
+          rm -rf ~/.cargo/.package-cache
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
         with:
-          cache-key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Cargo Build
-        run: cargo build --workspace --all-targets --all-features
+        run: cargo build --workspace --all-targets --all-features --verbose
 
   format-and-lint:
     name: Format and Lint Checks
@@ -42,10 +56,22 @@ jobs:
       - name: Fetch Repository
         uses: actions/checkout@v4
 
-      - name: Cache Rust Dependencies
-        uses: ./.github/actions/cache
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Clean build artifacts
+        run: cargo clean
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
         with:
-          cache-key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Cargo Format Check
         run: cargo fmt --all --check
@@ -69,10 +95,22 @@ jobs:
       - name: Fetch Repository
         uses: actions/checkout@v4
 
-      - name: Cache Rust Dependencies
-        uses: ./.github/actions/cache
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Clean build artifacts
+        run: cargo clean
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
         with:
-          cache-key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -90,10 +128,22 @@ jobs:
       - name: Fetch Repository
         uses: actions/checkout@v4
 
-      - name: Cache Rust Dependencies
-        uses: ./.github/actions/cache
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Clean build artifacts
+        run: cargo clean
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
         with:
-          cache-key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ needs.setup.outputs.cache-key }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Cargo Doc
-        run: cargo doc --workspace --all-features --no-deps
+        run: cargo doc --workspace --all-features --no-deps --verbose
