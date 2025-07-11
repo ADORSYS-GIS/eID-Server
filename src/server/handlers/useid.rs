@@ -861,7 +861,7 @@ mod tests {
                     <eid:useOperations>
                         <eid:givenNames>REQUIRED</eid:givenNames>
                     </eid:useOperations>
-                </eid:useIDRequest>
+                </eid:useIDRequest> 
             </soapenv:Body>
         </soapenv:Envelope>
         "#;
