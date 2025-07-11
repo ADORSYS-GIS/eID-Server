@@ -4,8 +4,7 @@ use std::sync::{Arc, RwLock};
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use color_eyre::Result;
-use rand::distr::Alphanumeric;
-use rand::{Rng, RngCore};
+use rand::RngCore;
 use std::default::Default;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -85,17 +84,39 @@ impl UseidService {
         }
     }
 
-    /// Generate a random session ID
-    pub fn generate_session_id(&self) -> String {
-        let timestamp = Utc::now()
-            .timestamp_nanos_opt()
-            .expect("System time out of range for timestamp_nanos_opt()");
-        let _random_part: String = rand::rng()
-            .sample_iter(&Alphanumeric)
-            .take(16)
-            .map(char::from)
-            .collect();
-        format!("{timestamp}-{}", Uuid::new_v4())
+    /// Generate a random, unique session ID
+    pub fn generate_session_id(&self) -> Result<String> {
+        const MAX_ATTEMPTS: usize = 5;
+        let mut attempts = 0;
+
+        loop {
+            if attempts >= MAX_ATTEMPTS {
+                error!(
+                    "Failed to generate unique session ID after {} attempts",
+                    MAX_ATTEMPTS
+                );
+                return Err(color_eyre::eyre::eyre!(
+                    "Failed to generate unique session ID"
+                ));
+            }
+
+            // Generate UUID v4 (32 characters in hexadecimal without hyphens)
+            let session_id = Uuid::new_v4().simple().to_string();
+            debug!("Generated session_id: {}", session_id);
+
+            // Check for uniqueness in session store
+            let sessions = self.sessions.read().map_err(|e| {
+                error!("Failed to acquire sessions read lock: {}", e);
+                color_eyre::eyre::eyre!("Failed to acquire sessions read lock")
+            })?;
+
+            if !sessions.iter().any(|s| s.id == session_id) {
+                return Ok(session_id);
+            }
+
+            warn!("Session ID collision detected for: {}", session_id);
+            attempts += 1;
+        }
     }
 
     /// Generate a random PSK for secure communication
@@ -180,7 +201,7 @@ impl EIDService for UseidService {
         }
 
         // Generate session ID
-        let session_id = self.generate_session_id();
+        let session_id = self.generate_session_id()?;
         if session_id.is_empty() {
             error!("Generated empty session ID");
             return Err(color_eyre::eyre::eyre!("Failed to generate session ID"));
@@ -189,7 +210,18 @@ impl EIDService for UseidService {
 
         // Generate or use provided PSK
         let psk = match &request._psk {
-            Some(psk) => psk.key.clone(),
+            Some(psk) => {
+                // Check if PSK ID matches an existing session
+                let sessions = self.sessions.read().map_err(|e| {
+                    error!("Failed to acquire sessions read lock: {}", e);
+                    color_eyre::eyre::eyre!("Failed to acquire sessions read lock")
+                })?;
+                if sessions.iter().any(|s| s.id == psk.id) {
+                    error!("Attempted to reuse session ID: {}", psk.id);
+                    return Err(color_eyre::eyre::eyre!("Session ID reuse detected"));
+                }
+                psk.key.clone()
+            }
             None => self.generate_psk(),
         };
         if psk.is_empty() {
@@ -203,7 +235,7 @@ impl EIDService for UseidService {
             session_id.clone(),
             psk.clone(),
             required_operations.clone(),
-            30,
+            self.config.session_timeout_minutes,
         );
 
         // Store the session
