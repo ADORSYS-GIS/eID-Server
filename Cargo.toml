@@ -54,6 +54,9 @@ x509-parser = "0.15"
 lru = "0.12"
 hex = "0.4"
 pem = "3.0"
+xmlsec = "0.2"  # Basic version without bundled feature
+openssl = { version = "0.10", features = ["vendored"] }
+minidom = "0.15"
 
 [dev-dependencies]
 http-body-util = "0.1"
