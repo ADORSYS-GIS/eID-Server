@@ -14,8 +14,13 @@ async fn main() -> color_eyre::Result<()> {
     let config = Config::load()?;
     tracing::info!("Loaded configuration: {:?}", config);
 
-    // Create EIDService with default configuration
-    let eid_service = UseidService::new(EIDServiceConfig::default());
+    // Create EIDService with configuration
+    let eid_service = UseidService::new(EIDServiceConfig {
+        max_sessions: 1000,
+        session_timeout_minutes: 5,
+        ecard_server_address: Some("https://localhost:3000".to_string()),
+        redis_url: config.redis_url,
+    });
     let server_config = AppServerConfig {
         host: config.server.host,
         port: config.server.port,
