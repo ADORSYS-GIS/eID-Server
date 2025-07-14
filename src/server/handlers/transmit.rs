@@ -170,9 +170,9 @@ mod tests {
     use crate::config::TransmitConfig;
     use crate::domain::eid::service::{EIDServiceConfig, UseidService};
     use crate::domain::eid::transmit::{
-        channel::TransmitChannel, protocol::ProtocolHandler, session::SessionManager,
-        test_service::TestTransmitService,
+        channel::TransmitChannel, protocol::ProtocolHandler, test_service::TestTransmitService,
     };
+    use crate::server::session::SessionManager;
     use axum::{
         extract::State,
         http::{HeaderMap, HeaderValue, StatusCode},

@@ -1,6 +1,6 @@
 use crate::config::TransmitConfig;
 use crate::domain::eid::ports::TransmitService;
-use crate::domain::eid::transmit::session::SessionManager;
+use crate::server::session::SessionManager;
 use std::sync::Arc;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
@@ -119,7 +119,7 @@ impl TransmitChannel {
         }
 
         warn!("Using mock TLS session info - NOT SUITABLE FOR PRODUCTION");
-        let tls_info = super::session::TlsSessionInfo {
+        let tls_info = crate::server::session::TlsSessionInfo {
             session_id: format!("mock-session-{}", transmit.slot_handle),
             cipher_suite: "TLS_RSA_PSK_WITH_AES_256_CBC_SHA".to_string(),
             psk_id: Some(format!("mock-psk-{}", transmit.slot_handle)),
@@ -142,10 +142,13 @@ impl TransmitChannel {
                     session.id, session.state
                 );
                 // Update session state to Active if it was Suspended
-                if session.state == super::session::SessionState::Suspended {
+                if session.state == crate::server::session::SessionState::Suspended {
                     debug!("Reactivating suspended session: {}", session.id);
                     self.session_manager
-                        .update_session_state(&session.id, super::session::SessionState::Active)
+                        .update_session_state(
+                            &session.id,
+                            crate::server::session::SessionState::Active,
+                        )
                         .await?;
                 }
                 Ok(session)
@@ -213,7 +216,10 @@ impl TransmitChannel {
                 // Suspend session on error - log if this fails too
                 if let Err(suspend_error) = self
                     .session_manager
-                    .update_session_state(&session.id, super::session::SessionState::Suspended)
+                    .update_session_state(
+                        &session.id,
+                        crate::server::session::SessionState::Suspended,
+                    )
                     .await
                 {
                     warn!(
@@ -407,8 +413,8 @@ impl TransmitChannel {
 mod tests {
     use super::*;
     use crate::domain::eid::transmit::protocol::{ISO24727_3_NS, ProtocolHandler};
-    use crate::domain::eid::transmit::session::SessionManager;
     use crate::domain::eid::transmit::test_service::TestTransmitService;
+    use crate::server::session::SessionManager;
 
     #[tokio::test]
     async fn test_transmit_channel_basic_flow() {
@@ -587,8 +593,8 @@ mod tests {
     #[tokio::test]
     async fn test_transmit_channel_custom_slot_handle() {
         use super::super::protocol::ProtocolHandler;
-        use super::super::session::SessionManager;
         use crate::config::TransmitConfig;
+        use crate::server::session::SessionManager;
 
         let protocol_handler = ProtocolHandler::new();
         let session_manager = SessionManager::new(std::time::Duration::from_secs(60));

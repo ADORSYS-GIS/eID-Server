@@ -568,9 +568,7 @@ mod tests {
             transmit_channel: Arc::new(
                 crate::domain::eid::transmit::channel::TransmitChannel::new(
                     crate::domain::eid::transmit::protocol::ProtocolHandler::new(),
-                    crate::domain::eid::transmit::session::SessionManager::new(
-                        Duration::from_secs(60),
-                    ),
+                    crate::server::session::SessionManager::new(Duration::from_secs(60)),
                     Arc::new(crate::domain::eid::transmit::test_service::TestTransmitService), // or appropriate test service
                     crate::config::TransmitConfig::default(),
                 )

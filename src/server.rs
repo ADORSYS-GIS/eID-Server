@@ -2,6 +2,7 @@
 
 mod handlers;
 mod responses;
+pub mod session;
 
 use std::fs::File;
 use std::io::BufReader;
@@ -31,9 +32,8 @@ use tower_http::{
 use crate::config::TransmitConfig;
 use crate::domain::eid::ports::{DIDAuthenticate, EIDService, EidService};
 use crate::domain::eid::service::HttpTransmitService;
-use crate::domain::eid::transmit::{
-    channel::TransmitChannel, protocol::ProtocolHandler, session::SessionManager,
-};
+use crate::domain::eid::transmit::{channel::TransmitChannel, protocol::ProtocolHandler};
+use crate::server::session::SessionManager;
 
 #[derive(Debug, Clone)]
 pub struct AppServerConfig {
