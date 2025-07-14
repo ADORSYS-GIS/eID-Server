@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use hex;
 
-use crate::domain::transmit::ports::{TransmitResult, TransmitService};
+use crate::domain::eid::ports::{TransmitResult, TransmitService};
 
 #[derive(Debug, Clone)]
 pub struct TestTransmitService;

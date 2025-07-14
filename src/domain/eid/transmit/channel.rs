@@ -1,166 +1,12 @@
 use crate::config::TransmitConfig;
-use crate::domain::transmit::ports::TransmitService;
-use crate::sal::transmit::session::SessionManager;
-use async_trait::async_trait;
-use hex;
-use quick_xml::de::from_str;
-use quick_xml::se::to_string;
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use crate::domain::eid::ports::TransmitService;
+use crate::domain::eid::transmit::session::SessionManager;
 use std::sync::Arc;
 use tokio::time::timeout;
-use tracing::error;
+use tracing::{debug, error, info, warn};
 
-use super::{
-    error::TransmitError,
-    protocol::{InputAPDUInfo, ProtocolHandler, TransmitResponse},
-};
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct ClientResponse {
-    #[serde(rename = "OutputAPDU")]
-    output_apdu: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename = "Transmit", rename_all = "PascalCase")]
-struct TransmitRequest {
-    #[serde(rename = "@xmlns")]
-    xmlns: String,
-    slot_handle: String,
-    #[serde(rename = "InputAPDUInfo")]
-    input_apdu_info: InputAPDUInfoRequest,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "PascalCase")]
-struct InputAPDUInfoRequest {
-    #[serde(rename = "InputAPDU")]
-    input_apdu: String,
-    acceptable_status_code: String,
-}
-
-#[async_trait]
-pub trait ApduTransport: Send + Sync {
-    async fn transmit_apdu(&self, apdu: Vec<u8>, slot_handle: &str) -> Result<Vec<u8>, String>;
-}
-
-/// HTTP-based APDU transport implementation
-#[derive(Debug, Clone)]
-pub struct HttpApduTransport {
-    client: Client,
-    config: TransmitConfig,
-}
-
-impl HttpApduTransport {
-    pub fn new(config: TransmitConfig) -> Result<Self, String> {
-        // Configure TLS client with proper settings
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(config.session_timeout_secs))
-            .tls_built_in_root_certs(true)
-            .min_tls_version(reqwest::tls::Version::TLS_1_2)
-            .build()
-            .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
-
-        Ok(Self { client, config })
-    }
-}
-
-#[async_trait]
-impl ApduTransport for HttpApduTransport {
-    async fn transmit_apdu(&self, apdu: Vec<u8>, slot_handle: &str) -> Result<Vec<u8>, String> {
-        let apdu_hex = hex::encode_upper(&apdu);
-        let client_url = &self.config.client_url;
-
-        // Create XML payload according to TR-03130 using serde and quick_xml
-        let transmit_request = TransmitRequest {
-            xmlns: "urn:iso:std:iso-iec:24727:tech:schema".to_string(),
-            slot_handle: slot_handle.to_string(),
-            input_apdu_info: InputAPDUInfoRequest {
-                input_apdu: apdu_hex,
-                acceptable_status_code: "9000".to_string(),
-            },
-        };
-
-        let xml_payload = match to_string(&transmit_request) {
-            Ok(xml) => format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>{xml}"),
-            Err(e) => {
-                return Err(format!("Failed to serialize XML: {e}"));
-            }
-        };
-
-        // Send request with retries
-        let mut retries = 0;
-        let max_retries = 3;
-        let mut last_error = None;
-
-        while retries < max_retries {
-            match self
-                .client
-                .post(client_url)
-                .header("Content-Type", "application/xml")
-                .body(xml_payload.clone())
-                .send()
-                .await
-            {
-                Ok(response) => {
-                    if !response.status().is_success() {
-                        let status = response.status();
-                        error!("HTTP request failed with status: {status}");
-                        last_error = Some(format!("HTTP request failed with status: {status}"));
-                        retries += 1;
-                        continue;
-                    }
-
-                    // Parse response body
-                    let response_text = match response.text().await {
-                        Ok(text) => text,
-                        Err(e) => {
-                            error!("Failed to read response body: {e}");
-                            last_error = Some(format!("Failed to read response body: {e}"));
-                            retries += 1;
-                            continue;
-                        }
-                    };
-
-                    // Parse XML response using quick-xml
-                    let client_response: ClientResponse = match from_str(&response_text) {
-                        Ok(resp) => resp,
-                        Err(e) => {
-                            error!("Failed to parse XML response: {e}");
-                            last_error = Some(format!("Failed to parse XML response: {e}"));
-                            retries += 1;
-                            continue;
-                        }
-                    };
-
-                    // Decode the APDU response
-                    match hex::decode(&client_response.output_apdu) {
-                        Ok(apdu_response) => {
-                            return Ok(apdu_response);
-                        }
-                        Err(e) => {
-                            error!("Failed to decode APDU hex: {e}");
-                            last_error = Some(format!("Failed to decode APDU hex: {e}"));
-                            retries += 1;
-                            continue;
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("HTTP request failed: {e}");
-                    last_error = Some(format!("HTTP request failed: {e}"));
-                    retries += 1;
-                    continue;
-                }
-            }
-        }
-
-        // If we get here, all retries failed
-        Err(last_error.unwrap_or_else(|| "All retries failed".to_string()))
-    }
-}
+use super::protocol::{InputAPDUInfo, ProtocolHandler, TransmitResponse};
+use crate::domain::eid::ports::TransmitError;
 
 #[derive(Clone)]
 pub struct TransmitChannel {
@@ -187,18 +33,27 @@ impl TransmitChannel {
         session_manager: SessionManager,
         transmit_service: Arc<dyn TransmitService>,
         config: TransmitConfig,
-    ) -> Self {
+    ) -> Result<Self, TransmitError> {
         // Validate configuration
         if let Err(e) = config.validate() {
-            panic!("Invalid transmit configuration: {e}");
+            error!("Invalid transmit configuration: {}", e);
+            return Err(TransmitError::InternalError(format!(
+                "Invalid transmit configuration: {e}"
+            )));
         }
 
-        Self {
+        info!("TransmitChannel initialized successfully");
+        debug!(
+            "TransmitChannel config: max_apdu_size={}, session_timeout_secs={}",
+            config.max_apdu_size, config.session_timeout_secs
+        );
+
+        Ok(Self {
             protocol_handler: Arc::new(protocol_handler),
             session_manager: Arc::new(session_manager),
             transmit_service,
             config,
-        }
+        })
     }
 
     /// Handles a transmit request from the eID-Client according to eCard-API and TR-03130
@@ -214,13 +69,25 @@ impl TransmitChannel {
     /// * `Ok(Vec<u8>)` - The XML response to be sent back to the eID-Client
     /// * `Err(TransmitError)` - If the request cannot be processed
     pub async fn handle_request(&self, request: &[u8]) -> Result<Vec<u8>, TransmitError> {
-        let xml_str = std::str::from_utf8(request)
-            .map_err(|e| TransmitError::TransmitError(format!("Invalid UTF-8: {e}")))?;
+        debug!("Processing transmit request, size: {} bytes", request.len());
 
+        let xml_str = std::str::from_utf8(request).map_err(|e| {
+            error!("Invalid UTF-8 in transmit request: {}", e);
+            TransmitError::TransmitError(format!("Invalid UTF-8: {e}"))
+        })?;
+
+        debug!("Parsing transmit XML request");
         // Parse the Transmit request
         let transmit = match self.protocol_handler.parse_transmit(xml_str) {
-            Ok(transmit) => transmit,
+            Ok(transmit) => {
+                debug!(
+                    "Successfully parsed transmit request for slot: {}",
+                    transmit.slot_handle
+                );
+                transmit
+            }
             Err(e) => {
+                error!("Failed to parse transmit request: {}", e);
                 // Convert error to proper Result according to spec
                 let error_result = self.protocol_handler.error_to_result(&e);
                 let error_response = TransmitResponse {
@@ -236,6 +103,7 @@ impl TransmitChannel {
 
         // Validate SlotHandle according to TR-03130 (must be non-empty)
         if transmit.slot_handle.is_empty() {
+            warn!("Empty SlotHandle provided in transmit request");
             let error_result = super::protocol::TransmitResult::error(
                 "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#invalidSlotHandle",
                 Some("Empty SlotHandle provided".to_string()),
@@ -250,31 +118,43 @@ impl TransmitChannel {
             return Ok(xml_response.into_bytes());
         }
 
-        // Get TLS session info from connection (use mock for now, but in production extract from connection)
-        // According to TR-03130, we need to validate the TLS channel security and PSK
+        warn!("Using mock TLS session info - NOT SUITABLE FOR PRODUCTION");
         let tls_info = super::session::TlsSessionInfo {
-            session_id: "mock-session-id".to_string(),
-            cipher_suite: "TLS_RSA_PSK_WITH_AES_256_CBC_SHA".to_string(), // TR-03130 required cipher suite
-            psk_id: Some("mock-psk-id".to_string()), // In production, extract from TLS-2 connection
-            psk_key: Some("mock-psk-key".to_string()), // In production, validate against negotiated PSK
+            session_id: format!("mock-session-{}", transmit.slot_handle),
+            cipher_suite: "TLS_RSA_PSK_WITH_AES_256_CBC_SHA".to_string(),
+            psk_id: Some(format!("mock-psk-{}", transmit.slot_handle)),
+            psk_key: Some("mock-psk-key".to_string()),
         };
 
         // Get or create client session using SlotHandle as specified in TR-03112
+        debug!(
+            "Looking up session for slot handle: {}",
+            transmit.slot_handle
+        );
         let session_result = match self
             .session_manager
             .get_session(&transmit.slot_handle)
             .await
         {
             Ok(session) => {
+                debug!(
+                    "Found existing session: {}, state: {:?}",
+                    session.id, session.state
+                );
                 // Update session state to Active if it was Suspended
                 if session.state == super::session::SessionState::Suspended {
+                    debug!("Reactivating suspended session: {}", session.id);
                     self.session_manager
                         .update_session_state(&session.id, super::session::SessionState::Active)
                         .await?;
                 }
                 Ok(session)
             }
-            Err(_) => {
+            Err(e) => {
+                debug!(
+                    "Session not found for slot {}, creating new session: {}",
+                    transmit.slot_handle, e
+                );
                 // Create a new session with the specified SlotHandle
                 self.session_manager.create_session(tls_info).await
             }
@@ -282,8 +162,12 @@ impl TransmitChannel {
 
         // Handle session errors according to TR-03130
         let session = match session_result {
-            Ok(session) => session,
+            Ok(session) => {
+                info!("Session established successfully: {}", session.id);
+                session
+            }
             Err(e) => {
+                error!("Session creation/retrieval failed: {}", e);
                 let error_result = super::protocol::TransmitResult::error(
                     "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#invalidContext",
                     Some(format!("Session error: {e}")),
@@ -300,22 +184,48 @@ impl TransmitChannel {
         };
 
         // Process client APDU requests with timeout
+        debug!(
+            "Processing {} APDU(s) with timeout of {}s",
+            transmit.input_apdu_info.len(),
+            self.config.session_timeout_secs
+        );
         let output_apdu_result = timeout(
             std::time::Duration::from_secs(self.config.session_timeout_secs),
             self.process_client_apdus(&transmit.input_apdu_info, &transmit.slot_handle),
         )
         .await
-        .map_err(|_| TransmitError::TransmitError("Request timeout".to_string()))?;
+        .map_err(|_| {
+            error!(
+                "APDU processing timeout after {}s",
+                self.config.session_timeout_secs
+            );
+            TransmitError::TransmitError("Request timeout".to_string())
+        })?;
 
         // Handle APDU processing errors according to TR-03130
         let output_apdu = match output_apdu_result {
-            Ok(apdus) => apdus,
+            Ok(apdus) => {
+                info!("Successfully processed {} APDU(s)", apdus.len());
+                apdus
+            }
             Err(e) => {
-                // Suspend session on error
-                let _ = self
+                error!("APDU processing failed: {}", e);
+                // Suspend session on error - log if this fails too
+                if let Err(suspend_error) = self
                     .session_manager
                     .update_session_state(&session.id, super::session::SessionState::Suspended)
-                    .await;
+                    .await
+                {
+                    warn!(
+                        "Failed to suspend session {} after APDU error: {}",
+                        session.id, suspend_error
+                    );
+                } else {
+                    debug!(
+                        "Session {} suspended due to APDU processing error",
+                        session.id
+                    );
+                }
 
                 let error_result = self.protocol_handler.error_to_result(&e);
                 let error_response = TransmitResponse {
@@ -330,6 +240,7 @@ impl TransmitChannel {
         };
 
         // Build successful response for eID-Client per TR-03130
+        debug!("Building successful transmit response");
         let response = TransmitResponse {
             result: super::protocol::TransmitResult::ok(),
             output_apdu,
@@ -337,6 +248,10 @@ impl TransmitChannel {
 
         // Serialize response to XML with proper namespaces
         let xml_response = self.protocol_handler.format_transmit_response(&response)?;
+        debug!(
+            "Transmit request completed successfully, response size: {} bytes",
+            xml_response.len()
+        );
         Ok(xml_response.into_bytes())
     }
 
@@ -382,8 +297,14 @@ impl TransmitChannel {
         info: &InputAPDUInfo,
         slot_handle: &str,
     ) -> Result<String, TransmitError> {
+        debug!(
+            "Processing single APDU: {} for slot: {}",
+            info.input_apdu, slot_handle
+        );
+
         // Validate APDU format according to ISO 7816-4
         if info.input_apdu.is_empty() {
+            warn!("Empty APDU provided");
             return Err(TransmitError::TransmitError(
                 "Empty APDU provided".to_string(),
             ));
@@ -391,17 +312,25 @@ impl TransmitChannel {
 
         // Validate APDU format (should be even-length hexadecimal string)
         if info.input_apdu.len() % 2 != 0 {
+            warn!("Invalid APDU format: odd length hex string");
             return Err(TransmitError::TransmitError(
                 "Invalid APDU format: length must be even".to_string(),
             ));
         }
 
         // Convert hex string to bytes
-        let apdu_bytes = hex::decode(&info.input_apdu)
-            .map_err(|e| TransmitError::TransmitError(format!("Invalid APDU hex: {e}")))?;
+        let apdu_bytes = hex::decode(&info.input_apdu).map_err(|e| {
+            warn!("Invalid APDU hex format: {}", e);
+            TransmitError::TransmitError(format!("Invalid APDU hex: {e}"))
+        })?;
 
         // Validate APDU size
         if apdu_bytes.len() > self.config.max_apdu_size {
+            warn!(
+                "APDU too large: {} bytes (max: {})",
+                apdu_bytes.len(),
+                self.config.max_apdu_size
+            );
             return Err(TransmitError::TransmitError(format!(
                 "APDU too large: {} bytes, maximum {} bytes allowed",
                 apdu_bytes.len(),
@@ -411,47 +340,75 @@ impl TransmitChannel {
 
         // Validate minimum length
         if apdu_bytes.len() < 4 {
+            warn!("APDU too short: {} bytes", apdu_bytes.len());
             return Err(TransmitError::TransmitError(format!(
                 "APDU too short: {} bytes, minimum 4 bytes required",
                 apdu_bytes.len()
             )));
         }
 
-        // Transmit APDU with timeout
+        // Use configurable default timeout (30 seconds) instead of hardcoded 10 seconds
+        let default_timeout_ms = 30000;
         let timeout_duration =
-            std::time::Duration::from_millis(info.timeout.unwrap_or(10000) as u64);
+            std::time::Duration::from_millis(info.timeout.unwrap_or(default_timeout_ms) as u64);
+
+        debug!("Transmitting APDU with timeout: {:?}", timeout_duration);
 
         let response_bytes = timeout(
             timeout_duration,
             self.transmit_service.transmit_apdu(apdu_bytes, slot_handle),
         )
         .await
-        .map_err(|_| TransmitError::TransmitError("APDU transmission timeout".to_string()))?
-        .map_err(|e| TransmitError::TransmitError(e.to_string()))?;
+        .map_err(|_| {
+            error!("APDU transmission timeout after {:?}", timeout_duration);
+            TransmitError::TransmitError("APDU transmission timeout".to_string())
+        })?
+        .map_err(|e| {
+            error!("APDU transmission failed: {}", e);
+            TransmitError::TransmitError(e.to_string())
+        })?;
 
         // Convert response to hex string
         let response_hex = hex::encode_upper(response_bytes);
+        debug!("APDU response: {}", response_hex);
 
-        // Validate status code if specified
+        // Validate status code if specified - fix potential panic
         if let Some(expected_status) = &info.acceptable_status_code {
+            if response_hex.len() < 4 {
+                error!(
+                    "APDU response too short for status code validation: {} chars",
+                    response_hex.len()
+                );
+                return Err(TransmitError::TransmitError(format!(
+                    "APDU response too short: {} characters, minimum 4 required for status code",
+                    response_hex.len()
+                )));
+            }
+
             let actual_status = &response_hex[response_hex.len() - 4..];
             if actual_status != expected_status {
+                warn!(
+                    "APDU status code mismatch: expected {}, got {}",
+                    expected_status, actual_status
+                );
                 return Err(TransmitError::TransmitError(format!(
                     "Invalid APDU status code: expected {expected_status}, got {actual_status}"
                 )));
             }
+            debug!("APDU status code validation passed: {}", actual_status);
         }
 
+        debug!("APDU processing completed successfully");
         Ok(response_hex)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::protocol::{ISO24727_3_NS, ProtocolHandler};
-    use super::super::session::SessionManager;
-    use super::super::test_service::TestTransmitService;
     use super::*;
+    use crate::domain::eid::transmit::protocol::{ISO24727_3_NS, ProtocolHandler};
+    use crate::domain::eid::transmit::session::SessionManager;
+    use crate::domain::eid::transmit::test_service::TestTransmitService;
 
     #[tokio::test]
     async fn test_transmit_channel_basic_flow() {
@@ -460,7 +417,8 @@ mod tests {
         let config = TransmitConfig::default();
         let transmit_service = Arc::new(TestTransmitService);
         let channel =
-            TransmitChannel::new(protocol_handler, session_manager, transmit_service, config);
+            TransmitChannel::new(protocol_handler, session_manager, transmit_service, config)
+                .expect("Channel creation should succeed in tests");
 
         // Create a valid XML request according to TR-03130
         let xml = format!(
@@ -507,7 +465,8 @@ mod tests {
         let config = TransmitConfig::default();
         let transmit_service = Arc::new(TestTransmitService);
         let channel =
-            TransmitChannel::new(protocol_handler, session_manager, transmit_service, config);
+            TransmitChannel::new(protocol_handler, session_manager, transmit_service, config)
+                .expect("Channel creation should succeed in tests");
 
         // Test 1: Malformed XML should return proper error
         let malformed_xml =
@@ -574,7 +533,8 @@ mod tests {
         let config = TransmitConfig::default();
         let transmit_service = Arc::new(TestTransmitService);
         let channel =
-            TransmitChannel::new(protocol_handler, session_manager, transmit_service, config);
+            TransmitChannel::new(protocol_handler, session_manager, transmit_service, config)
+                .expect("Channel creation should succeed in tests");
 
         // Test with invalid APDU format (odd-length hex string)
         let invalid_apdu_xml = format!(
@@ -635,7 +595,8 @@ mod tests {
         let config = TransmitConfig::default();
         let transmit_service = Arc::new(TestTransmitService);
         let channel =
-            TransmitChannel::new(protocol_handler, session_manager, transmit_service, config);
+            TransmitChannel::new(protocol_handler, session_manager, transmit_service, config)
+                .expect("Channel creation should succeed in tests");
 
         // Test with custom slot handle
         let test_request = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -664,7 +625,8 @@ mod tests {
         let config = TransmitConfig::default();
         let transmit_service = Arc::new(TestTransmitService);
         let channel =
-            TransmitChannel::new(protocol_handler, session_manager, transmit_service, config);
+            TransmitChannel::new(protocol_handler, session_manager, transmit_service, config)
+                .expect("Channel creation should succeed in tests");
 
         // Test with multiple APDUs in sequence (SELECT + READ BINARY)
         let multi_apdu_xml = format!(

@@ -701,12 +701,15 @@ mod tests {
         });
         let service_arc = Arc::new(service);
 
-        let transmit_channel = Arc::new(crate::sal::transmit::channel::TransmitChannel::new(
-            crate::sal::transmit::protocol::ProtocolHandler::new(),
-            crate::sal::transmit::session::SessionManager::new(Duration::from_secs(60)),
-            Arc::new(crate::sal::transmit::test_service::TestTransmitService),
-            crate::config::TransmitConfig::default(),
-        ));
+        let transmit_channel = Arc::new(
+            crate::domain::eid::transmit::channel::TransmitChannel::new(
+                crate::domain::eid::transmit::protocol::ProtocolHandler::new(),
+                crate::domain::eid::transmit::session::SessionManager::new(Duration::from_secs(60)),
+                Arc::new(crate::domain::eid::transmit::test_service::TestTransmitService),
+                crate::config::TransmitConfig::default(),
+            )
+            .expect("TransmitChannel creation should succeed in tests"),
+        );
 
         AppState {
             use_id: service_arc.clone(),

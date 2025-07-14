@@ -1,4 +1,4 @@
-use super::error::TransmitError;
+use crate::domain::eid::ports::TransmitError;
 use quick_xml::{de::from_str, se::to_string as to_xml_string};
 use serde::{Deserialize, Serialize};
 

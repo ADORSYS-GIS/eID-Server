@@ -30,8 +30,8 @@ use tower_http::{
 
 use crate::config::TransmitConfig;
 use crate::domain::eid::ports::{DIDAuthenticate, EIDService, EidService};
-use crate::domain::transmit::service::{HttpTransmitService, TransmitServiceConfig};
-use crate::sal::transmit::{
+use crate::domain::eid::service::{HttpTransmitService, TransmitServiceConfig};
+use crate::domain::eid::transmit::{
     channel::TransmitChannel, protocol::ProtocolHandler, session::SessionManager,
 };
 
@@ -128,12 +128,15 @@ impl Server {
             HttpTransmitService::new(transmit_service_config)
                 .map_err(|e| eyre!("Failed to create transmit service: {}", e))?,
         );
-        let transmit_channel = Arc::new(TransmitChannel::new(
-            protocol_handler,
-            session_manager,
-            transmit_service,
-            config.transmit.clone(),
-        ));
+        let transmit_channel = Arc::new(
+            TransmitChannel::new(
+                protocol_handler,
+                session_manager,
+                transmit_service,
+                config.transmit.clone(),
+            )
+            .map_err(|e| eyre!("Failed to create transmit channel: {}", e))?,
+        );
 
         let state = AppState {
             use_id: eid_service_arc.clone(),

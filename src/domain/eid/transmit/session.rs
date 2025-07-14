@@ -1,4 +1,4 @@
-use crate::sal::transmit::error::TransmitError;
+use crate::domain::eid::ports::TransmitError;
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
