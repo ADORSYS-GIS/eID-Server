@@ -235,7 +235,7 @@ impl UseidService {
                         "AcademicTitle" => parsed_data.academic_title = Some(text),
                         "DateOfBirth" => {
                             parsed_data.date_of_birth_string = Some(text.clone());
-                            // Try to format the date if it's in YYYYMMDD format
+
                             if text.len() == 8 {
                                 if let (Ok(year), Ok(month), Ok(day)) = (
                                     text[0..4].parse::<u32>(),
@@ -278,7 +278,7 @@ impl UseidService {
         Ok(parsed_data)
     }
 
-    /// Create a GetResultResponse with real authentication data
+    /// Create a GetResultResponse
     /// This method parses the actual authentication data retrieved from the eID card
     fn create_get_result_response(
         &self,

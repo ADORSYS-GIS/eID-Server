@@ -5,6 +5,7 @@ This document provides examples of how to test the `getResult` endpoint using cu
 ## Prerequisites
 
 1. Start the eID-Server:
+
 ```bash
 cargo run
 ```
@@ -81,6 +82,7 @@ curl -X POST https://localhost:3000/eIDService/useID \
 ### 2. Extract the session ID from the useID response
 
 The response will contain a session ID like:
+
 ```xml
 <eid:Session>
   <eid:ID>1234567890-abcd-efgh-ijkl-mnopqrstuvwx</eid:ID>
@@ -156,6 +158,7 @@ This should return HTTP 400 (Bad Request) with "RequestCounter is invalid or reu
 ## Expected Responses
 
 ### Success Response (when authentication is completed)
+
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:eid="http://bsi.bund.de/eID/" xmlns:dss="urn:oasis:names:tc:dss:1.0:core:schema">
@@ -177,8 +180,9 @@ This should return HTTP 400 (Bad Request) with "RequestCounter is invalid or reu
 ```
 
 ### Error Responses
+
 - **No Result Yet**: HTTP 202 with error message
-- **Invalid Session**: HTTP 400 with error message  
+- **Invalid Session**: HTTP 400 with error message
 - **Invalid Counter**: HTTP 400 with error message
 - **Invalid Content Type**: HTTP 400 with error message
 
