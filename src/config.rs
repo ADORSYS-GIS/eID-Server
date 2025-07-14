@@ -32,6 +32,7 @@ pub struct TransmitConfig {
     pub max_apdu_size: usize,
     pub session_timeout_secs: u64,
     pub max_requests_per_minute: u32,
+    pub max_retries: u32,
     pub allowed_cipher_suites: Vec<String>,
     pub require_client_certificate: bool,
     pub min_tls_version: String,
@@ -48,6 +49,7 @@ impl Default for TransmitConfig {
             max_apdu_size: 4096,
             session_timeout_secs: 300,
             max_requests_per_minute: 60,
+            max_retries: 3,
             allowed_cipher_suites: vec![
                 "TLS_AES_128_GCM_SHA256".to_string(),
                 "TLS_AES_256_GCM_SHA384".to_string(),

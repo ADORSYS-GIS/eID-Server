@@ -460,35 +460,17 @@ impl DIDAuthenticate for UseidService {
     }
 }
 
-/// Configuration for the transmit service
-#[derive(Debug, Clone)]
-pub struct TransmitServiceConfig {
-    pub client_url: String,
-    pub session_timeout_secs: u64,
-    pub max_retries: u32,
-}
-
-impl From<TransmitConfig> for TransmitServiceConfig {
-    fn from(config: TransmitConfig) -> Self {
-        Self {
-            client_url: config.client_url,
-            session_timeout_secs: config.session_timeout_secs,
-            max_retries: 3, // Default retry count
-        }
-    }
-}
-
 /// HTTP-based transmit service implementation
 /// This service handles the business logic for APDU transmission including
 /// HTTP client management, retry logic, XML serialization, and error handling
 pub struct HttpTransmitService {
     client: Client,
-    config: TransmitServiceConfig,
+    config: TransmitConfig,
 }
 
 impl HttpTransmitService {
     /// Creates a new HTTP transmit service
-    pub fn new(config: TransmitServiceConfig) -> TransmitResult<Self> {
+    pub fn new(config: TransmitConfig) -> TransmitResult<Self> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.session_timeout_secs))
             .tls_built_in_root_certs(true)
@@ -590,29 +572,37 @@ mod transmit_tests {
     use super::*;
 
     #[test]
-    fn test_transmit_service_config_from_transmit_config() {
+    fn test_transmit_config_usage() {
         let transmit_config = TransmitConfig {
             client_url: "http://test.example.com".to_string(),
             session_timeout_secs: 60,
             max_apdu_size: 4096,
+            max_retries: 3,
             allowed_cipher_suites: vec!["TLS_AES_128_GCM_SHA256".to_string()],
             max_requests_per_minute: 60,
             require_client_certificate: true,
             min_tls_version: "TLSv1.2".to_string(),
         };
 
-        let service_config = TransmitServiceConfig::from(transmit_config);
-        assert_eq!(service_config.client_url, "http://test.example.com");
-        assert_eq!(service_config.session_timeout_secs, 60);
-        assert_eq!(service_config.max_retries, 3);
+        // Test that we can create a service directly with TransmitConfig
+        let service = HttpTransmitService::new(transmit_config.clone())
+            .expect("Service creation should succeed");
+        assert_eq!(service.config.client_url, "http://test.example.com");
+        assert_eq!(service.config.session_timeout_secs, 60);
+        assert_eq!(service.config.max_retries, 3);
     }
 
     #[test]
     fn test_serialize_request() {
-        let config = TransmitServiceConfig {
+        let config = TransmitConfig {
             client_url: "http://test.example.com".to_string(),
             session_timeout_secs: 30,
+            max_apdu_size: 4096,
             max_retries: 3,
+            allowed_cipher_suites: vec!["TLS_AES_128_GCM_SHA256".to_string()],
+            max_requests_per_minute: 60,
+            require_client_certificate: true,
+            min_tls_version: "TLSv1.2".to_string(),
         };
 
         let service = HttpTransmitService::new(config).expect("Service creation should succeed");
@@ -630,10 +620,15 @@ mod transmit_tests {
 
     #[test]
     fn test_parse_response() {
-        let config = TransmitServiceConfig {
+        let config = TransmitConfig {
             client_url: "http://test.example.com".to_string(),
             session_timeout_secs: 30,
+            max_apdu_size: 4096,
             max_retries: 3,
+            allowed_cipher_suites: vec!["TLS_AES_128_GCM_SHA256".to_string()],
+            max_requests_per_minute: 60,
+            require_client_certificate: true,
+            min_tls_version: "TLSv1.2".to_string(),
         };
 
         let service = HttpTransmitService::new(config).expect("Service creation should succeed");

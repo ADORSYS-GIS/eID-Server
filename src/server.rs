@@ -30,7 +30,7 @@ use tower_http::{
 
 use crate::config::TransmitConfig;
 use crate::domain::eid::ports::{DIDAuthenticate, EIDService, EidService};
-use crate::domain::eid::service::{HttpTransmitService, TransmitServiceConfig};
+use crate::domain::eid::service::HttpTransmitService;
 use crate::domain::eid::transmit::{
     channel::TransmitChannel, protocol::ProtocolHandler, session::SessionManager,
 };
@@ -123,9 +123,8 @@ impl Server {
         let protocol_handler = ProtocolHandler::new();
         let session_manager =
             SessionManager::new(Duration::from_secs(config.transmit.session_timeout_secs));
-        let transmit_service_config = TransmitServiceConfig::from(config.transmit.clone());
         let transmit_service = Arc::new(
-            HttpTransmitService::new(transmit_service_config)
+            HttpTransmitService::new(config.transmit.clone())
                 .map_err(|e| eyre!("Failed to create transmit service: {}", e))?,
         );
         let transmit_channel = Arc::new(
@@ -208,6 +207,7 @@ mod tests {
                 client_url: "http://127.0.0.1:24727/eID-Client".to_string(),
                 max_apdu_size: 4096,
                 session_timeout_secs: 30,
+                max_retries: 3,
                 allowed_cipher_suites: vec![
                     "TLS_AES_128_GCM_SHA256".to_string(),
                     "TLS_AES_256_GCM_SHA384".to_string(),
@@ -230,6 +230,7 @@ mod tests {
         let transmit_config = TransmitConfig {
             max_apdu_size: 8192,
             session_timeout_secs: 600,
+            max_retries: 3,
             allowed_cipher_suites: vec!["TLS_AES_128_GCM_SHA256".to_string()],
             client_url: "http://localhost:24727/eID-Client".to_string(),
             max_requests_per_minute: 60,
