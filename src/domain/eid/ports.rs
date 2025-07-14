@@ -6,8 +6,9 @@ use color_eyre::Result;
 
 use super::models::{AuthError, DIDAuthenticateRequest, DIDAuthenticateResponse, ServerInfo};
 
+#[async_trait]
 pub trait EIDService: Clone + Send + Sync + 'static {
-    fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse>;
+    async fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse>;
 }
 
 #[async_trait]

@@ -60,7 +60,7 @@ use super::{
 /// ```
 ///
 /// # Errors
-/// Returns [`UseIdError::GenericError`] if the underlying `to_string()`
+/// Returns `UseIdError::GenericError` if the underlying `to_string()`
 /// call fails or if namespace injection cannot be applied.
 #[allow(dead_code)]
 pub fn build_use_id_response(response: &UseIDResponse) -> Result<String, UseIdError> {

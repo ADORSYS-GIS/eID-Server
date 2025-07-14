@@ -16,6 +16,7 @@ pub enum AppConfigError {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
+    pub redis_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -96,24 +97,33 @@ impl Config {
     pub fn load() -> Result<Self, AppConfigError> {
         // Build the config
         let config = ConfigLib::builder()
-            // Set default values
+            // Set default values for server
             .set_default("server.host", "localhost")?
             .set_default("server.port", 3000)?
             // Add default values for TLS paths
             .set_default("server.tls_cert_path", "Config/cert.pem")?
             .set_default("server.tls_key_path", "Config/key.pem")?
+            // Set default value for redis_url (None by default)
+            .set_default("redis_url", "")?
             // Add a config file
             .add_source(File::with_name("config/settings").required(false))
             // Add environment variables
             .add_source(Environment::with_prefix("APP").separator("_"))
             .build()?;
 
-        match config.clone().try_deserialize::<Config>() {
-            Ok(config) => Ok(config),
+        let config = match config.clone().try_deserialize::<Config>() {
+            Ok(mut config) => {
+                // Convert empty string to None for redis_url
+                if config.redis_url.as_ref().is_some_and(|url| url.is_empty()) {
+                    config.redis_url = None;
+                }
+                config
+            }
             Err(_) => {
                 // Fallback to using Default implementations
                 let mut base_config = Config {
                     server: ServerConfig::default(),
+                    redis_url: None,
                 };
 
                 // Override with any values from config
@@ -124,9 +134,11 @@ impl Config {
                     base_config.server.port = port as u16;
                 }
 
-                Ok(base_config)
+                base_config
             }
-        }
+        };
+
+        Ok(config)
     }
 }
 

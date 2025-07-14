@@ -788,12 +788,12 @@ impl CardCommunicator {
             buf.clear();
         }
 
-        if let Some(major) = result_major {
-            if major.contains("error") {
-                return Err(AuthError::card_communication_error(format!(
-                    "SOAP response indicates error: major={major}, minor={result_minor:?}"
-                )));
-            }
+        if let Some(major) = result_major
+            && major.contains("error")
+        {
+            return Err(AuthError::card_communication_error(format!(
+                "SOAP response indicates error: major={major}, minor={result_minor:?}"
+            )));
         }
 
         if personal_data.is_empty() {
