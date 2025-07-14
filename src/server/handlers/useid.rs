@@ -195,7 +195,7 @@ pub async fn use_id_handler<S: EIDService + EidService>(
         };
 
         // Process the request
-        let response = match state.use_id.handle_use_id(use_id_request) {
+        let response = match state.use_id.handle_use_id(use_id_request).await {
             Ok(response) => {
                 info!("useID request processed successfully");
                 debug!("Response: {:?}", response);
@@ -264,7 +264,7 @@ pub async fn use_id_handler<S: EIDService + EidService>(
             }
         };
 
-        let response = match state.use_id.handle_use_id(use_id_request) {
+        let response = match state.use_id.handle_use_id(use_id_request).await {
             Ok(response) => {
                 info!("useID request processed successfully");
                 debug!("Response: {:?}", response);
@@ -689,6 +689,7 @@ mod tests {
             max_sessions: 10,
             session_timeout_minutes: 5,
             ecard_server_address: Some("https://test.eid.example.com/ecard".to_string()),
+            redis_url: None,
         });
         let service_arc = Arc::new(service);
         AppState {
@@ -1015,11 +1016,12 @@ mod tests {
         let mut session_ids = std::collections::HashSet::new();
         for _ in 0..10 {
             // Clean up expired sessions before each request
-            {
-                let mut sessions = state.use_id.sessions.write().unwrap();
-                let now = chrono::Utc::now();
-                sessions.retain(|session| session.expiry > now);
-            }
+            state
+                .use_id
+                .session_manager
+                .remove_expired_sessions()
+                .await
+                .unwrap();
 
             let request = Request::builder()
                 .method(http::Method::GET)

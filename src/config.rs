@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
+    pub redis_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,19 +19,26 @@ impl Config {
     pub fn load() -> Result<Self, ConfigError> {
         // Build the config
         let config = ConfigLib::builder()
-            // Set default values
+            // Set default values for server
             .set_default("server.host", "localhost")?
             .set_default("server.port", 3000)?
             // Add default values for TLS paths
             .set_default("server.tls_cert_path", "Config/cert.pem")?
             .set_default("server.tls_key_path", "Config/key.pem")?
+            // Set default value for redis_url (None by default)
+            .set_default("redis_url", "")?
             // Add a config file
             .add_source(File::with_name("config/settings").required(false))
             // Add environment variables
             .add_source(Environment::with_prefix("APP").separator("_"))
             .build()?;
 
-        config.try_deserialize()
+        let mut config: Self = config.try_deserialize()?;
+        // Convert empty string to None for redis_url
+        if config.redis_url.as_ref().is_some_and(|url| url.is_empty()) {
+            config.redis_url = None;
+        }
+        Ok(config)
     }
 }
 
