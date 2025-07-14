@@ -4,6 +4,7 @@ use std::sync::{Arc, RwLock};
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use color_eyre::Result;
+use quick_xml::{Reader, events::Event};
 use rand::distr::Alphanumeric;
 use rand::{Rng, RngCore};
 use std::default::Default;
@@ -18,6 +19,8 @@ use super::ports::{DIDAuthenticate, EIDService, EidService};
 use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
 };
+use crate::eid::get_result::error::GetResultError;
+use crate::eid::get_result::model::{GetResultRequest, GetResultResponse};
 use crate::eid::use_id::model::{Psk, UseIDRequest, UseIDResponse};
 use async_trait::async_trait;
 
@@ -49,6 +52,9 @@ pub struct SessionInfo {
     pub expiry: DateTime<Utc>,
     pub psk: String,
     pub operations: Vec<String>,
+    pub request_counter: u8,
+    pub authentication_completed: bool,
+    pub authentication_data: Option<String>,
 }
 
 impl SessionInfo {
@@ -58,6 +64,9 @@ impl SessionInfo {
             expiry: Utc::now() + Duration::minutes(timeout_minutes),
             psk,
             operations,
+            request_counter: 0,
+            authentication_completed: false,
+            authentication_data: None,
         }
     }
 }
@@ -67,6 +76,31 @@ impl SessionInfo {
 pub struct UseidService {
     pub config: EIDServiceConfig,
     pub sessions: Arc<RwLock<Vec<SessionInfo>>>,
+}
+
+/// Structure to hold parsed personal data from XML
+#[derive(Debug, Default)]
+struct ParsedPersonalData {
+    document_type: Option<String>,
+    issuing_state: Option<String>,
+    date_of_expiry: Option<String>,
+    given_names: Option<String>,
+    family_names: Option<String>,
+    artistic_name: Option<String>,
+    academic_title: Option<String>,
+    date_of_birth_string: Option<String>,
+    date_of_birth_value: Option<String>,
+    place_of_birth: Option<String>,
+    nationality: Option<String>,
+    birth_name: Option<String>,
+    residence_street: Option<String>,
+    residence_city: Option<String>,
+    residence_country: Option<String>,
+    residence_zipcode: Option<String>,
+    community_id: Option<String>,
+    residence_permit_id: Option<String>,
+    restricted_id: Option<String>,
+    restricted_id2: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -165,6 +199,201 @@ impl UseidService {
         }
         required
     }
+
+    /// Parse personal data from XML authentication data
+    fn parse_personal_data_xml(
+        &self,
+        xml_data: &str,
+    ) -> Result<ParsedPersonalData, GetResultError> {
+        let mut reader = Reader::from_str(xml_data);
+        reader.config_mut().trim_text(true);
+
+        let mut buf = Vec::new();
+        let mut parsed_data = ParsedPersonalData::default();
+        let mut current_element = String::new();
+
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(e)) => {
+                    current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                }
+                Ok(Event::Text(e)) => {
+                    let text = e
+                        .unescape()
+                        .map_err(|_| {
+                            GetResultError::GenericError("Failed to unescape XML text".to_string())
+                        })?
+                        .to_string();
+
+                    match current_element.as_str() {
+                        "DocumentType" => parsed_data.document_type = Some(text),
+                        "IssuingState" => parsed_data.issuing_state = Some(text),
+                        "DateOfExpiry" => parsed_data.date_of_expiry = Some(text),
+                        "GivenNames" => parsed_data.given_names = Some(text),
+                        "FamilyNames" => parsed_data.family_names = Some(text),
+                        "ArtisticName" => parsed_data.artistic_name = Some(text),
+                        "AcademicTitle" => parsed_data.academic_title = Some(text),
+                        "DateOfBirth" => {
+                            parsed_data.date_of_birth_string = Some(text.clone());
+                            // Try to format the date if it's in YYYYMMDD format
+                            if text.len() == 8 {
+                                if let (Ok(year), Ok(month), Ok(day)) = (
+                                    text[0..4].parse::<u32>(),
+                                    text[4..6].parse::<u32>(),
+                                    text[6..8].parse::<u32>(),
+                                ) {
+                                    parsed_data.date_of_birth_value =
+                                        Some(format!("{year:04}-{month:02}-{day:02}"));
+                                }
+                            }
+                        }
+                        "PlaceOfBirth" => parsed_data.place_of_birth = Some(text),
+                        "Nationality" => parsed_data.nationality = Some(text),
+                        "BirthName" => parsed_data.birth_name = Some(text),
+                        "Street" => parsed_data.residence_street = Some(text),
+                        "City" => parsed_data.residence_city = Some(text),
+                        "Country" => parsed_data.residence_country = Some(text),
+                        "ZipCode" => parsed_data.residence_zipcode = Some(text),
+                        "CommunityID" => parsed_data.community_id = Some(text),
+                        "ResidencePermitID" => parsed_data.residence_permit_id = Some(text),
+                        "RestrictedID" => parsed_data.restricted_id = Some(text),
+                        "RestrictedID2" => parsed_data.restricted_id2 = Some(text),
+                        _ => {} // Ignore unknown elements
+                    }
+                }
+                Ok(Event::End(_)) => {
+                    current_element.clear();
+                }
+                Ok(Event::Eof) => break,
+                Err(e) => {
+                    return Err(GetResultError::GenericError(format!(
+                        "XML parsing error: {e}",
+                    )));
+                }
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        Ok(parsed_data)
+    }
+
+    /// Create a GetResultResponse with real authentication data
+    /// This method parses the actual authentication data retrieved from the eID card
+    fn create_get_result_response(
+        &self,
+        authentication_data: &str,
+    ) -> Result<GetResultResponse, GetResultError> {
+        use crate::eid::common::models::{
+            AttributeResponder, EIDTypeResponse, GeneralDateType, GeneralPlaceType,
+            LevelOfAssurance, OperationsResponder, PersonalData, PlaceType, RestrictedID,
+            ResultMajor, TransactionAttestationResponse,
+        };
+        use crate::eid::get_result::model::FulfilsRequest;
+
+        // Parse the XML authentication data to extract real personal data
+        let parsed_data = self.parse_personal_data_xml(authentication_data)?;
+
+        Ok(GetResultResponse {
+            personal_data: PersonalData {
+                document_type: parsed_data
+                    .document_type
+                    .unwrap_or_else(|| "ID".to_string()),
+                issuing_state: parsed_data.issuing_state.unwrap_or_else(|| "D".to_string()),
+                date_of_expiry: parsed_data
+                    .date_of_expiry
+                    .unwrap_or_else(|| "2029-10-31".to_string()),
+                given_names: parsed_data.given_names.unwrap_or_else(|| "".to_string()),
+                family_names: parsed_data.family_names.unwrap_or_else(|| "".to_string()),
+                artistic_name: parsed_data.artistic_name.unwrap_or_else(|| "".to_string()),
+                academic_title: parsed_data.academic_title.unwrap_or_else(|| "".to_string()),
+                date_of_birth: GeneralDateType {
+                    date_string: parsed_data
+                        .date_of_birth_string
+                        .unwrap_or_else(|| "".to_string()),
+                    date_value: parsed_data.date_of_birth_value,
+                },
+                place_of_birth: GeneralPlaceType {
+                    structured_place: None,
+                    freetextplace: parsed_data.place_of_birth,
+                    noplaceinfo: None,
+                },
+                nationality: parsed_data.nationality.unwrap_or_else(|| "".to_string()),
+                birth_name: parsed_data.birth_name.unwrap_or_else(|| "".to_string()),
+                place_of_residence: GeneralPlaceType {
+                    structured_place: if parsed_data.residence_street.is_some()
+                        || parsed_data.residence_city.is_some()
+                    {
+                        Some(PlaceType {
+                            street: parsed_data
+                                .residence_street
+                                .unwrap_or_else(|| "".to_string()),
+                            city: parsed_data.residence_city.unwrap_or_else(|| "".to_string()),
+                            state: "".to_string(),
+                            country: parsed_data
+                                .residence_country
+                                .unwrap_or_else(|| "D".to_string()),
+                            zipcode: parsed_data
+                                .residence_zipcode
+                                .unwrap_or_else(|| "".to_string()),
+                        })
+                    } else {
+                        None
+                    },
+                    freetextplace: None,
+                    noplaceinfo: None,
+                },
+                community_id: parsed_data.community_id.unwrap_or_else(|| "".to_string()),
+                residence_permit_id: parsed_data
+                    .residence_permit_id
+                    .unwrap_or_else(|| "".to_string()),
+                restricted_id: RestrictedID {
+                    id: parsed_data.restricted_id.unwrap_or_else(|| "".to_string()),
+                    id2: parsed_data.restricted_id2.unwrap_or_else(|| "".to_string()),
+                },
+            },
+            fulfils_age_verification: FulfilsRequest {
+                fulfils_request: true,
+            },
+            fulfils_place_verification: FulfilsRequest {
+                fulfils_request: true,
+            },
+            operations_allowed_by_user: OperationsResponder {
+                document_type: AttributeResponder::ALLOWED,
+                issuing_state: AttributeResponder::ALLOWED,
+                date_of_expiry: AttributeResponder::ALLOWED,
+                given_names: AttributeResponder::ALLOWED,
+                family_names: AttributeResponder::ALLOWED,
+                artistic_name: None,
+                academic_title: None,
+                date_of_birth: AttributeResponder::ALLOWED,
+                place_of_birth: AttributeResponder::ALLOWED,
+                nationality: AttributeResponder::ALLOWED,
+                birth_name: AttributeResponder::PROHIBITED,
+                place_of_residence: AttributeResponder::ALLOWED,
+                community_id: AttributeResponder::ALLOWED,
+                residence_permit_id: AttributeResponder::ALLOWED,
+                restricted_id: AttributeResponder::ALLOWED,
+                age_verification: AttributeResponder::ALLOWED,
+                place_verification: AttributeResponder::ALLOWED,
+            },
+            transaction_attestation_response: TransactionAttestationResponse {
+                transaction_attestation_format: "http://bsi.bund.de/eID/ExampleAttestationFormat"
+                    .to_string(),
+                transaction_attestation_data: authentication_data.to_string(),
+            },
+            level_of_assurance: LevelOfAssurance::Hoch.to_string(),
+            eid_type_response: EIDTypeResponse {
+                card_certified: "USED".to_string(),
+                hw_keystore: "".to_string(),
+                se_certified: "".to_string(),
+                se_endorsed: "".to_string(),
+            },
+            result: ResultMajor {
+                result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok".to_string(),
+            },
+        })
+    }
 }
 
 // Implement the EIDService trait for UseidService
@@ -175,7 +404,12 @@ impl EIDService for UseidService {
         debug!("Required operations: {:?}", required_operations);
 
         // Check if we've reached the maximum number of sessions
-        if self.sessions.read().unwrap().len() >= self.config.max_sessions {
+        let sessions_count = self
+            .sessions
+            .read()
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to acquire session lock: {}", e))?
+            .len();
+        if sessions_count >= self.config.max_sessions {
             return Err(color_eyre::eyre::eyre!("Maximum session limit reached"));
         }
 
@@ -208,7 +442,9 @@ impl EIDService for UseidService {
 
         // Store the session
         {
-            let mut sessions = self.sessions.write().unwrap();
+            let mut sessions = self.sessions.write().map_err(|e| {
+                color_eyre::eyre::eyre!("Failed to acquire session write lock: {}", e)
+            })?;
             let now = Utc::now();
             sessions.retain(|session| session.expiry > now);
             sessions.push(session_info.clone());
@@ -273,6 +509,64 @@ impl EIDService for UseidService {
                 "Response contains empty PSK fields"
             ));
         }
+
+        Ok(response)
+    }
+
+    fn handle_get_result(
+        &self,
+        request: GetResultRequest,
+    ) -> Result<GetResultResponse, GetResultError> {
+        debug!(
+            "Handling get_result request for session: {}",
+            request.session.id
+        );
+
+        // Find and validate session
+        let mut sessions = self.sessions.write().map_err(|e| {
+            GetResultError::GenericError(format!("Failed to acquire session write lock: {e}"))
+        })?;
+        let now = Utc::now();
+
+        // Clean up expired sessions
+        sessions.retain(|session| session.expiry > now);
+
+        // Find the session
+        let session_index = sessions
+            .iter()
+            .position(|s| s.id == request.session.id)
+            .ok_or(GetResultError::InvalidSession)?;
+
+        let session = &mut sessions[session_index];
+
+        // Validate request counter
+        let expected_counter = session.request_counter + 1;
+        if request.request_counter != expected_counter {
+            return Err(GetResultError::InvalidRequestCounter);
+        }
+
+        // Update request counter
+        session.request_counter = request.request_counter;
+
+        // Check if authentication is completed
+        if !session.authentication_completed {
+            return Err(GetResultError::NoResultYet);
+        }
+
+        // Create response
+        let authentication_data =
+            session
+                .authentication_data
+                .as_ref()
+                .ok_or(GetResultError::GenericError(
+                    "No authentication data available".to_string(),
+                ))?;
+
+        let response = self.create_get_result_response(authentication_data)?;
+
+        // Session becomes invalid after successful response (as per specification)
+        // "Upon success, the session becomes invalid and the server MUST delete the data"
+        sessions.remove(session_index);
 
         Ok(response)
     }
@@ -405,6 +699,19 @@ impl DIDAuthenticateService {
                 &request.authentication_protocol_data,
             )
             .await?;
+
+        // Store the authentication data in the session
+        {
+            let mut sessions = sessions.write().map_err(|e| {
+                AuthError::internal_error(format!("Failed to acquire sessions write lock: {e}"))
+            })?;
+
+            if let Some(session) = sessions.iter_mut().find(|s| s.id == *session_id) {
+                session.authentication_completed = true;
+                session.authentication_data = Some(personal_data.clone());
+                info!("Stored authentication data for session: {}", session_id);
+            }
+        }
 
         // Generate authentication token
         let auth_token = self
