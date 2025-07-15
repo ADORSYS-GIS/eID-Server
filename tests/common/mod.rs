@@ -1,5 +1,5 @@
 use eid_server::{
-    config::Config,
+    config::{Config, TransmitConfig},
     domain::eid::service::{EIDServiceConfig, UseidService},
     server::{AppServerConfig, Server},
 };
@@ -23,11 +23,14 @@ pub async fn spawn_server() -> String {
     let server_config = AppServerConfig {
         host: config.server.host,
         port: config.server.port,
+        transmit: TransmitConfig::default(),
         tls_cert_path: config.server.tls_cert_path,
         tls_key_path: config.server.tls_key_path,
     };
 
-    let server = Server::new(eid_service).await.unwrap();
+    let server = Server::new(eid_service, server_config.clone())
+        .await
+        .unwrap();
 
     let (port, handle) = server.run_with_port(server_config.clone()).await.unwrap();
     tokio::spawn(handle);

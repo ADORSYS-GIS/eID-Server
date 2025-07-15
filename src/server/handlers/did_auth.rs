@@ -289,6 +289,7 @@ mod tests {
     use base64::Engine;
     use chrono::DateTime;
     use std::sync::Arc;
+    use std::time::Duration;
 
     // Create a more realistic test service that implements DIDAuthenticate
     struct TestDIDAuthenticateService {
@@ -564,6 +565,15 @@ mod tests {
         let state = AppState {
             eid_service: useid_service.clone(),
             use_id: useid_service.clone(),
+            transmit_channel: Arc::new(
+                crate::domain::eid::transmit::channel::TransmitChannel::new(
+                    crate::domain::eid::transmit::protocol::ProtocolHandler::new(),
+                    crate::server::session::SessionManager::new(Duration::from_secs(60)),
+                    Arc::new(crate::domain::eid::transmit::test_service::TestTransmitService), // or appropriate test service
+                    crate::config::TransmitConfig::default(),
+                )
+                .expect("TransmitChannel creation should succeed in tests"),
+            ),
         };
 
         let soap_request = create_minimal_valid_soap_request();
