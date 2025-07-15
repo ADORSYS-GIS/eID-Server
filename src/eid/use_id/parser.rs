@@ -1,60 +1,52 @@
-use quick_xml::de::from_str;
-
-use super::error::UseIdError;
-use super::model::{UseIDRequest, UseIDRequestEnvelope};
+use crate::eid::{
+    common::models::AttributeRequester,
+    soap::{error::SoapError, helpers::deserialize_soap_request},
+    use_id::{error::UseIdError, model::UseIDRequest},
+};
 
 /// Parses a `useIDRequest` SOAP XML message into a structured `UseIDRequest`.
-///
-/// This function extracts and maps the following data fields:
-/// - `UseOperations`: list of data group operations with required/allowed levels.
-/// - `AgeVerificationRequest`: minimum age for verification.
-/// - `PlaceVerificationRequest`: community ID for location verification.
-/// - `TransactionInfo`: optional transaction string for EAC1.
-/// - `TransactionAttestationRequest`: includes attestation format and optional context.
-/// - `LevelOfAssuranceRequest`: expected assurance level as URI.
-/// - `EIDTypeRequest`: allowed or denied types of eID tokens (e.g., SECertified).
-/// - `PSK`: pre-shared key for the TLS-bound session.
 ///
 /// # Arguments
 /// * `xml` - A string slice containing the raw SOAP envelope XML.
 ///
 /// # Returns
-/// * `Ok(UseIDRequest)` on successful parsing
-/// * `Err(UseIdError)` if the XML is malformed or required values are invalid
-///
-/// # Errors
-/// This function may return an error if:
-/// - Required XML tags are malformed or missing
-/// - Unexpected data is encountered in known fields
+/// * `Ok(UseIDRequest)` on successful parsing.
+/// * `Err(UseIdError)` if the XML is malformed or required fields are invalid.
 ///
 /// # Example
 /// ```rust
 /// let xml = include_str!("use_id_request.xml");
 /// let parsed = parse_use_id_request(xml)?;
-/// assert_eq!(parsed.age_verification, Some(18));
+/// assert_eq!(parsed._age_verification._age, 18);
 /// ```
-#[allow(dead_code)]
 pub fn parse_use_id_request(xml: &str) -> Result<UseIDRequest, UseIdError> {
-    let env: UseIDRequestEnvelope = from_str(xml)
-        .map_err(|e| UseIdError::GenericError(format!("XML deserialization failed: {e}")))?;
+    #[derive(serde::Deserialize)]
+    struct RawRequest {
+        #[serde(rename = "eid:useIDRequest")]
+        use_id_request: UseIDRequest,
+    }
 
-    let req = env._body;
-    let result = UseIDRequest {
-        _use_operations: req._use_id_request._use_operations,
-        _age_verification: req._use_id_request._age_verification,
-        _place_verification: req._use_id_request._place_verification,
-        _transaction_info: req._use_id_request._transaction_info,
-        _transaction_attestation_request: req._use_id_request._transaction_attestation_request,
-        _level_of_assurance: req._use_id_request._level_of_assurance,
-        _eid_type_request: req._use_id_request._eid_type_request,
-        _psk: req._use_id_request._psk,
-    };
-    Ok(result)
+    let raw: RawRequest = deserialize_soap_request(xml).map_err(|e| match e {
+        SoapError::DeserializationError { path, message, .. } => {
+            UseIdError::GenericError(format!("Failed to parse XML at {path}: {message}"))
+        }
+        _ => UseIdError::GenericError(e.to_string()),
+    })?;
+
+    let req = raw.use_id_request;
+    if req._use_operations.document_type == AttributeRequester::REQUIRED
+        && req._use_operations.issuing_state == AttributeRequester::REQUIRED
+        && req._age_verification._age == 0
+    {
+        return Err(UseIdError::GenericError(
+            "Invalid request: required fields missing or invalid".to_string(),
+        ));
+    }
+    Ok(req)
 }
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     #[test]
@@ -84,5 +76,31 @@ mod tests {
                 .unwrap(),
             "id599456-df"
         );
+    }
+
+    #[test]
+    fn test_parse_invalid_use_id_request() {
+        let xml = r#"
+        <?xml version="1.0" encoding="UTF-8"?>
+        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:eid="http://bsi.bund.de/eID/">
+            <soapenv:Body>
+                <eid:useIDRequest>
+                    <eid:UseOperations>
+                        <eid:DocumentType>REQUIRED</eid:DocumentType>
+                        <eid:IssuingState>REQUIRED</eid:IssuingState>
+                    </eid:UseOperations>
+                    <eid:AgeVerificationRequest>
+                        <eid:Age>0</eid:Age>
+                    </eid:AgeVerificationRequest>
+                    <eid:PlaceVerificationRequest>
+                        <eid:CommunityID>027605</eid:CommunityID>
+                    </eid:PlaceVerificationRequest>
+                </eid:useIDRequest>
+            </soapenv:Body>
+        </soapenv:Envelope>
+        "#;
+
+        let result = parse_use_id_request(xml);
+        assert!(matches!(result, Err(UseIdError::GenericError(_))));
     }
 }

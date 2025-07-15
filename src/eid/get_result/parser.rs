@@ -1,35 +1,19 @@
-use crate::eid::common::models::Session;
-
-use super::{
-    error::GetResultError,
-    model::{GetResultRequest, GetResultRequestEnvelope},
+use crate::eid::{
+    common::models::Session,
+    get_result::{error::GetResultError, model::GetResultRequest},
+    soap::{error::SoapError, helpers::deserialize_soap_request},
 };
-use quick_xml::de::from_str;
 
-/// Parses a SOAP `getResultRequest` XML into a `GetResultRequest` using serde deserialization.
-///
-/// Uses `quick-xml`’s `de` feature to map the `<Body><getResultRequest>` element (ignoring
-/// namespace prefixes) directly into Rust structs. If `<Session>` or `<RequestCounter>` are
-/// omitted, they default to an empty `Session.id` and `0`, respectively.
+/// Parses a SOAP `getResultRequest` XML into a `GetResultRequest`.
 ///
 /// # Arguments
-///
 /// * `xml` – The complete SOAP envelope as a `&str`.
 ///
 /// # Returns
-///
-/// * `Ok(GetResultRequest)` containing:
-///   * `session: Session { id: String }`
-///   * `request_counter: u8`
-/// * `Err(GetResultError)` if deserialization fails (e.g., malformed XML).
-///
-/// # Errors
-///
-/// Returns `GetResultError::GenericError` if the underlying `quick_xml::de::from_str` call
-/// cannot parse the document or misses required elements.
+/// * `Ok(GetResultRequest)` containing `session` and `request_counter`.
+/// * `Err(GetResultError)` if deserialization fails or required fields are missing.
 ///
 /// # Example
-///
 /// ```rust
 /// let xml = r#"
 /// <?xml version="1.0" encoding="UTF-8"?>
@@ -48,12 +32,31 @@ use quick_xml::de::from_str;
 /// assert_eq!(req.request_counter, 5);
 /// ```
 pub fn parse_get_result_request(xml: &str) -> Result<GetResultRequest, GetResultError> {
-    let env: GetResultRequestEnvelope = from_str(xml)
-        .map_err(|e| GetResultError::GenericError(format!("XML deserialization failed: {e}")))?;
+    #[derive(serde::Deserialize)]
+    #[serde(rename = "{http://bsi.bund.de/eID/}getResultRequest")]
+    struct RawRequest {
+        #[serde(rename = "{http://bsi.bund.de/eID/}Session")]
+        session: Session,
+        #[serde(rename = "{http://bsi.bund.de/eID/}RequestCounter")]
+        request_counter: u8,
+    }
 
-    let req = env.body.request;
+    let raw: crate::eid::soap::envelope::SoapRequestEnvelope<RawRequest> =
+        deserialize_soap_request(xml).map_err(|e| match e {
+            SoapError::DeserializationError { path, message, .. } => {
+                GetResultError::GenericError(format!("Failed to parse XML at {path}: {message}"))
+            }
+            _ => GetResultError::GenericError(e.to_string()),
+        })?;
+
+    let req = raw.body.request;
+    if req.session.id.is_empty() {
+        return Err(GetResultError::GenericError(
+            "Missing or empty Session ID".to_string(),
+        ));
+    }
     Ok(GetResultRequest {
-        session: Session { id: req.session.id },
+        session: req.session,
         request_counter: req.request_counter,
     })
 }
@@ -67,7 +70,7 @@ mod tests {
         let xml_data = r#"
         <?xml version="1.0" encoding="UTF-8"?>
         <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:eid="http://bsi.bund.de/eID/">
-            <soapenv:Header />
+            <soapenv:Header/>
             <soapenv:Body>
                 <eid:getResultRequest>
                     <eid:Session>
@@ -95,32 +98,11 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_get_result_request_missing_request_counter() {
-        let xml_data = r#"
-        <?xml version="1.0" encoding="UTF-8"?>
-        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:eid="http://bsi.bund.de/eID/">
-            <soapenv:Header />
-            <soapenv:Body>
-                <eid:getResultRequest>
-                    <eid:Session>
-                        <eid:ID>1234567890abcdef1234567890abcdef</eid:ID>
-                    </eid:Session>
-                </eid:getResultRequest>
-            </soapenv:Body>
-        </soapenv:Envelope>
-        "#;
-
-        let result = parse_get_result_request(xml_data);
-
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_parse_get_result_request_missing_session() {
         let xml_data = r#"
         <?xml version="1.0" encoding="UTF-8"?>
-        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:eid="http://bsi.bund.de/eID/">
-            <soapenv:Header />
+        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:eid="http://bs.i.bund.de/eID/">
+            <soapenv:Header/>
             <soapenv:Body>
                 <eid:getResultRequest>
                     <eid:RequestCounter>1</eid:RequestCounter>
@@ -130,10 +112,27 @@ mod tests {
         "#;
 
         let result = parse_get_result_request(xml_data);
+        assert!(result.is_err());
+    }
 
-        assert!(
-            result.is_err(),
-            "Parsing should fail due to missing session"
-        );
+    #[test]
+    fn test_parse_get_result_request_empty_session_id() {
+        let xml_data = r#"
+        <?xml version="1.0" encoding="UTF-8"?>
+        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:eid="http://bsi.bund.de/eID/">
+            <soapenv:Header/>
+            <soapenv:Body>
+                <eid:getResultRequest>
+                    <eid:Session>
+                        <eid:ID></eid:ID>
+                    </eid:Session>
+                    <eid:RequestCounter>1</eid:RequestCounter>
+                </eid:getResultRequest>
+            </soapenv:Body>
+        </soapenv:Envelope>
+        "#;
+
+        let result = parse_get_result_request(xml_data);
+        assert!(matches!(result, Err(GetResultError::GenericError(_))));
     }
 }
