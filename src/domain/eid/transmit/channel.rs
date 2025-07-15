@@ -6,6 +6,7 @@ use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
 use super::protocol::{InputAPDUInfo, ProtocolHandler, TransmitResponse};
+use super::test_service::create_mock_tls_session_info;
 use crate::domain::eid::ports::TransmitError;
 
 #[derive(Clone)]
@@ -103,7 +104,6 @@ impl TransmitChannel {
 
         // Validate SlotHandle according to TR-03130 (must be non-empty)
         if transmit.slot_handle.is_empty() {
-            warn!("Empty SlotHandle provided in transmit request");
             let error_result = super::protocol::TransmitResult::error(
                 "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#invalidSlotHandle",
                 Some("Empty SlotHandle provided".to_string()),
@@ -118,13 +118,7 @@ impl TransmitChannel {
             return Ok(xml_response.into_bytes());
         }
 
-        warn!("Using mock TLS session info - NOT SUITABLE FOR PRODUCTION");
-        let tls_info = crate::server::session::TlsSessionInfo {
-            session_id: format!("mock-session-{}", transmit.slot_handle),
-            cipher_suite: "TLS_RSA_PSK_WITH_AES_256_CBC_SHA".to_string(),
-            psk_id: Some(format!("mock-psk-{}", transmit.slot_handle)),
-            psk_key: Some("mock-psk-key".to_string()),
-        };
+        let tls_info = create_mock_tls_session_info(&transmit.slot_handle);
 
         // Get or create client session using SlotHandle as specified in TR-03112
         debug!(

@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use hex;
 
 use crate::domain::eid::ports::{TransmitResult, TransmitService};
+use crate::server::session::TlsSessionInfo;
 
 #[derive(Debug, Clone)]
 pub struct TestTransmitService;
@@ -34,5 +35,15 @@ impl TransmitService for TestTransmitService {
             // Default success response for unknown APDUs
             _ => Ok(vec![0x90, 0x00]),
         }
+    }
+}
+
+/// Creates mock TLS session info for testing purposes
+pub fn create_mock_tls_session_info(slot_handle: &str) -> TlsSessionInfo {
+    TlsSessionInfo {
+        session_id: format!("mock-session-{slot_handle}"),
+        cipher_suite: "TLS_RSA_PSK_WITH_AES_256_CBC_SHA".to_string(),
+        psk_id: Some(format!("mock-psk-{slot_handle}")),
+        psk_key: Some("mock-psk-key".to_string()),
     }
 }
