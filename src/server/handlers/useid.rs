@@ -195,18 +195,10 @@ pub async fn use_id_handler<S: EIDService + EidService>(
         };
 
         // Process the request
-        let response = match state.use_id.handle_use_id(use_id_request) {
+        let response = match state.use_id.handle_use_id(use_id_request).await {
             Ok(response) => {
                 info!("useID request processed successfully");
                 debug!("Response: {:?}", response);
-                // Add detailed logging
-                debug!(
-                    "Response details: session_id={}, psk_id={}, psk_key={}, ecard_server_address={:?}",
-                    response.session.id,
-                    response.psk.id,
-                    response.psk.key,
-                    response.ecard_server_address
-                );
                 response
             }
             Err(err) => {
@@ -272,7 +264,7 @@ pub async fn use_id_handler<S: EIDService + EidService>(
             }
         };
 
-        let response = match state.use_id.handle_use_id(use_id_request) {
+        let response = match state.use_id.handle_use_id(use_id_request).await {
             Ok(response) => {
                 info!("useID request processed successfully");
                 debug!("Response: {:?}", response);
@@ -697,6 +689,7 @@ mod tests {
             max_sessions: 10,
             session_timeout_minutes: 5,
             ecard_server_address: Some("https://test.eid.example.com/ecard".to_string()),
+            redis_url: None,
         });
         let service_arc = Arc::new(service);
         AppState {
@@ -790,6 +783,20 @@ mod tests {
             psk.chars().all(|c| c.is_ascii_hexdigit()),
             "PSK must be valid hexadecimal"
         );
+
+        // Verify session ID is 32 characters long (UUID v4 without hyphens)
+        let session_id_start = body_str.find("<SessionIdentifier>").unwrap() + 19;
+        let session_id_end = body_str.find("</SessionIdentifier>").unwrap();
+        let session_id = &body_str[session_id_start..session_id_end];
+        assert_eq!(
+            session_id.len(),
+            32,
+            "Session ID must be 32 characters long"
+        );
+        assert!(
+            session_id.chars().all(|c| c.is_ascii_hexdigit()),
+            "Session ID must be valid hexadecimal"
+        );
     }
 
     #[tokio::test]
@@ -855,7 +862,7 @@ mod tests {
                     <eid:useOperations>
                         <eid:givenNames>REQUIRED</eid:givenNames>
                     </eid:useOperations>
-                </eid:useIDRequest>
+                </eid:useIDRequest> 
             </soapenv:Body>
         </soapenv:Envelope>
         "#;
@@ -965,6 +972,7 @@ mod tests {
             "<PSK>a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2</PSK>"
         ));
     }
+
     #[tokio::test]
     async fn test_build_tc_token_missing_ecard_address() {
         let response = UseIDResponse {
@@ -984,5 +992,80 @@ mod tests {
         let result = build_tc_token(&response);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "No ecard_server_address");
+    }
+
+    #[tokio::test]
+    async fn test_session_id_uniqueness() {
+        let state = create_test_state();
+        let saml_request = r#"
+    <samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                        xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+                        ID="id123" Version="2.0" IssueInstant="2025-06-18T12:33:00Z">
+        <saml:Issuer>https://localhost:8443/realms/master</saml:Issuer>
+        <samlp:RequestedAuthnContext>
+            <saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:Smartcard</saml:AuthnContextClassRef>
+        </samlp:RequestedAuthnContext>
+        <saml:AttributeStatement>
+            <saml:Attribute Name="givenNames" isRequired="true"></saml:Attribute>
+        </saml:AttributeStatement>
+    </samlp:AuthnRequest>
+    "#;
+        let encoded_saml = create_saml_request(saml_request);
+
+        // Generate multiple sessions and collect session IDs
+        let mut session_ids = std::collections::HashSet::new();
+        for _ in 0..10 {
+            // Clean up expired sessions before each request
+            state
+                .use_id
+                .session_manager
+                .remove_expired_sessions()
+                .await
+                .unwrap();
+
+            let request = Request::builder()
+                .method(http::Method::GET)
+                .uri(format!("/eIDService/useID?SAMLRequest={encoded_saml}"))
+                .body(Body::empty())
+                .unwrap();
+
+            let response = use_id_handler(
+                State(state.clone()),
+                request.headers().clone(),
+                Query(SamlQueryParams {
+                    saml_request: Some(encoded_saml.clone()),
+                }),
+                String::new(),
+            )
+            .await
+            .into_response();
+
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "Expected OK status, got {}",
+                response.status()
+            );
+            let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+            let session_id_start = body_str.find("<SessionIdentifier>").unwrap() + 19;
+            let session_id_end = body_str.find("</SessionIdentifier>").unwrap();
+            let session_id = &body_str[session_id_start..session_id_end];
+
+            assert_eq!(
+                session_id.len(),
+                32,
+                "Session ID must be 32 characters long"
+            );
+            assert!(
+                session_id.chars().all(|c| c.is_ascii_hexdigit()),
+                "Session ID must be valid hexadecimal"
+            );
+            assert!(
+                session_ids.insert(session_id.to_string()),
+                "Duplicate session ID detected: {session_id}"
+            );
+        }
     }
 }

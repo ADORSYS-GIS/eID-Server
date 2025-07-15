@@ -4,18 +4,19 @@ use std::sync::{Arc, RwLock};
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use color_eyre::Result;
-use quick_xml::{Reader, events::Event};
-use rand::distr::Alphanumeric;
-use rand::{Rng, RngCore};
+use quick_xml::Reader;
+use quick_xml::events::Event;
+use rand::RngCore;
+use serde::{Deserialize, Serialize};
 use std::default::Default;
 use tracing::{debug, error, info, warn};
-use uuid::Uuid;
 
 use super::certificate::{CardCommunicator, CertificateStore, CryptoProvider};
 use super::models::{
     AuthError, DIDAuthenticateRequest, DIDAuthenticateResponse, ResponseProtocolData, ServerInfo,
 };
 use super::ports::{DIDAuthenticate, EIDService, EidService};
+use super::session_manager::{InMemorySessionManager, RedisSessionManager, SessionManager};
 use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
 };
@@ -33,6 +34,8 @@ pub struct EIDServiceConfig {
     pub session_timeout_minutes: i64,
     /// Optional eCard server address to return in responses
     pub ecard_server_address: Option<String>,
+    /// Redis connection URL (optional, if using Redis backend)
+    pub redis_url: Option<String>,
 }
 
 impl Default for EIDServiceConfig {
@@ -41,12 +44,13 @@ impl Default for EIDServiceConfig {
             max_sessions: 1000,
             session_timeout_minutes: 5,
             ecard_server_address: Some("https://localhost:3000".to_string()),
+            redis_url: None,
         }
     }
 }
 
 /// Session information stored by the server
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionInfo {
     pub id: String,
     pub expiry: DateTime<Utc>,
@@ -74,8 +78,9 @@ impl SessionInfo {
 /// Main service for handling useID requests
 #[derive(Clone, Debug)]
 pub struct UseidService {
-    pub config: EIDServiceConfig,
     pub sessions: Arc<RwLock<Vec<SessionInfo>>>,
+    pub config: EIDServiceConfig,
+    pub session_manager: Arc<dyn SessionManager>,
 }
 
 /// Structure to hold parsed personal data from XML
@@ -103,33 +108,22 @@ struct ParsedPersonalData {
     restricted_id2: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct DIDAuthenticateService {
-    certificate_store: CertificateStore,
-    crypto_provider: CryptoProvider,
-    card_communicator: CardCommunicator,
-    sessions: Arc<RwLock<Vec<SessionInfo>>>,
-}
-
 impl UseidService {
     pub fn new(config: EIDServiceConfig) -> Self {
-        Self {
-            config,
-            sessions: Arc::new(RwLock::new(Vec::new())),
-        }
-    }
+        let session_manager: Arc<dyn SessionManager> = if let Some(redis_url) = &config.redis_url {
+            Arc::new(
+                RedisSessionManager::new(redis_url, config.session_timeout_minutes)
+                    .expect("Failed to initialize RedisSessionManager"),
+            )
+        } else {
+            Arc::new(InMemorySessionManager::new())
+        };
 
-    /// Generate a random session ID
-    pub fn generate_session_id(&self) -> String {
-        let timestamp = Utc::now()
-            .timestamp_nanos_opt()
-            .expect("System time out of range for timestamp_nanos_opt()");
-        let _random_part: String = rand::rng()
-            .sample_iter(&Alphanumeric)
-            .take(16)
-            .map(char::from)
-            .collect();
-        format!("{timestamp}-{}", Uuid::new_v4())
+        Self {
+            sessions: Arc::new(RwLock::new(Vec::new())),
+            config,
+            session_manager,
+        }
     }
 
     /// Generate a random PSK for secure communication
@@ -178,15 +172,15 @@ impl UseidService {
         if ops.place_of_residence == AttributeRequester::REQUIRED {
             required.push("PlaceOfResidence".to_string());
         }
-        if let Some(community_id) = &ops.community_id {
-            if *community_id == AttributeRequester::REQUIRED {
-                required.push("CommunityID".to_string());
-            }
+        if let Some(community_id) = &ops.community_id
+            && *community_id == AttributeRequester::REQUIRED
+        {
+            required.push("CommunityID".to_string());
         }
-        if let Some(residence_permit_id) = &ops.residence_permit_id {
-            if *residence_permit_id == AttributeRequester::REQUIRED {
-                required.push("ResidencePermitID".to_string());
-            }
+        if let Some(residence_permit_id) = &ops.residence_permit_id
+            && *residence_permit_id == AttributeRequester::REQUIRED
+        {
+            required.push("ResidencePermitID".to_string());
         }
         if ops.restricted_id == AttributeRequester::REQUIRED {
             required.push("RestrictedID".to_string());
@@ -397,24 +391,20 @@ impl UseidService {
 }
 
 // Implement the EIDService trait for UseidService
+#[async_trait]
 impl EIDService for UseidService {
-    fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse> {
+    async fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse> {
         // Validate the request: Check if any operations are REQUIRED
         let required_operations = Self::get_required_operations(&request._use_operations);
         debug!("Required operations: {:?}", required_operations);
 
         // Check if we've reached the maximum number of sessions
-        let sessions_count = self
-            .sessions
-            .read()
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to acquire session lock: {}", e))?
-            .len();
-        if sessions_count >= self.config.max_sessions {
+        if self.session_manager.session_count().await? >= self.config.max_sessions {
             return Err(color_eyre::eyre::eyre!("Maximum session limit reached"));
         }
 
         // Generate session ID
-        let session_id = self.generate_session_id();
+        let session_id = self.session_manager.generate_session_id().await?;
         if session_id.is_empty() {
             error!("Generated empty session ID");
             return Err(color_eyre::eyre::eyre!("Failed to generate session ID"));
@@ -423,7 +413,14 @@ impl EIDService for UseidService {
 
         // Generate or use provided PSK
         let psk = match &request._psk {
-            Some(psk) => psk.key.clone(),
+            Some(psk) => {
+                // Check if PSK ID matches an existing session
+                if self.session_manager.get_session(&psk.id).await?.is_some() {
+                    error!("Attempted to reuse session ID: {}", psk.id);
+                    return Err(color_eyre::eyre::eyre!("Session ID reuse detected"));
+                }
+                psk.key.clone()
+            }
             None => self.generate_psk(),
         };
         if psk.is_empty() {
@@ -437,22 +434,17 @@ impl EIDService for UseidService {
             session_id.clone(),
             psk.clone(),
             required_operations.clone(),
-            30,
+            self.config.session_timeout_minutes,
         );
 
         // Store the session
-        {
-            let mut sessions = self.sessions.write().map_err(|e| {
-                color_eyre::eyre::eyre!("Failed to acquire session write lock: {}", e)
-            })?;
-            let now = Utc::now();
-            sessions.retain(|session| session.expiry > now);
-            sessions.push(session_info.clone());
-            info!(
-                "Created new session: {}, expires: {}, operations: {:?}",
-                session_id, session_info.expiry, session_info.operations
-            );
-        }
+        self.session_manager
+            .store_session(session_info.clone())
+            .await?;
+        info!(
+            "Created new session: {}, expires: {}, operations: {:?}",
+            session_id, session_info.expiry, session_info.operations
+        );
 
         // Construct TcTokenURL
         let tc_token_url = self.config.ecard_server_address.clone().map(|addr| {
@@ -579,22 +571,30 @@ impl EidService for UseidService {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct DIDAuthenticateService {
+    certificate_store: CertificateStore,
+    crypto_provider: CryptoProvider,
+    card_communicator: CardCommunicator,
+    session_manager: Arc<dyn SessionManager>,
+}
+
 impl DIDAuthenticateService {
     pub fn new(
         certificate_store: CertificateStore,
         crypto_provider: CryptoProvider,
         card_communicator: CardCommunicator,
-        sessions: Arc<RwLock<Vec<SessionInfo>>>,
+        session_manager: Arc<dyn SessionManager>,
     ) -> Self {
         Self {
             certificate_store,
             crypto_provider,
             card_communicator,
-            sessions,
+            session_manager,
         }
     }
 
-    pub async fn new_with_defaults(sessions: Arc<RwLock<Vec<SessionInfo>>>) -> Self {
+    pub async fn new_with_defaults(session_manager: Arc<dyn SessionManager>) -> Self {
         dotenvy::dotenv().expect("Failed to load .env file");
         let certificate_store = CertificateStore::new();
 
@@ -613,7 +613,7 @@ impl DIDAuthenticateService {
             certificate_store: certificate_store.clone(),
             crypto_provider: CryptoProvider::default(),
             card_communicator: CardCommunicator::new(&ausweisapp2_endpoint, certificate_store),
-            sessions,
+            session_manager,
         }
     }
 
@@ -624,7 +624,7 @@ impl DIDAuthenticateService {
         );
 
         match self
-            .authenticate_internal(request, self.sessions.clone())
+            .authenticate_internal(request, self.session_manager.clone())
             .await
         {
             Ok(response_data) => {
@@ -641,7 +641,7 @@ impl DIDAuthenticateService {
     async fn authenticate_internal(
         &self,
         request: DIDAuthenticateRequest,
-        sessions: Arc<RwLock<Vec<SessionInfo>>>,
+        session_manager: Arc<dyn SessionManager>,
     ) -> Result<ResponseProtocolData, AuthError> {
         request.validate()?;
         debug!("Request validation passed");
@@ -653,27 +653,20 @@ impl DIDAuthenticateService {
             .as_ref()
             .ok_or_else(|| AuthError::invalid_connection("Missing channel handle"))?;
 
-        let _session_info = {
-            let sessions = sessions.read().map_err(|e| {
-                AuthError::internal_error(format!("Failed to acquire sessions lock: {e}"))
-            })?;
-            debug!(
-                "Available sessions: {:?}",
-                sessions.iter().map(|s| &s.id).collect::<Vec<_>>()
-            );
-            let session = sessions
-                .iter()
-                .find(|s| s.id == *session_id)
-                .ok_or_else(|| {
-                    error!("Session {} not found", session_id);
-                    AuthError::invalid_connection("Invalid or expired session")
-                })?;
-            if session.expiry < Utc::now() {
-                error!("Session {} expired at {}", session_id, session.expiry);
-                return Err(AuthError::timeout_error("Session validation"));
-            }
-            session.clone()
-        };
+        let session_info = session_manager
+            .get_session(session_id)
+            .await
+            .map_err(|e| AuthError::internal_error(format!("Failed to acquire session: {e}")))?;
+
+        let session_info = session_info.ok_or_else(|| {
+            error!("Session {} not found", session_id);
+            AuthError::invalid_connection("Invalid or expired session")
+        })?;
+
+        if session_info.expiry < Utc::now() {
+            error!("Session {} expired at {}", session_id, session_info.expiry);
+            return Err(AuthError::timeout_error("Session validation"));
+        }
 
         let certificate_der = base64::engine::general_purpose::STANDARD
             .decode(&request.authentication_protocol_data.certificate_description)
@@ -701,16 +694,18 @@ impl DIDAuthenticateService {
             .await?;
 
         // Store the authentication data in the session
+        if let Some(mut session_info) = session_manager
+            .get_session(session_id)
+            .await
+            .map_err(|e| AuthError::internal_error(format!("Failed to get session: {e}")))?
         {
-            let mut sessions = sessions.write().map_err(|e| {
-                AuthError::internal_error(format!("Failed to acquire sessions write lock: {e}"))
-            })?;
-
-            if let Some(session) = sessions.iter_mut().find(|s| s.id == *session_id) {
-                session.authentication_completed = true;
-                session.authentication_data = Some(personal_data.clone());
-                info!("Stored authentication data for session: {}", session_id);
-            }
+            session_info.authentication_completed = true;
+            session_info.authentication_data = Some(personal_data.clone());
+            session_manager
+                .store_session(session_info)
+                .await
+                .map_err(|e| AuthError::internal_error(format!("Failed to update session: {e}")))?;
+            info!("Stored authentication data for session: {}", session_id);
         }
 
         // Generate authentication token
@@ -755,7 +750,8 @@ impl DIDAuthenticate for UseidService {
             });
         }
 
-        let did_service = DIDAuthenticateService::new_with_defaults(self.sessions.clone()).await;
+        let did_service =
+            DIDAuthenticateService::new_with_defaults(self.session_manager.clone()).await;
         Ok(did_service.authenticate(request).await)
     }
 }
