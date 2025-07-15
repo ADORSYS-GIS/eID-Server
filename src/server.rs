@@ -16,6 +16,7 @@ use axum::{http::Method, routing::post};
 use axum_server::tls_rustls::RustlsConfig;
 use color_eyre::eyre::{Result, eyre};
 use handlers::did_auth::did_authenticate;
+use handlers::get_result::get_result_handler;
 use handlers::health::health_check;
 use rustls::ServerConfig;
 use rustls::crypto::ring::default_provider;
@@ -115,6 +116,7 @@ impl Server {
             .route("/eIDService/useID", post(handlers::useid::use_id_handler))
             .route("/eIDService/useID", get(handlers::useid::use_id_handler))
             .route("/eIDService/getServerInfo", get(get_server_info))
+            .route("/eIDService/getResult", post(get_result_handler))
             .route("/did-authenticate", post(did_authenticate))
             .route("/refresh", get(refresh_handler))
             .layer(cors_layer)
