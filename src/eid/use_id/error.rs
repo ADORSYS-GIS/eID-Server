@@ -1,24 +1,25 @@
 use thiserror::Error;
+use crate::eid::soap::error::SoapError;
 
 #[derive(Debug, Error)]
-#[allow(dead_code)]
 pub enum UseIdError {
-    #[error("invalid PSK")]
-    InvalidPSK,
-    #[error("Maximum number of sessions is reached: server overloaded")]
-    TooManyOpenSessions,
-    #[error("Parameters are missing: {0}")]
-    MissingArguments(String),
-    #[error(
-        "Necessary Permissions are missing: permissions missing in terminal authorization certificate"
-    )]
-    MissingTerminalRights,
-    #[error("error: {0}")]
+    #[error("Error parsing useIDRequest: {0}")]
     GenericError(String),
 }
 
-impl From<quick_xml::Error> for UseIdError {
-    fn from(value: quick_xml::Error) -> Self {
-        Self::GenericError(format!("{value}"))
+impl From<SoapError> for UseIdError {
+    fn from(error: SoapError) -> Self {
+        match error {
+            SoapError::DeserializationError { path, message } => {
+                UseIdError::GenericError(format!("Failed at {path}: {message}"))
+            }
+            SoapError::MissingElement(elem) => {
+                UseIdError::GenericError(format!("Missing element: {elem}"))
+            }
+            SoapError::InvalidElement { path, message } => {
+                UseIdError::GenericError(format!("Invalid element at {path}: {message}"))
+            }
+            SoapError::SerializationError(msg) => UseIdError::GenericError(msg),
+        }
     }
 }

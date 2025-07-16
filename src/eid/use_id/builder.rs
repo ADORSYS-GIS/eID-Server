@@ -1,7 +1,4 @@
-use crate::eid::{
-    soap::helpers::serialize_soap_response,
-    use_id::{error::UseIdError, model::UseIDResponse},
-};
+use crate::eid::{soap::serializer::serialize_soap, use_id::{error::UseIdError, model::{UseIDResponse, UseIdBody}}};
 
 /// Serializes a `UseIDResponse` into a complete SOAP XML envelope.
 ///
@@ -19,7 +16,9 @@ use crate::eid::{
 /// println!("{}", xml);
 /// ```
 pub fn build_use_id_response(response: &UseIDResponse) -> Result<String, UseIdError> {
-    serialize_soap_response(response).map_err(|e| UseIdError::GenericError(e.to_string()))
+    let body = UseIdBody { response };
+    serialize_soap(body, true)
+        .map_err(|e| UseIdError::GenericError(e.to_string()))
 }
 
 #[cfg(test)]

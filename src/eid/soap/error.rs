@@ -5,13 +5,9 @@ pub enum SoapError {
     #[error("XML serialization failed: {0}")]
     SerializationError(String),
     #[error("XML deserialization failed at {path}: {message}")]
-    DeserializationError {
-        path: String,
-        message: String,
-        source: Option<quick_xml::de::DeError>,
-    },
-    #[error("Missing required field: {0}")]
-    MissingField(String),
-    #[error("Invalid value for field {field}: {value}")]
-    InvalidValue { field: String, value: String },
+    DeserializationError { path: String, message: String },
+    #[error("Missing required element: {0}")]
+    MissingElement(String),
+    #[error("Invalid element value at {path}: {message}")]
+    InvalidElement { path: String, message: String },
 }

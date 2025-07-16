@@ -1,34 +1,19 @@
 use serde::{Deserialize, Serialize};
+
 use crate::eid::common::models::Header;
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename = "soapenv:Envelope")]
-pub struct SoapResponseEnvelope<T: Serialize> {
+pub struct SoapEnvelope<T> {
     #[serde(rename = "soapenv:Header")]
-    pub header: Header,
-    #[serde(rename = "soapenv:Body")]
-    pub body: SoapResponseBody<T>,
-}
-
-#[derive(Serialize)]
-#[serde(rename = "soapenv:Body")]
-pub struct SoapResponseBody<T: Serialize> {
-    #[serde(flatten)]
-    pub response: T,
-}
-
-#[derive(Deserialize)]
-#[serde(rename = "{http://schemas.xmlsoap.org/soap/envelope/}Envelope")]
-pub struct SoapRequestEnvelope<T> {
-    #[serde(rename = "{http://schemas.xmlsoap.org/soap/envelope/}Header", default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<Header>,
-    #[serde(rename = "{http://schemas.xmlsoap.org/soap/envelope/}Body")]
-    pub body: SoapRequestBody<T>,
+    #[serde(rename = "soapenv:Body")]
+    pub body: T,
 }
 
-#[derive(Deserialize)]
-#[serde(rename = "{http://schemas.xmlsoap.org/soap/envelope/}Body")]
-pub struct SoapRequestBody<T> {
-    #[serde(flatten)]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SoapBody<T> {
+    #[serde(rename = "eid:useIDRequest", alias = "eid:getResultRequest")]
     pub request: T,
 }

@@ -6,6 +6,7 @@ use crate::eid::common::models::{
 };
 
 #[derive(Deserialize, Debug)]
+#[serde(rename = "{http://bsi.bund.de/eID/}useIDRequest")]
 pub struct UseIDRequest {
     #[serde(rename = "UseOperations")]
     pub _use_operations: OperationsRequester,

@@ -1,5 +1,6 @@
 use crate::eid::{
-    get_server_info::model::GetServerInfoResponse, soap::helpers::serialize_soap_response,
+    get_server_info::model::{GetServerInfoBody, GetServerInfoResponse},
+    soap::serializer::serialize_soap,
 };
 
 /// Builds a SOAP XML response string from a `GetServerInfoResponse` data structure.
@@ -13,7 +14,13 @@ use crate::eid::{
 pub fn build_get_server_info_response(
     response: &GetServerInfoResponse,
 ) -> Result<String, std::io::Error> {
-    serialize_soap_response(response)
+    let body = GetServerInfoBody {
+        response: GetServerInfoResponse {
+            server_version: response.server_version.clone(),
+            document_verification_rights: response.document_verification_rights.clone(),
+        },
+    };
+    serialize_soap(body, , false)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
 }
 
