@@ -70,6 +70,7 @@ pub struct GetServerInfoBody {
 }
 
 #[derive(Serialize)]
+#[serde(rename = "eid:getServerInfoResponse")]
 pub struct GetServerInfoResponse {
     #[serde(rename = "eid:ServerVersion")]
     pub server_version: VersionType,

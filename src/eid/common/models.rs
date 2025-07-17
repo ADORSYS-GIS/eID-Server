@@ -254,9 +254,10 @@ pub struct ResultMajor {
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub struct Header {}
 
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename = "eid:Session")]
 pub struct Session {
-    #[serde(rename = "ID")]
+    #[serde(rename = "eid:ID")]
     pub id: String,
 }
 

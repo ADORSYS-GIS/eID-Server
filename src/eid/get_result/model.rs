@@ -5,15 +5,17 @@ use crate::eid::common::models::{
     TransactionAttestationResponse,
 };
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename = "eid:getResultRequest")]
 pub struct GetResultRequest {
-    #[serde(rename = "Session")]
+    #[serde(rename = "eid:Session")]
     pub session: Session,
-    #[serde(rename = "RequestCounter")]
-    pub request_counter: u8,
+    #[serde(rename = "eid:RequestCounter")]
+    pub request_counter: u32,
 }
 
 #[derive(Serialize)]
+#[serde(rename = "eid:getResultResponse")]
 pub struct GetResultResponse {
     #[serde(rename = "eid:PersonalData")]
     pub personal_data: PersonalData,
@@ -47,26 +49,3 @@ pub struct GetResultResponseBody {
 
 #[derive(Serialize, Default)]
 pub struct SoapHeader;
-
-#[derive(Serialize)]
-#[serde(rename = "soapenv:Envelope")]
-pub struct GetResultResponseEnvelope {
-    #[serde(rename = "soapenv:Header")]
-    pub header: SoapHeader,
-
-    #[serde(rename = "soapenv:Body")]
-    pub body: GetResultResponseBody,
-}
-
-#[derive(Deserialize)]
-#[serde(rename = "Envelope")]
-pub struct GetResultRequestEnvelope {
-    #[serde(rename = "Body")]
-    pub body: SoapBody,
-}
-
-#[derive(Deserialize)]
-pub struct SoapBody {
-    #[serde(rename = "getResultRequest")]
-    pub request: GetResultRequest,
-}
