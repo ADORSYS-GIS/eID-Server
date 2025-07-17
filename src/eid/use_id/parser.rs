@@ -1,4 +1,7 @@
-use crate::eid::use_id::{error::UseIdError, model::{UseIDRequest, UseIDRequestEnvelope}};
+use crate::eid::use_id::{
+    error::UseIdError,
+    model::{UseIDRequest, UseIDRequestEnvelope},
+};
 use quick_xml::de::from_str;
 
 /// Parses a `useIDRequest` SOAP XML message into a structured `UseIDRequest`.
@@ -82,8 +85,7 @@ mod tests {
         let parsed = parse_use_id_request(xml);
         assert!(
             parsed.is_ok(),
-            "Expected successful parse, got error: {:?}",
-            parsed
+            "Expected successful parse, got error: {parsed:?}"
         );
 
         let req = parsed.unwrap();
