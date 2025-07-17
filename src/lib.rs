@@ -4,3 +4,4 @@ pub mod domain;
 pub mod eid;
 pub mod server;
 pub mod telemetry;
+pub mod tls;
