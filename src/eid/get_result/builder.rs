@@ -1,6 +1,9 @@
-
 use crate::eid::{
-    get_result::{error::GetResultError, model::{GetResultResponse, GetResultResponseBody}}, soap::serializer::serialize_soap,
+    get_result::{
+        error::GetResultError,
+        model::{GetResultResponse, GetResultResponseBody},
+    },
+    soap::serializer::serialize_soap,
 };
 
 /// Serializes a `GetResultResponse` into a fully namespaced SOAP XML envelope.
@@ -22,8 +25,7 @@ pub fn build_get_result_response(response: GetResultResponse) -> Result<String, 
     let body = GetResultResponseBody {
         get_result_response: response,
     };
-    serialize_soap(body, true)
-        .map_err(|e| GetResultError::GenericError(e.to_string()))
+    serialize_soap(body, true).map_err(|e| GetResultError::GenericError(e.to_string()))
 }
 
 #[cfg(test)]

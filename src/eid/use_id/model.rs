@@ -6,23 +6,22 @@ use crate::eid::common::models::{
 };
 
 #[derive(Deserialize, Debug)]
-#[serde(rename = "eid:useIDRequest")]
 pub struct UseIDRequest {
-    #[serde(rename = "eid:UseOperations")]
+    #[serde(rename = "UseOperations")]
     pub _use_operations: OperationsRequester,
-    #[serde(rename = "eid:AgeVerificationRequest")]
+    #[serde(rename = "AgeVerificationRequest")]
     pub _age_verification: AgeVerificationRequest,
-    #[serde(rename = "eid:PlaceVerificationRequest")]
+    #[serde(rename = "PlaceVerificationRequest")]
     pub _place_verification: PlaceVerificationRequest,
-    #[serde(rename = "eid:TransactionInfo")]
+    #[serde(rename = "TransactionInfo")]
     pub _transaction_info: Option<String>,
-    #[serde(rename = "eid:TransactionAttestationRequest")]
+    #[serde(rename = "TransactionAttestationRequest")]
     pub _transaction_attestation_request: Option<TransactionAttestationRequest>,
-    #[serde(rename = "eid:LevelOfAssuranceRequest")]
+    #[serde(rename = "LevelOfAssurance")]
     pub _level_of_assurance: Option<LevelOfAssurance>,
-    #[serde(rename = "eid:EIDTypeRequest")]
+    #[serde(rename = "EIDTypeRequest")]
     pub _eid_type_request: Option<EIDTypeRequest>,
-    #[serde(rename = "eid:Psk")]
+    #[serde(rename = "Psk")]
     pub _psk: Option<Psk>,
 }
 
@@ -76,3 +75,15 @@ pub struct UseIdBody<'a> {
     pub response: &'a UseIDResponse,
 }
 
+#[derive(Deserialize)]
+#[serde(rename = "Envelope")]
+pub struct UseIDRequestEnvelope {
+    #[serde(rename = "Body")]
+    pub _body: UseIDRequestBody,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UseIDRequestBody {
+    #[serde(rename = "useIDRequest")]
+    pub _use_id_request: UseIDRequest,
+}

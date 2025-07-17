@@ -9,11 +9,10 @@ pub struct SoapEnvelope<T> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<Header>,
     #[serde(rename = "soapenv:Body")]
-    pub body: SoapBody<T>,
+    pub body: T,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(rename = "soapenv:Body")]
 pub struct SoapBody<T> {
     #[serde(flatten)]
     pub request: T,

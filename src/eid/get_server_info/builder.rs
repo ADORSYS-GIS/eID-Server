@@ -20,8 +20,7 @@ pub fn build_get_server_info_response(
             document_verification_rights: response.document_verification_rights.clone(),
         },
     };
-    serialize_soap(body, false)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+    serialize_soap(body, false).map_err(|e| std::io::Error::other(e.to_string()))
 }
 
 #[cfg(test)]

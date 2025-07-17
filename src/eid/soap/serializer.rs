@@ -1,8 +1,8 @@
 use quick_xml::se::to_string;
 
-use crate::eid::common::models::Header;
-use super::envelope::{SoapEnvelope, SoapBody};
+use super::envelope::{SoapBody, SoapEnvelope};
 use super::error::SoapError;
+use crate::eid::common::models::Header;
 
 pub fn serialize_soap<T: serde::Serialize>(
     body: T,
@@ -12,10 +12,9 @@ pub fn serialize_soap<T: serde::Serialize>(
         header: Some(Header::default()),
         body: SoapBody { request: body },
     };
-    
-    let xml = to_string(&envelope)
-        .map_err(|e| SoapError::SerializationError(e.to_string()))?;
-    
+
+    let xml = to_string(&envelope).map_err(|e| SoapError::SerializationError(e.to_string()))?;
+
     let namespaces = if include_dss_namespace {
         "<soapenv:Envelope \
          xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" \
@@ -26,8 +25,10 @@ pub fn serialize_soap<T: serde::Serialize>(
          xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" \
          xmlns:eid=\"http://bsi.bund.de/eID/\""
     };
-    
+
     let xml_with_ns = xml.replacen("<soapenv:Envelope", namespaces, 1);
-    
-    Ok(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>{xml_with_ns}"))
+
+    Ok(format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>{xml_with_ns}"
+    ))
 }
