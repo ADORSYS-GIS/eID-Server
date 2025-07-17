@@ -12,8 +12,8 @@ pub fn generate_test_certificates() -> TestCertificates {
     let (server_cert, server_key) = generate_leaf_certificate(&ca_cert, &ca_key);
 
     TestCertificates {
-        server_cert: server_cert,
-        server_key: server_key,
+        server_cert,
+        server_key,
         ca_cert: ca_cert.to_pem().unwrap(),
     }
 }

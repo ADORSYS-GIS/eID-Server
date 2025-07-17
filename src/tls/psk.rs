@@ -47,28 +47,28 @@ impl fmt::Debug for PskStoreError {
 
 impl PskStore for DashMap<String, Vec<u8>> {
     fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
-        let identity = std::str::from_utf8(identity).map_err(|e| PskStoreError::new(e))?;
+        let identity = std::str::from_utf8(identity).map_err(PskStoreError::new)?;
         Ok(self.get(identity).map(|entry| entry.value().clone()))
     }
 }
 
 impl PskStore for Arc<DashMap<String, Vec<u8>>> {
     fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
-        let identity = std::str::from_utf8(identity).map_err(|e| PskStoreError::new(e))?;
+        let identity = std::str::from_utf8(identity).map_err(PskStoreError::new)?;
         Ok(self.get(identity).map(|entry| entry.value().clone()))
     }
 }
 
 impl PskStore for HashMap<String, Vec<u8>> {
     fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
-        let identity = std::str::from_utf8(identity).map_err(|e| PskStoreError::new(e))?;
+        let identity = std::str::from_utf8(identity).map_err(PskStoreError::new)?;
         Ok(self.get(identity).cloned())
     }
 }
 
 impl PskStore for Arc<HashMap<String, Vec<u8>>> {
     fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
-        let identity = std::str::from_utf8(identity).map_err(|e| PskStoreError::new(e))?;
+        let identity = std::str::from_utf8(identity).map_err(PskStoreError::new)?;
         Ok(self.get(identity).cloned())
     }
 }

@@ -25,7 +25,7 @@ async fn main() -> color_eyre::Result<()> {
 
     // build the tls configuration
     // TODO : Use real certificates to build the config
-    let tls_config = TlsConfig::new(&[], &[]);
+    let tls_config = TlsConfig::new([], []);
 
     let server = Server::new(eid_service, &config, tls_config).await?;
     server.run().await
