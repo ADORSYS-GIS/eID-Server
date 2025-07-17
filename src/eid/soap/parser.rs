@@ -1,46 +1,34 @@
 use quick_xml::de::from_str;
 
-use super::envelope::{SoapBody, SoapEnvelope};
-use super::error::SoapError;
-use crate::eid::get_result::model::GetResultRequest;
-use crate::eid::use_id::model::UseIDRequest;
+use crate::eid::{
+    get_result::model::GetResultRequest,
+    soap::{envelope::SoapEnvelope, error::SoapError},
+    use_id::model::UseIDRequest,
+};
 
-pub fn deserialize_soap<T: for<'de> serde::Deserialize<'de> + 'static>(
+pub fn deserialize_soap<T: for<'de> serde::Deserialize<'de>>(
     xml: &str,
     root_element: &str,
 ) -> Result<T, SoapError> {
-    // Normalize XML by removing extra whitespace
-    let xml = xml.trim().replace("\n", "").replace("> <", "><");
-
+    let xml = xml.trim();
+    // Log the XML for debugging
+    tracing::debug!("Deserializing XML: {}", xml);
+    
     match root_element {
         "eid:getResultRequest" => {
-            let envelope: SoapEnvelope<SoapBody<GetResultRequest>> =
-                from_str(&xml).map_err(|e| SoapError::DeserializationError {
+            let envelope: SoapEnvelope<GetResultRequest> =
+                from_str(xml).map_err(|e| SoapError::DeserializationError {
                     path: root_element.to_string(),
-                    message: format!("Failed to deserialize XML: {}", e),
+                    message: format!("Failed to deserialize XML: {}. Input XML: {}", e, xml),
                 })?;
-            eprintln!("Deserialized envelope: {:?}", envelope);
-            if std::any::TypeId::of::<T>() != std::any::TypeId::of::<GetResultRequest>() {
-                return Err(SoapError::DeserializationError {
-                    path: root_element.to_string(),
-                    message: "Type mismatch: expected GetResultRequest".to_string(),
-                });
-            }
             Ok(unsafe { std::mem::transmute_copy(&envelope.body.request) })
         }
         "eid:useIDRequest" => {
-            let envelope: SoapEnvelope<SoapBody<UseIDRequest>> =
-                from_str(&xml).map_err(|e| SoapError::DeserializationError {
+            let envelope: SoapEnvelope<UseIDRequest> =
+                from_str(xml).map_err(|e| SoapError::DeserializationError {
                     path: root_element.to_string(),
-                    message: format!("Failed to deserialize XML: {}", e),
+                    message: format!("Failed to deserialize XML: {}. Input XML: {}", e, xml),
                 })?;
-            eprintln!("Deserialized envelope: {:?}", envelope);
-            if std::any::TypeId::of::<T>() != std::any::TypeId::of::<UseIDRequest>() {
-                return Err(SoapError::DeserializationError {
-                    path: root_element.to_string(),
-                    message: "Type mismatch: expected UseIDRequest".to_string(),
-                });
-            }
             Ok(unsafe { std::mem::transmute_copy(&envelope.body.request) })
         }
         _ => Err(SoapError::DeserializationError {

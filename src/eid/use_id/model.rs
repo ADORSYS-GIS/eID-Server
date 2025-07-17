@@ -6,23 +6,23 @@ use crate::eid::common::models::{
 };
 
 #[derive(Deserialize, Debug)]
-#[serde(rename = "{http://bsi.bund.de/eID/}useIDRequest")]
+#[serde(rename = "eid:useIDRequest")]
 pub struct UseIDRequest {
-    #[serde(rename = "UseOperations")]
+    #[serde(rename = "eid:UseOperations")]
     pub _use_operations: OperationsRequester,
-    #[serde(rename = "AgeVerificationRequest")]
+    #[serde(rename = "eid:AgeVerificationRequest")]
     pub _age_verification: AgeVerificationRequest,
-    #[serde(rename = "PlaceVerificationRequest")]
+    #[serde(rename = "eid:PlaceVerificationRequest")]
     pub _place_verification: PlaceVerificationRequest,
-    #[serde(rename = "TransactionInfo")]
+    #[serde(rename = "eid:TransactionInfo")]
     pub _transaction_info: Option<String>,
-    #[serde(rename = "TransactionAttestationRequest")]
+    #[serde(rename = "eid:TransactionAttestationRequest")]
     pub _transaction_attestation_request: Option<TransactionAttestationRequest>,
-    #[serde(rename = "LevelOfAssurance")]
+    #[serde(rename = "eid:LevelOfAssuranceRequest")]
     pub _level_of_assurance: Option<LevelOfAssurance>,
-    #[serde(rename = "EIDTypeRequest")]
+    #[serde(rename = "eid:EIDTypeRequest")]
     pub _eid_type_request: Option<EIDTypeRequest>,
-    #[serde(rename = "Psk")]
+    #[serde(rename = "eid:Psk")]
     pub _psk: Option<Psk>,
 }
 
@@ -76,15 +76,3 @@ pub struct UseIdBody<'a> {
     pub response: &'a UseIDResponse,
 }
 
-#[derive(Deserialize)]
-#[serde(rename = "Envelope")]
-pub struct UseIDRequestEnvelope {
-    #[serde(rename = "Body")]
-    pub _body: UseIDRequestBody,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UseIDRequestBody {
-    #[serde(rename = "useIDRequest")]
-    pub _use_id_request: UseIDRequest,
-}
