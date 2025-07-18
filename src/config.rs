@@ -26,7 +26,7 @@ impl Config {
     ) -> Result<Self, ConfigError> {
         let mut builder = ConfigLib::builder()
             .set_default("server.host", "localhost")?
-            .set_default("server.port", 8443)?
+            .set_default("server.port", 3000)?
             .add_source(File::with_name("config/settings").required(false));
 
         // If env_vars is provided, we use it instead of system environment
@@ -90,7 +90,7 @@ mod tests {
 
         assert_eq!(config.server.host, "192.168.1.1");
         // The other values should use default
-        assert_eq!(config.server.port, 8443);
+        assert_eq!(config.server.port, 3000);
         assert_eq!(config.redis_url, None);
     }
 }

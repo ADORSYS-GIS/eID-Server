@@ -1,3 +1,4 @@
+use color_eyre::eyre::Context;
 use eid_server::{
     config::Config,
     domain::eid::service::{EIDServiceConfig, UseidService},
@@ -5,6 +6,8 @@ use eid_server::{
     telemetry,
     tls::TlsConfig,
 };
+
+use std::fs;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
@@ -23,9 +26,12 @@ async fn main() -> color_eyre::Result<()> {
         redis_url: config.redis_url.clone(),
     });
 
-    // build the tls configuration
-    // TODO : Use real certificates to build the config
-    let tls_config = TlsConfig::new([], []);
+    // Load certificate and key files from Config/ directory
+    let cert = fs::read("Config/cert.pem").wrap_err("Failed to read Config/cert.pem")?;
+    let key = fs::read("Config/key.pem").wrap_err("Failed to read Config/key.pem")?;
+
+    // Build the TLS configuration
+    let tls_config = TlsConfig::new(&*cert, &*key);
 
     let server = Server::new(eid_service, &config, tls_config).await?;
     server.run().await
