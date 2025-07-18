@@ -16,6 +16,7 @@ use color_eyre::eyre::{Context, Result};
 use handlers::did_auth::did_authenticate;
 use handlers::get_result::get_result_handler;
 use handlers::health::health_check;
+use handlers::useid::use_id_handler;
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
@@ -68,8 +69,8 @@ impl Server {
 
         let router = Router::new()
             .route("/health", get(health_check))
-            .route("/eIDService/useID", post(handlers::useid::use_id_handler))
-            .route("/eIDService/useID", get(handlers::useid::use_id_handler))
+            .route("/eIDService/useID", post(use_id_handler))
+            .route("/eIDService/useID", get(use_id_handler))
             .route("/eIDService/getServerInfo", get(get_server_info))
             .route("/eIDService/getResult", post(get_result_handler))
             .route("/did-authenticate", post(did_authenticate))

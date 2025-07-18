@@ -532,7 +532,6 @@ dependencies = [
  "http-body-util",
  "lru",
  "openssl",
- "parking_lot",
  "quick-xml",
  "rand",
  "redis",

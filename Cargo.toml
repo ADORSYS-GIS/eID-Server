@@ -33,7 +33,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Miscellaneous utilities
 async-trait = "0.1"
-parking_lot = "0.12"
 base64 = "0.22"
 rand = "0.9.1"
 urlencoding = "2.1"
