@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use redis::AsyncCommands;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::{runtime::Handle, sync::RwLock};
 use tracing::{debug, error};
 use uuid::Uuid;
 
-use crate::domain::eid::service::SessionInfo;
+use crate::{domain::eid::service::SessionInfo, tls::{PskStore, PskStoreError}};
 
 #[async_trait]
 pub trait SessionManager
@@ -22,6 +22,17 @@ where
 #[derive(Clone, Debug)]
 pub struct InMemorySessionManager {
     sessions: Arc<RwLock<Vec<SessionInfo>>>,
+}
+
+impl PskStore for Arc<dyn SessionManager> {
+    fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
+        let id = String::from_utf8_lossy(identity);
+        let task = self.get_session(&id);
+        let session = tokio::task::block_in_place(move || {
+            Handle::current().block_on(async move {task.await})
+        }).map_err(|e| PskStoreError::msg(e.to_string()))?;
+        Ok(session.map(|session| session.psk.clone().into_bytes()))
+    }
 }
 
 impl InMemorySessionManager {

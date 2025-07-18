@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use crate::config::Config;
 use crate::eid::get_server_info::handler::get_server_info;
-use crate::server::handlers::refresh::refresh_handler;
 use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
 use axum_server::tls_openssl::{OpenSSLAcceptor, OpenSSLConfig};
@@ -74,7 +73,6 @@ impl Server {
             .route("/eIDService/getServerInfo", get(get_server_info))
             .route("/eIDService/getResult", post(get_result_handler))
             .route("/did-authenticate", post(did_authenticate))
-            .route("/refresh", get(refresh_handler))
             .layer(cors_layer)
             .layer(trace_layer)
             .with_state(state);

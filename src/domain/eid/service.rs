@@ -73,6 +73,8 @@ impl SessionInfo {
             authentication_data: None,
         }
     }
+
+
 }
 
 /// Main service for handling useID requests
