@@ -10,14 +10,11 @@ use reqwest::{Certificate, Client, Identity};
 async fn test_mutual_tls_works() {
     // ======= building the server =======
 
-    let psk_store: dashmap::DashMap<String, Vec<u8>> = dashmap::DashMap::new();
-
     let (ca_cert, ca_key) = generate_ca_certificate();
     let (server_cert, server_key) = generate_leaf_certificate(&ca_cert, &ca_key);
 
     let tls_config = TlsConfig::new(server_cert, server_key)
-        .with_client_auth(&[ca_cert.to_pem().unwrap()], None::<&[u8]>)
-        .with_psk(psk_store);
+        .with_client_auth(&[ca_cert.to_pem().unwrap()], None::<&[u8]>);
 
     let eid_service = UseidService::new(EIDServiceConfig::default());
     let addr = utils::spawn_server(eid_service, tls_config).await;
