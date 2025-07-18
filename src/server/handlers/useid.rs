@@ -16,6 +16,7 @@ use std::io::Read;
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    adapters::xml_signature::{XmlSignatureValidator, XmlSignatureSigner, ValidationResult},
     domain::eid::ports::{EIDService, EidService},
     eid::{
         common::models::{AttributeRequester, LevelOfAssurance, OperationsRequester},
@@ -249,6 +250,49 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                 .into_response();
         }
 
+        // Validate XML signature (InitiatorToken) as per requirements
+        let validator = match create_xml_signature_validator() {
+            Ok(validator) => validator,
+            Err(e) => {
+                error!("Failed to create XML signature validator: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error".to_string(),
+                )
+                    .into_response();
+            }
+        };
+
+        match validator.validate_soap_signature(&body) {
+            ValidationResult::Valid => {
+                info!("XML signature validation successful");
+            }
+            ValidationResult::Invalid(reason) => {
+                error!("XML signature validation failed: {}", reason);
+                return (
+                    StatusCode::BAD_REQUEST,
+                    create_internal_error_response(),
+                )
+                    .into_response();
+            }
+            ValidationResult::MissingSignature => {
+                error!("Missing XML signature in SOAP request");
+                return (
+                    StatusCode::BAD_REQUEST,
+                    create_internal_error_response(),
+                )
+                    .into_response();
+            }
+            ValidationResult::CertificateError(reason) => {
+                error!("Certificate validation failed: {}", reason);
+                return (
+                    StatusCode::BAD_REQUEST,
+                    create_internal_error_response(),
+                )
+                    .into_response();
+            }
+        }
+
         let use_id_request = match parse_use_id_request(&body) {
             Ok(request) => {
                 info!("SOAP request parsed: {:?}", request);
@@ -286,10 +330,31 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                     "Response serialized successfully, length: {} bytes",
                     soap_response.len()
                 );
+
+                // Sign SOAP response (RecipientToken) as per requirements
+                let signed_response = match create_xml_signature_signer() {
+                    Ok(signer) => {
+                        match signer.sign_soap_response(&soap_response) {
+                            Ok(signed) => {
+                                info!("SOAP response signed successfully");
+                                signed
+                            }
+                            Err(e) => {
+                                error!("Failed to sign SOAP response: {}", e);
+                                soap_response // Fall back to unsigned response
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to create XML signature signer: {}", e);
+                        soap_response // Fall back to unsigned response
+                    }
+                };
+
                 (
                     StatusCode::OK,
                     create_soap_response_headers(),
-                    soap_response,
+                    signed_response,
                 )
                     .into_response()
             }
@@ -615,6 +680,32 @@ fn create_soap_response_headers() -> HeaderMap {
         "application/soap+xml; charset=utf-8".parse().unwrap(),
     );
     headers
+}
+
+/// Creates an XML signature validator with trusted certificates
+fn create_xml_signature_validator() -> Result<XmlSignatureValidator, String> {
+    let mut validator = XmlSignatureValidator::new()?;
+
+    // Add trusted certificates from configuration
+    // For now, we'll use a placeholder - in production this should load from config
+    // validator.add_trusted_cert_from_file("Config/trusted_certs/eservice.pem")?;
+
+    Ok(validator)
+}
+
+/// Creates an internal error response as per requirements
+fn create_internal_error_response() -> String {
+    // As per requirements, respond with error code .../common#internalError
+    "Internal Error: .../common#internalError".to_string()
+}
+
+/// Creates an XML signature signer with eID-Server certificate
+fn create_xml_signature_signer() -> Result<XmlSignatureSigner, String> {
+    // Use the same certificate paths as configured for TLS
+    let key_path = "Config/key.pem";
+    let cert_path = "Config/cert.pem";
+
+    XmlSignatureSigner::new(key_path, cert_path)
 }
 
 /// Builds a SOAP response from a UseIDResponse struct using serde
