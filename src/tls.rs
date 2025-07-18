@@ -99,8 +99,13 @@ impl TlsConfig {
         // Create a base acceptor builder
         let mut builder = self.create_base_acceptor_builder()?;
 
-        // Create the PSK context
-        let psk_ctx = self.create_psk_ssl_context()?;
+        // Create the PSK context only if PSK is configured
+        let psk_ctx = self
+            .inner
+            .psk_config
+            .as_ref()
+            .map(|_| self.create_psk_ssl_context())
+            .transpose()?;
 
         // Check if client authentication is required
         let mtls_required = self.inner.is_mtls;
@@ -121,8 +126,12 @@ impl TlsConfig {
                 let has_psk_cipher = cipher_ids.iter().any(|&id| PSK_CIPHER_IDS.contains(&id));
 
                 if has_psk_cipher {
-                    debug!("Client offers PSK cipher suites, switching to PSK context");
-                    ssl.set_ssl_context(&psk_ctx)?;
+                    if let Some(psk_ctx) = &psk_ctx {
+                        debug!("Client offers PSK cipher suites, switching to PSK context");
+                        ssl.set_ssl_context(psk_ctx)?;
+                    } else {
+                        debug!("Client offers PSK cipher suites, but no PSK context is configured");
+                    }
                 } else {
                     debug!("Client offers regular TLS cipher suites, using standard TLS context");
                     if mtls_required {
