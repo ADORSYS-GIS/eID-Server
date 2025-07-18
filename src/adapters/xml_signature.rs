@@ -9,11 +9,9 @@
 //! using appropriate cryptographic libraries and following XML-DSIG standards.
 
 use base64::Engine;
-use quick_xml::Reader;
-use quick_xml::events::Event;
+
 use sha2::{Digest, Sha256};
-use std::fs;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Supported cryptographic algorithm suites as per requirements
 #[derive(Debug, Clone)]
@@ -63,10 +61,7 @@ impl XmlSignatureValidator {
 
     /// Add a trusted certificate from PEM file
     pub fn add_trusted_cert_from_file(&mut self, cert_path: &str) -> Result<(), String> {
-        info!(
-            "Adding trusted certificate from file: {} (stub implementation)",
-            cert_path
-        );
+        info!("Adding trusted certificate from file: {cert_path} (stub implementation)",);
         // In production, this would load and parse the certificate
         Ok(())
     }
@@ -113,8 +108,8 @@ impl XmlSignatureValidator {
 
 /// XML signature signer for outgoing SOAP responses (RecipientToken)
 pub struct XmlSignatureSigner {
-    key_path: String,
-    cert_path: String,
+    _key_path: String,
+    _cert_path: String,
     algorithm: SignatureAlgorithm,
 }
 
@@ -122,27 +117,20 @@ impl XmlSignatureSigner {
     /// Create a new signer with private key and certificate
     pub fn new(key_path: &str, cert_path: &str) -> Result<Self, String> {
         info!(
-            "Creating XML signature signer with key: {} and cert: {} (stub implementation)",
-            key_path, cert_path
+            "Creating XML signature signer with key: {key_path} and cert: {cert_path} (stub implementation)",
         );
 
         // In production, this would load and validate the private key and certificate
         if !std::path::Path::new(key_path).exists() {
-            warn!(
-                "Private key file not found: {} (continuing with stub implementation)",
-                key_path
-            );
+            warn!("Private key file not found: {key_path} (continuing with stub implementation)",);
         }
         if !std::path::Path::new(cert_path).exists() {
-            warn!(
-                "Certificate file not found: {} (continuing with stub implementation)",
-                cert_path
-            );
+            warn!("Certificate file not found: {cert_path} (continuing with stub implementation)",);
         }
 
         Ok(Self {
-            key_path: key_path.to_string(),
-            cert_path: cert_path.to_string(),
+            _key_path: key_path.to_string(),
+            _cert_path: cert_path.to_string(),
             algorithm: SignatureAlgorithm::Basic256Sha256,
         })
     }
@@ -172,7 +160,7 @@ impl XmlSignatureSigner {
         let mut hasher = Sha256::new();
         hasher.update(soap_xml.as_bytes());
         let digest = hasher.finalize();
-        let digest_b64 = base64::engine::general_purpose::STANDARD.encode(&digest);
+        let digest_b64 = base64::engine::general_purpose::STANDARD.encode(digest);
 
         // Create mock signature value
         let mock_signature_value =
@@ -216,14 +204,14 @@ impl XmlSignatureSigner {
     fn insert_signature_into_xml(&self, xml: &str, signature: &str) -> Result<String, String> {
         // Insert signature before closing body tag
         if xml.contains("</soap:Body>") {
-            let signed_xml = xml.replace("</soap:Body>", &format!("{}</soap:Body>", signature));
+            let signed_xml = xml.replace("</soap:Body>", &format!("{signature}</soap:Body>"));
             Ok(signed_xml)
         } else if xml.contains("</Body>") {
-            let signed_xml = xml.replace("</Body>", &format!("{}</Body>", signature));
+            let signed_xml = xml.replace("</Body>", &format!("{signature}</Body>"));
             Ok(signed_xml)
         } else {
             // If no body tag found, append signature at the end
-            Ok(format!("{}{}", xml, signature))
+            Ok(format!("{xml}{signature}"))
         }
     }
 }
@@ -240,10 +228,10 @@ pub enum XmlSignatureError {
 impl std::fmt::Display for XmlSignatureError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            XmlSignatureError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
-            XmlSignatureError::SigningError(msg) => write!(f, "Signing error: {}", msg),
-            XmlSignatureError::CertificateError(msg) => write!(f, "Certificate error: {}", msg),
-            XmlSignatureError::ConfigurationError(msg) => write!(f, "Configuration error: {}", msg),
+            XmlSignatureError::ValidationError(msg) => write!(f, "Validation error: {msg}"),
+            XmlSignatureError::SigningError(msg) => write!(f, "Signing error: {msg}"),
+            XmlSignatureError::CertificateError(msg) => write!(f, "Certificate error: {msg}"),
+            XmlSignatureError::ConfigurationError(msg) => write!(f, "Configuration error: {msg}"),
         }
     }
 }

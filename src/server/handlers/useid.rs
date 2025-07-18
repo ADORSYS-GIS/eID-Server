@@ -16,7 +16,7 @@ use std::io::Read;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    adapters::xml_signature::{XmlSignatureValidator, XmlSignatureSigner, ValidationResult},
+    adapters::xml_signature::{ValidationResult, XmlSignatureSigner, XmlSignatureValidator},
     domain::eid::ports::{EIDService, EidService},
     eid::{
         common::models::{AttributeRequester, LevelOfAssurance, OperationsRequester},
@@ -269,27 +269,15 @@ pub async fn use_id_handler<S: EIDService + EidService>(
             }
             ValidationResult::Invalid(reason) => {
                 error!("XML signature validation failed: {}", reason);
-                return (
-                    StatusCode::BAD_REQUEST,
-                    create_internal_error_response(),
-                )
-                    .into_response();
+                return (StatusCode::BAD_REQUEST, create_internal_error_response()).into_response();
             }
             ValidationResult::MissingSignature => {
                 error!("Missing XML signature in SOAP request");
-                return (
-                    StatusCode::BAD_REQUEST,
-                    create_internal_error_response(),
-                )
-                    .into_response();
+                return (StatusCode::BAD_REQUEST, create_internal_error_response()).into_response();
             }
             ValidationResult::CertificateError(reason) => {
                 error!("Certificate validation failed: {}", reason);
-                return (
-                    StatusCode::BAD_REQUEST,
-                    create_internal_error_response(),
-                )
-                    .into_response();
+                return (StatusCode::BAD_REQUEST, create_internal_error_response()).into_response();
             }
         }
 
@@ -684,7 +672,7 @@ fn create_soap_response_headers() -> HeaderMap {
 
 /// Creates an XML signature validator with trusted certificates
 fn create_xml_signature_validator() -> Result<XmlSignatureValidator, String> {
-    let mut validator = XmlSignatureValidator::new()?;
+    let validator = XmlSignatureValidator::new()?;
 
     // Add trusted certificates from configuration
     // For now, we'll use a placeholder - in production this should load from config
