@@ -1,14 +1,15 @@
+//! Service layer that provides the business logic of the domain.
+
 use std::fs;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use base64::Engine;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use color_eyre::Result;
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use std::default::Default;
 use tracing::{debug, error, info, warn};
 
 use super::certificate::{CardCommunicator, CertificateStore, CryptoProvider};
@@ -59,30 +60,27 @@ pub struct SessionInfo {
     pub request_counter: u8,
     pub authentication_completed: bool,
     pub authentication_data: Option<String>,
+    pub connection_handles: Vec<ConnectionHandle>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConnectionHandle {
+    pub connection_handle: String,
 }
 
 impl SessionInfo {
     pub fn new(id: String, psk: String, operations: Vec<String>, timeout_minutes: i64) -> Self {
         SessionInfo {
             id,
-            expiry: Utc::now() + Duration::minutes(timeout_minutes),
+            expiry: Utc::now() + chrono::Duration::minutes(timeout_minutes),
             psk,
             operations,
             request_counter: 0,
             authentication_completed: false,
             authentication_data: None,
+            connection_handles: Vec::new(),
         }
     }
-
-
-}
-
-/// Main service for handling useID requests
-#[derive(Clone, Debug)]
-pub struct UseidService {
-    pub sessions: Arc<RwLock<Vec<SessionInfo>>>,
-    pub config: EIDServiceConfig,
-    pub session_manager: Arc<dyn SessionManager>,
 }
 
 /// Structure to hold parsed personal data from XML
@@ -110,6 +108,13 @@ struct ParsedPersonalData {
     restricted_id2: Option<String>,
 }
 
+/// Main service for handling useID requests
+#[derive(Clone, Debug)]
+pub struct UseidService {
+    pub config: EIDServiceConfig,
+    pub session_manager: Arc<dyn SessionManager>,
+}
+
 impl UseidService {
     pub fn new(config: EIDServiceConfig) -> Self {
         let session_manager: Arc<dyn SessionManager> = if let Some(redis_url) = &config.redis_url {
@@ -122,7 +127,6 @@ impl UseidService {
         };
 
         Self {
-            sessions: Arc::new(RwLock::new(Vec::new())),
             config,
             session_manager,
         }
@@ -132,7 +136,7 @@ impl UseidService {
     pub fn generate_psk(&self) -> String {
         let mut bytes = [0u8; 32];
         rand::rng().fill_bytes(&mut bytes);
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
+        hex::encode(bytes)
     }
 
     /// Helper function to extract required operations from OperationsRequester
@@ -425,10 +429,13 @@ impl EIDService for UseidService {
             }
             None => self.generate_psk(),
         };
-        if psk.is_empty() {
-            error!("Generated empty PSK");
-            return Err(color_eyre::eyre::eyre!("Failed to generate PSK"));
+
+        // Ensure PSK is valid hex and correct length (64 chars for 32 bytes)
+        if psk.len() != 64 || hex::decode(&psk).is_err() {
+            error!("Invalid PSK format: {}", psk);
+            return Err(color_eyre::eyre::eyre!("Invalid PSK format"));
         }
+
         debug!("Generated PSK: {}", psk);
 
         // Store session with PSK
@@ -516,22 +523,26 @@ impl EIDService for UseidService {
             request.session.id
         );
 
-        // Find and validate session
-        let mut sessions = self.sessions.write().map_err(|e| {
-            GetResultError::GenericError(format!("Failed to acquire session write lock: {e}"))
+        // Create a runtime to execute async code in a sync context
+        let rt = tokio::runtime::Runtime::new().map_err(|e| {
+            GetResultError::GenericError(format!("Failed to create runtime: {}", e))
         })?;
+
+        // Find and validate session
+        let session = rt.block_on(async {
+            self.session_manager
+                .get_session(&request.session.id)
+                .await
+                .map_err(|e| GetResultError::GenericError(format!("Failed to get session: {}", e)))
+        })?;
+
         let now = Utc::now();
 
-        // Clean up expired sessions
-        sessions.retain(|session| session.expiry > now);
-
-        // Find the session
-        let session_index = sessions
-            .iter()
-            .position(|s| s.id == request.session.id)
-            .ok_or(GetResultError::InvalidSession)?;
-
-        let session = &mut sessions[session_index];
+        // Check if session exists and is valid
+        let mut session = session.ok_or(GetResultError::InvalidSession)?;
+        if session.expiry <= now {
+            return Err(GetResultError::InvalidSession);
+        }
 
         // Validate request counter
         let expected_counter = session.request_counter + 1;
@@ -558,11 +569,67 @@ impl EIDService for UseidService {
 
         let response = self.create_get_result_response(authentication_data)?;
 
-        // Session becomes invalid after successful response (as per specification)
-        // "Upon success, the session becomes invalid and the server MUST delete the data"
-        sessions.remove(session_index);
+        // Session becomes invalid after successful response
+        rt.block_on(async {
+            self.session_manager
+                .remove_session(&request.session.id)
+                .await
+                .map_err(|e| {
+                    GetResultError::GenericError(format!("Failed to remove session: {}", e))
+                })
+        })?;
 
         Ok(response)
+    }
+
+    fn update_session_connection_handles(
+        &self,
+        session_id: &str,
+        connection_handles: Vec<String>,
+    ) -> Result<()> {
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to create runtime: {}", e))?;
+
+        rt.block_on(async {
+            let session = self
+                .session_manager
+                .get_session(session_id)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("Failed to get session: {}", e))?;
+
+            if let Some(mut session) = session {
+                session.connection_handles = connection_handles
+                    .into_iter()
+                    .map(|handle| ConnectionHandle {
+                        connection_handle: handle,
+                    })
+                    .collect();
+
+                self.session_manager
+                    .store_session(session)
+                    .await
+                    .map_err(|e| color_eyre::eyre::eyre!("Failed to update session: {}", e))?;
+
+                Ok(())
+            } else {
+                Err(color_eyre::eyre::eyre!("Session not found"))
+            }
+        })
+    }
+
+    fn is_session_valid(&self, session_id: &str) -> Result<bool> {
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to create runtime: {}", e))?;
+
+        rt.block_on(async {
+            let session = self
+                .session_manager
+                .get_session(session_id)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("Failed to get session: {}", e))?;
+
+            Ok(session.map_or(false, |s| s.expiry > Utc::now()))
+        })
     }
 }
 

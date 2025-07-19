@@ -1,4 +1,4 @@
-//! interface that external modules use to interact with the domain.
+//! Interface that external modules use to interact with the domain.
 
 use crate::eid::get_result::error::GetResultError;
 use crate::eid::get_result::model::{GetResultRequest, GetResultResponse};
@@ -15,6 +15,12 @@ pub trait EIDService: Clone + Send + Sync + 'static {
         &self,
         request: GetResultRequest,
     ) -> Result<GetResultResponse, GetResultError>;
+    fn is_session_valid(&self, session_id: &str) -> Result<bool>;
+    fn update_session_connection_handles(
+        &self,
+        session_id: &str,
+        connection_handles: Vec<String>,
+    ) -> Result<()>;
 }
 
 #[async_trait]
