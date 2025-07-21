@@ -85,29 +85,19 @@ pub struct UseidService {
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct PersonalData {
-    #[serde(rename = "DocumentType")]
     document_type: Option<String>,
-    #[serde(rename = "IssuingState")]
     issuing_state: Option<String>,
-    #[serde(rename = "DateOfExpiry")]
     date_of_expiry: Option<String>,
-    #[serde(rename = "GivenNames")]
     given_names: Option<String>,
-    #[serde(rename = "FamilyNames")]
     family_names: Option<String>,
-    #[serde(rename = "ArtisticName")]
     artistic_name: Option<String>,
-    #[serde(rename = "AcademicTitle")]
     academic_title: Option<String>,
     #[serde(rename = "DateOfBirth")]
     date_of_birth_string: Option<String>,
     #[serde(skip)]
     date_of_birth_value: Option<String>,
-    #[serde(rename = "PlaceOfBirth")]
     place_of_birth: Option<String>,
-    #[serde(rename = "Nationality")]
     nationality: Option<String>,
-    #[serde(rename = "BirthName")]
     birth_name: Option<String>,
     #[serde(rename = "Street")]
     residence_street: Option<String>,
@@ -121,9 +111,7 @@ struct PersonalData {
     community_id: Option<String>,
     #[serde(rename = "ResidencePermitID")]
     residence_permit_id: Option<String>,
-    #[serde(rename = "RestrictedID")]
     restricted_id: Option<String>,
-    #[serde(rename = "RestrictedID2")]
     restricted_id2: Option<String>,
 }
 
@@ -202,7 +190,7 @@ impl UseidService {
             required.push("ResidencePermitID".to_string());
         }
         if ops.restricted_id == AttributeRequester::REQUIRED {
-            required.push("RestrictedID".to_string());
+            required.push("RestrictedId".to_string());
         }
         if ops.age_verification == AttributeRequester::REQUIRED {
             required.push("AgeVerification".to_string());
