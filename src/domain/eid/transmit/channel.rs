@@ -406,6 +406,9 @@ impl TransmitChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::eid::transmit::protocol::{
+        APDU_SUCCESS_STATUS, RESULT_MAJOR_ERROR, RESULT_MAJOR_OK,
+    };
     use crate::domain::eid::transmit::protocol::{ISO24727_3_NS, ProtocolHandler};
     use crate::domain::eid::transmit::test_service::TestTransmitService;
     use crate::server::session::SessionManager;
@@ -427,7 +430,7 @@ mod tests {
                 <SlotHandle>slot-1</SlotHandle>
                 <InputAPDUInfo>
                     <InputAPDU>00A4040008A000000167455349</InputAPDU>
-                    <AcceptableStatusCode>9000</AcceptableStatusCode>
+                    <AcceptableStatusCode>{APDU_SUCCESS_STATUS}</AcceptableStatusCode>
                 </InputAPDUInfo>
                 <InputAPDUInfo>
                     <InputAPDU>00B0000000</InputAPDU>
@@ -444,9 +447,7 @@ mod tests {
         let response_xml = String::from_utf8(response_bytes).expect("Valid UTF-8");
 
         // Verify result is OK
-        assert!(response_xml.contains(
-            "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ResultMajor>"
-        ));
+        assert!(response_xml.contains(&format!("<ResultMajor>{RESULT_MAJOR_OK}</ResultMajor>")));
 
         // Verify both APDUs are present with correct responses
         assert!(
@@ -477,9 +478,9 @@ mod tests {
             .expect("Error handling should return valid XML response");
         let response_xml = String::from_utf8(response).expect("Response should be valid UTF-8");
         // Should contain error result
-        assert!(response_xml.contains(
-            "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"
-        ));
+        assert!(
+            response_xml.contains(&format!("<ResultMajor>{RESULT_MAJOR_ERROR}</ResultMajor>",))
+        );
         assert!(
             response_xml
                 .contains("<ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#")
@@ -496,9 +497,9 @@ mod tests {
             .expect("Error handling should return valid XML response");
         let response_xml = String::from_utf8(response).expect("Response should be valid UTF-8");
         // Should contain error result for missing SlotHandle
-        assert!(response_xml.contains(
-            "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"
-        ));
+        assert!(
+            response_xml.contains(&format!("<ResultMajor>{RESULT_MAJOR_ERROR}</ResultMajor>",))
+        );
 
         // Test 3: Status code verification failure
         let wrong_status_xml = format!(
@@ -507,7 +508,7 @@ mod tests {
                 <SlotHandle>slot-1</SlotHandle>
                 <InputAPDUInfo>
                     <InputAPDU>00A4040008A00000016745XXXX</InputAPDU>
-                    <AcceptableStatusCode>9000</AcceptableStatusCode>
+                    <AcceptableStatusCode>{APDU_SUCCESS_STATUS}</AcceptableStatusCode>
                 </InputAPDUInfo>
             </Transmit>
         "#
@@ -520,9 +521,9 @@ mod tests {
         let response_xml = String::from_utf8(response).expect("Response should be valid UTF-8");
 
         // Should contain error for status code mismatch
-        assert!(response_xml.contains(
-            "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"
-        ));
+        assert!(
+            response_xml.contains(&format!("<ResultMajor>{RESULT_MAJOR_ERROR}</ResultMajor>",))
+        );
         assert!(response_xml.contains("<ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#transmitError</ResultMinor>"));
     }
 
@@ -555,9 +556,9 @@ mod tests {
         let response_xml = String::from_utf8(response).expect("Response should be valid UTF-8");
 
         // Should contain error for invalid APDU
-        assert!(response_xml.contains(
-            "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"
-        ));
+        assert!(
+            response_xml.contains(&format!("<ResultMajor>{RESULT_MAJOR_ERROR}</ResultMajor>",))
+        );
         assert!(response_xml.contains("<ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#transmitError</ResultMinor>"));
 
         // Test with empty APDU
@@ -579,9 +580,9 @@ mod tests {
         let response_xml = String::from_utf8(response).expect("Response should be valid UTF-8");
 
         // Should contain error for empty APDU
-        assert!(response_xml.contains(
-            "<ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>"
-        ));
+        assert!(
+            response_xml.contains(&format!("<ResultMajor>{RESULT_MAJOR_ERROR}</ResultMajor>",))
+        );
     }
 
     #[tokio::test]
@@ -599,14 +600,16 @@ mod tests {
                 .expect("Channel creation should succeed in tests");
 
         // Test with custom slot handle
-        let test_request = r#"<?xml version="1.0" encoding="UTF-8"?>
-<Transmit xmlns="urn:iso:std:iso-iec:24727:tech:schema">
+        let test_request = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<Transmit xmlns="{ISO24727_3_NS}">
     <SlotHandle>custom-slot-456</SlotHandle>
     <InputAPDUInfo>
         <InputAPDU>00A4040007A0000002471001</InputAPDU>
-        <AcceptableStatusCode>9000</AcceptableStatusCode>
+        <AcceptableStatusCode>{APDU_SUCCESS_STATUS}</AcceptableStatusCode>
     </InputAPDUInfo>
-</Transmit>"#;
+</Transmit>"#,
+        );
 
         let result = channel.handle_request(test_request.as_bytes()).await;
         assert!(result.is_ok(), "Request should be processed successfully");
@@ -615,7 +618,7 @@ mod tests {
         let response_str = String::from_utf8_lossy(&response);
 
         // Verify that the response contains a successful result
-        assert!(response_str.contains("http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok"));
+        assert!(response_str.contains(RESULT_MAJOR_OK));
     }
 
     #[tokio::test]

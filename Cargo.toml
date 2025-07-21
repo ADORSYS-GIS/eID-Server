@@ -39,7 +39,7 @@ rustls = "0.23.28"
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1.7", features = ["v4"] }
+uuid = { version = "1.17", features = ["v4"] }
 hex = "0.4.3"
 rand = "0.9.1"
 urlencoding = "2.1"
@@ -49,12 +49,12 @@ flate2 = "1.0"
 ring = "0.17"
 x509-parser = "0.15"
 lru = "0.12"
-base64 = "0.22.1"
-dashmap = "6.1.0"
+base64 = "0.22"
+dashmap = "6.1"
 
 [dev-dependencies]
 http-body-util = "0.1"
-base64 = "0.22.1"
+base64 = "0.22"
 reqwest = { version = "0.12.8", features = ["json", "blocking", "rustls-tls"] }
 
 [profile.dev.package.backtrace]

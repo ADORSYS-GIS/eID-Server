@@ -1,22 +1,24 @@
 use base64::Engine;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use color_eyre::Result;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::default::Default;
 use std::fs;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use super::certificate::{CardCommunicator, CertificateStore, CryptoProvider};
 use super::models::{
     AuthError, ClientResponse, DIDAuthenticateRequest, DIDAuthenticateResponse,
-    InputAPDUInfoRequest, ResponseProtocolData, ServerInfo, TransmitRequest,
+    ResponseProtocolData, ServerInfo,
 };
 use super::ports::{
     DIDAuthenticate, EIDService, EidService, TransmitError, TransmitResult, TransmitService,
 };
 use super::session_manager::{InMemorySessionManager, RedisSessionManager, SessionManager};
+use super::transmit::protocol::{APDU_SUCCESS_STATUS, ProtocolHandler};
 use crate::config::TransmitConfig;
 use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
@@ -24,7 +26,7 @@ use crate::eid::common::models::{
 use crate::eid::use_id::model::{Psk, UseIDRequest, UseIDResponse};
 use async_trait::async_trait;
 use hex;
-use quick_xml::{de::from_str, se::to_string};
+use quick_xml::de::from_str;
 use reqwest::Client;
 
 // Configuration for the eID Service
@@ -64,7 +66,7 @@ impl SessionInfo {
     pub fn new(id: String, psk: String, operations: Vec<String>, timeout_minutes: i64) -> Self {
         SessionInfo {
             id,
-            expiry: Utc::now() + Duration::minutes(timeout_minutes),
+            expiry: Utc::now() + ChronoDuration::minutes(timeout_minutes),
             psk,
             operations,
         }
@@ -469,7 +471,7 @@ impl HttpTransmitService {
     /// Creates a new HTTP transmit service
     pub fn new(config: TransmitConfig) -> TransmitResult<Self> {
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(config.session_timeout_secs))
+            .timeout(Duration::from_secs(config.session_timeout_secs))
             .tls_built_in_root_certs(true)
             .min_tls_version(reqwest::tls::Version::TLS_1_2)
             .build()
@@ -483,20 +485,17 @@ impl HttpTransmitService {
     /// Serializes the APDU request to XML format
     fn serialize_request(&self, apdu: &[u8], slot_handle: &str) -> TransmitResult<String> {
         let apdu_hex = hex::encode_upper(apdu);
+        let protocol_handler = ProtocolHandler::new();
 
-        let transmit_request = TransmitRequest {
-            xmlns: "urn:iso:std:iso-iec:24727:tech:schema".to_string(),
-            slot_handle: slot_handle.to_string(),
-            input_apdu_info: InputAPDUInfoRequest {
-                input_apdu: apdu_hex,
-                acceptable_status_code: "9000".to_string(),
-            },
-        };
+        // Create a single APDU transmit request using the protocol handler
+        let transmit_request = ProtocolHandler::create_single_apdu_request(
+            slot_handle,
+            &apdu_hex,
+            Some(APDU_SUCCESS_STATUS),
+        );
 
-        let xml = to_string(&transmit_request)
-            .map_err(|e| TransmitError::TransmitError(format!("Failed to serialize XML: {e}")))?;
-
-        Ok(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>{xml}"))
+        // Serialize using the protocol handler
+        protocol_handler.serialize_transmit_request(&transmit_request)
     }
 
     /// Parses the XML response from the eID-Client

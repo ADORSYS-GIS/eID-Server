@@ -6,6 +6,10 @@ use axum::{
 };
 use tracing::{debug, error, info, warn};
 
+use crate::domain::eid::transmit::protocol::{
+    ISO24727_3_NS, RESULT_MAJOR_ERROR, RESULT_MINOR_GENERAL_ERROR,
+};
+
 /// Handler for the /eIDService/transmit endpoint
 ///
 /// This handler processes APDU transmission requests according to:
@@ -138,13 +142,16 @@ fn escape_xml(text: &str) -> String {
 fn create_error_response(status: StatusCode, message: &str) -> Response {
     let error_xml = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<TransmitResponse xmlns="urn:iso:std:iso-iec:24727:tech:schema">
+<TransmitResponse xmlns="{}">
     <Result>
-        <ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ResultMajor>
-        <ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#generalError</ResultMinor>
+        <ResultMajor>{}</ResultMajor>
+        <ResultMinor>{}</ResultMinor>
         <ResultMessage xml:lang="en">{}</ResultMessage>
     </Result>
 </TransmitResponse>"#,
+        ISO24727_3_NS,
+        RESULT_MAJOR_ERROR,
+        RESULT_MINOR_GENERAL_ERROR,
         escape_xml(message)
     );
 
@@ -170,7 +177,9 @@ mod tests {
     use crate::config::TransmitConfig;
     use crate::domain::eid::service::{EIDServiceConfig, UseidService};
     use crate::domain::eid::transmit::{
-        channel::TransmitChannel, protocol::ProtocolHandler, test_service::TestTransmitService,
+        channel::TransmitChannel,
+        protocol::{APDU_SUCCESS_STATUS, ProtocolHandler},
+        test_service::TestTransmitService,
     };
     use crate::server::session::SessionManager;
     use axum::{
@@ -207,14 +216,16 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("content-type", HeaderValue::from_static("application/xml"));
 
-        let xml_request = r#"<?xml version="1.0" encoding="UTF-8"?>
-<Transmit xmlns="urn:iso:std:iso-iec:24727:tech:schema">
+        let xml_request = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<Transmit xmlns="{ISO24727_3_NS}">
     <SlotHandle>test-slot</SlotHandle>
     <InputAPDUInfo>
         <InputAPDU>00A4040008A000000167455349</InputAPDU>
-        <AcceptableStatusCode>9000</AcceptableStatusCode>
+        <AcceptableStatusCode>{APDU_SUCCESS_STATUS}</AcceptableStatusCode>
     </InputAPDUInfo>
-</Transmit>"#;
+</Transmit>"#,
+        );
 
         let response = transmit_handler(State(state), headers, Bytes::from(xml_request))
             .await

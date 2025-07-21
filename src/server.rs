@@ -15,7 +15,7 @@ use crate::server::handlers::refresh::refresh_handler;
 use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
 use axum_server::tls_rustls::RustlsConfig;
-use color_eyre::eyre::{Result, eyre};
+use color_eyre::eyre::{Context, Result, eyre};
 use handlers::did_auth::did_authenticate;
 use handlers::health::health_check;
 use handlers::transmit::transmit_handler;
@@ -125,7 +125,7 @@ impl Server {
             SessionManager::new(Duration::from_secs(config.transmit.session_timeout_secs));
         let transmit_service = Arc::new(
             HttpTransmitService::new(config.transmit.clone())
-                .map_err(|e| eyre!("Failed to create transmit service: {}", e))?,
+                .wrap_err("Failed to create transmit service")?,
         );
         let transmit_channel = Arc::new(
             TransmitChannel::new(
@@ -134,7 +134,7 @@ impl Server {
                 transmit_service,
                 config.transmit.clone(),
             )
-            .map_err(|e| eyre!("Failed to create transmit channel: {}", e))?,
+            .wrap_err("Failed to create transmit channel")?,
         );
 
         let state = AppState {

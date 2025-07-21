@@ -6,6 +6,17 @@ use serde::{Deserialize, Serialize};
 pub const ISO24727_3_NS: &str = "urn:iso:std:iso-iec:24727:tech:schema";
 pub const ECARDAPI_NS: &str = "http://www.bsi.bund.de/ecard/api/1.1";
 
+/// Status code constants
+pub const APDU_SUCCESS_STATUS: &str = "9000";
+
+/// Result major constants
+pub const RESULT_MAJOR_OK: &str = "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok";
+pub const RESULT_MAJOR_ERROR: &str = "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error";
+
+/// Result minor constants
+pub const RESULT_MINOR_GENERAL_ERROR: &str =
+    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al#generalError";
+
 // MinorCode implementation moved to result_codes.rs
 
 /// Result structure as defined in TR-03112 Part 1, Section A
@@ -24,7 +35,7 @@ pub struct TransmitResult {
 impl TransmitResult {
     pub fn ok() -> Self {
         Self {
-            result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok".to_string(),
+            result_major: RESULT_MAJOR_OK.to_string(),
             result_minor: None,
             result_message: None,
         }
@@ -32,7 +43,7 @@ impl TransmitResult {
 
     pub fn error(minor_code: &str, message: Option<String>) -> Self {
         Self {
-            result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
+            result_major: RESULT_MAJOR_ERROR.to_string(),
             result_minor: Some(minor_code.to_string()),
             result_message: message,
         }
@@ -121,6 +132,42 @@ impl ProtocolHandler {
             namespace: ISO24727_3_NS.to_string(), // ISO 24727-3 namespace
             schema_location: format!("{} {}", ISO24727_3_NS, "iso-24727-3.xsd"),
         }
+    }
+
+    /// Creates a simple Transmit request with a single APDU
+    /// This is a convenience method for creating single-APDU requests
+    pub fn create_single_apdu_request(
+        slot_handle: &str,
+        apdu_hex: &str,
+        acceptable_status_code: Option<&str>,
+    ) -> Transmit {
+        Transmit {
+            slot_handle: slot_handle.to_string(),
+            input_apdu_info: vec![InputAPDUInfo {
+                input_apdu: apdu_hex.to_string(),
+                acceptable_status_code: acceptable_status_code.map(|s| s.to_string()),
+                timeout: None,
+            }],
+            exclusive: None,
+            protocol: None,
+        }
+    }
+
+    /// Serializes a Transmit request to XML format with proper namespaces
+    pub fn serialize_transmit_request(&self, transmit: &Transmit) -> Result<String, TransmitError> {
+        // Serialize the main body with Serde
+        let mut xml = to_xml_string(transmit)
+            .map_err(|e| TransmitError::TransmitError(format!("XML serialization error: {e}")))?;
+
+        // Inject namespaces into the root tag
+        xml = xml.replacen(
+            "<Transmit>",
+            &format!("<Transmit xmlns=\"{}\">", self.namespace),
+            1,
+        );
+
+        // Prepend XML declaration
+        Ok(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>{xml}"))
     }
 
     /// Creates a new protocol handler with custom configuration

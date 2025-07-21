@@ -1,25 +1,17 @@
-use config::{Config as ConfigLib, ConfigError, Environment, File};
+use color_eyre::eyre::Result;
+use config::{Config as ConfigLib, Environment, File};
 use serde::{Deserialize, Serialize};
 use std::env;
-use thiserror::Error;
 
-#[derive(Debug, Error)]
-pub enum AppConfigError {
-    #[error("Invalid port number: {0}")]
-    InvalidPort(#[from] std::num::ParseIntError),
-    #[error("Environment variable error: {0}")]
-    EnvVar(#[from] std::env::VarError),
-    #[error("Configuration error: {0}")]
-    Config(#[from] ConfigError),
-}
-
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
 pub struct Config {
     pub server: ServerConfig,
     pub redis_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
@@ -29,6 +21,7 @@ pub struct ServerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TransmitConfig {
     pub max_apdu_size: usize,
     pub session_timeout_secs: u64,
@@ -81,20 +74,8 @@ impl TransmitConfig {
     }
 }
 
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            host: "127.0.0.1".to_string(),
-            port: 8080,
-            tls_cert_path: "Config/cert.pem".to_string(),
-            tls_key_path: "Config/key.pem".to_string(),
-            transmit: TransmitConfig::default(),
-        }
-    }
-}
-
 impl Config {
-    pub fn load() -> Result<Self, AppConfigError> {
+    pub fn load() -> Result<Self> {
         // Build the config
         let config = ConfigLib::builder()
             // Set default values for server
@@ -111,32 +92,13 @@ impl Config {
             .add_source(Environment::with_prefix("APP").separator("_"))
             .build()?;
 
-        let config = match config.clone().try_deserialize::<Config>() {
-            Ok(mut config) => {
-                // Convert empty string to None for redis_url
-                if config.redis_url.as_ref().is_some_and(|url| url.is_empty()) {
-                    config.redis_url = None;
-                }
-                config
-            }
-            Err(_) => {
-                // Fallback to using Default implementations
-                let mut base_config = Config {
-                    server: ServerConfig::default(),
-                    redis_url: None,
-                };
+        // Deserialize with automatic fallback to Default implementations via serde(default)
+        let mut config: Config = config.try_deserialize()?;
 
-                // Override with any values from config
-                if let Ok(host) = config.get_string("server.host") {
-                    base_config.server.host = host;
-                }
-                if let Ok(port) = config.get_int("server.port") {
-                    base_config.server.port = port as u16;
-                }
-
-                base_config
-            }
-        };
+        // Handle redis_url empty string conversion to None
+        if config.redis_url.as_ref().is_some_and(|url| url.is_empty()) {
+            config.redis_url = None;
+        }
 
         Ok(config)
     }
