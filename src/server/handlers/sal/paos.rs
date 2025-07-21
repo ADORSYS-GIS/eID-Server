@@ -1,17 +1,23 @@
+use std::sync::Arc;
+
+// handler/paos.rs
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use tracing::{debug, error, warn};
 
 use crate::{
-    domain::eid::ports::{EIDService, EidService},
+    domain::eid::{
+        models::{AuthenticationProtocolData, ConnectionHandle, DIDAuthenticateRequest},
+        ports::{DIDAuthenticate, EIDService, EidService},
+    },
     sal::paos::parser::parse_start_paos,
-    server::AppState,
+    server::{AppState, handlers::did_auth::DIDAuthenticateHandler},
 };
 
-pub async fn paos_handler<S: EIDService + EidService>(
+pub async fn paos_handler<S: EIDService + EidService + DIDAuthenticate>(
     State(state): State<AppState<S>>,
     body: String,
 ) -> impl IntoResponse {
-    // Parse the SOAP request and handle potential error
+    // Parse the SOAP request
     let paos_request = match parse_start_paos(&body) {
         Ok(request) => request,
         Err(err) => {
@@ -36,7 +42,7 @@ pub async fn paos_handler<S: EIDService + EidService>(
     let session_id = paos_request.session_identifier;
 
     // Verify session validity
-    let is_valid = match state.use_id.is_session_valid(&session_id) {
+    let is_valid = match state.use_id.is_session_valid(&session_id).await {
         Ok(valid) => valid,
         Err(err) => {
             error!("Session validation error: {}", err);
@@ -57,10 +63,14 @@ pub async fn paos_handler<S: EIDService + EidService>(
             .into_response();
     }
 
-    // Update session with connection handles using the service interface
+    // Update session with connection handles
     if let Err(err) = state
         .use_id
-        .update_session_connection_handles(&session_id, paos_request.connection_handles)
+        .update_session_connection_handles(
+            &session_id,
+            vec![paos_request.connection_handle.card_application],
+        )
+        .await
     {
         error!("Failed to update session connection handles: {}", err);
         return (
@@ -71,7 +81,60 @@ pub async fn paos_handler<S: EIDService + EidService>(
     }
 
     debug!("Successfully updated session: {}", session_id);
-    StatusCode::OK.into_response()
+
+    // Create DIDAuthenticate request (EAC1)
+    let did_authenticate_request = DIDAuthenticateRequest {
+        connection_handle: ConnectionHandle {
+            channel_handle: Some(session_id.clone()),
+            ifd_name: Some("IFD".to_string()),
+            slot_index: Some(0),
+        },
+        did_name: "EAC".to_string(),
+        authentication_protocol_data: AuthenticationProtocolData {
+            certificate_description: "".to_string(),
+            required_chat: "7f4c12060904007f00070301020253053c0ff3ffff".to_string(),
+            optional_chat: None,
+            transaction_info: None,
+        },
+    };
+
+    // Call DIDAuthenticate handler
+    let did_response = match state
+        .eid_service
+        .handle_did_authenticate(did_authenticate_request)
+        .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            error!("DIDAuthenticate failed: {}", err);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to process DIDAuthenticate".to_string(),
+            )
+                .into_response();
+        }
+    };
+
+    // Convert to SOAP response
+    let handler = DIDAuthenticateHandler::new(Arc::clone(&state.eid_service));
+    let soap_response = match handler.to_soap_response(did_response) {
+        Ok(response) => response,
+        Err(err) => {
+            error!("Failed to serialize DIDAuthenticate response: {}", err);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to generate response".to_string(),
+            )
+                .into_response();
+        }
+    };
+
+    (
+        StatusCode::OK,
+        [("Content-Type", "application/xml")],
+        soap_response,
+    )
+        .into_response()
 }
 
 // #[cfg(test)]

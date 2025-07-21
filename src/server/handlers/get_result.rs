@@ -49,7 +49,7 @@ pub async fn get_result_handler<S: EIDService + EidService>(
     debug!("Parsed request: {:?}", request);
 
     // Handle the request through the service
-    let response = match state.eid_service.handle_get_result(request) {
+    let response = match state.eid_service.handle_get_result(request).await {
         Ok(resp) => resp,
         Err(e) => {
             error!("Service error: {:?}", e);

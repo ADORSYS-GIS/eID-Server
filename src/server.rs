@@ -70,15 +70,15 @@ impl Server {
         let router = Router::new()
             .route("/health", get(health_check))
             .route("/", post(paos_handler))
+            .route("/did-authenticate", post(did_authenticate))
             .nest(
                 "/eIDService",
                 Router::new()
                     .route("/useID", post(use_id_handler))
                     .route("/useID", get(use_id_handler))
                     .route("/getServerInfo", get(get_server_info))
-                    .route("/getResult", post(get_result_handler))
+                    .route("/getResult", post(get_result_handler)),
             )
-            .route("/did-authenticate", post(did_authenticate))
             .layer(cors_layer)
             .layer(trace_layer)
             .with_state(state);

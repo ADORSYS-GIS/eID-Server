@@ -1,4 +1,5 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
 
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
@@ -18,12 +19,23 @@ pub struct Body {
 pub struct StartPAOS {
     pub session_identifier: String,
     #[serde(rename = "ConnectionHandle")]
-    pub connection_handles: Vec<String>,
+    pub connection_handle: ConnectionHandle,
     pub user_agent: Option<UserAgent>,
     #[serde(rename = "SupportedAPIVersions")]
     pub supported_api_versions: Option<SupportedAPIVersions>,
     #[serde(rename = "SupportedDIDProtocols")]
     pub supported_did_protocols: Option<SupportedDIDProtocols>,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct ConnectionHandle {
+    #[serde(rename = "@xsi:type", default)]
+    pub xsi_type: String,
+    #[serde(rename = "CardApplication")]
+    pub card_application: String,
+    #[serde(rename = "SlotHandle")]
+    pub slot_handle: String,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -50,9 +62,17 @@ pub struct SupportedDIDProtocols {
     pub protocols: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct StartPAOSResponse {
-    pub session_identifier: String,
-    pub result: String,
+    #[serde(rename = "Result")]
+    pub result: ResultType,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResultType {
+    #[serde(rename = "ResultMajor")]
+    pub major: String,
+    #[serde(rename = "ResultMinor", skip_serializing_if = "Option::is_none")]
+    pub minor: Option<String>,
 }

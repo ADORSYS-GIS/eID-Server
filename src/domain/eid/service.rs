@@ -514,7 +514,7 @@ impl EIDService for UseidService {
         Ok(response)
     }
 
-    fn handle_get_result(
+    async fn handle_get_result(
         &self,
         request: GetResultRequest,
     ) -> Result<GetResultResponse, GetResultError> {
@@ -523,13 +523,11 @@ impl EIDService for UseidService {
             request.session.id
         );
 
-        // Create a runtime to execute async code in a sync context
-        let rt = tokio::runtime::Runtime::new().map_err(|e| {
-            GetResultError::GenericError(format!("Failed to create runtime: {}", e))
-        })?;
+        // Get the current runtime handle
+        let handle = tokio::runtime::Handle::current();
 
         // Find and validate session
-        let session = rt.block_on(async {
+        let session = handle.block_on(async {
             self.session_manager
                 .get_session(&request.session.id)
                 .await
@@ -570,7 +568,7 @@ impl EIDService for UseidService {
         let response = self.create_get_result_response(authentication_data)?;
 
         // Session becomes invalid after successful response
-        rt.block_on(async {
+        handle.block_on(async {
             self.session_manager
                 .remove_session(&request.session.id)
                 .await
@@ -582,55 +580,46 @@ impl EIDService for UseidService {
         Ok(response)
     }
 
-    fn update_session_connection_handles(
+    async fn update_session_connection_handles(
         &self,
         session_id: &str,
         connection_handles: Vec<String>,
     ) -> Result<()> {
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to create runtime: {}", e))?;
+        let session = self
+            .session_manager
+            .get_session(session_id)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to get session: {}", e))?;
 
-        rt.block_on(async {
-            let session = self
-                .session_manager
-                .get_session(session_id)
+        if let Some(mut session) = session {
+            session.connection_handles = connection_handles
+                .into_iter()
+                .map(|handle| ConnectionHandle {
+                    connection_handle: handle,
+                })
+                .collect();
+
+            self.session_manager
+                .store_session(session)
                 .await
-                .map_err(|e| color_eyre::eyre::eyre!("Failed to get session: {}", e))?;
+                .map_err(|e| color_eyre::eyre::eyre!("Failed to update session: {}", e))?;
 
-            if let Some(mut session) = session {
-                session.connection_handles = connection_handles
-                    .into_iter()
-                    .map(|handle| ConnectionHandle {
-                        connection_handle: handle,
-                    })
-                    .collect();
-
-                self.session_manager
-                    .store_session(session)
-                    .await
-                    .map_err(|e| color_eyre::eyre::eyre!("Failed to update session: {}", e))?;
-
-                Ok(())
-            } else {
-                Err(color_eyre::eyre::eyre!("Session not found"))
-            }
-        })
+            Ok(())
+        } else {
+            Err(color_eyre::eyre::eyre!("Session not found"))
+        }
     }
 
-    fn is_session_valid(&self, session_id: &str) -> Result<bool> {
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to create runtime: {}", e))?;
+    async fn is_session_valid(&self, session_id: &str) -> Result<bool> {
+        let session = self
+            .session_manager
+            .get_session(session_id)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to get session: {}", e))?;
 
-        rt.block_on(async {
-            let session = self
-                .session_manager
-                .get_session(session_id)
-                .await
-                .map_err(|e| color_eyre::eyre::eyre!("Failed to get session: {}", e))?;
-
-            Ok(session.map_or(false, |s| s.expiry > Utc::now()))
-        })
+        Ok(session.map_or(false, |s| s.expiry > Utc::now()))
     }
+
 }
 
 // Implement the EidService trait for UseidService

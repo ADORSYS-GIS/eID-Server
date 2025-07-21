@@ -19,11 +19,15 @@ mod tests {
         let xml = std::fs::read_to_string("./test_data/startpaos.xml").unwrap();
 
         let parsed = parse_start_paos(&xml).expect("Failed to parse");
-        assert_eq!(parsed.session_identifier, "unIdentifiantDeSessionExemple");
         assert_eq!(
-            parsed.connection_handles,
-            vec!["unGestionnaireDeConnexionExemple"]
+            parsed.session_identifier,
+            "faf7554cf8a24e51a4dbfa9881121905"
         );
+        assert_eq!(
+            parsed.connection_handle.card_application,
+            "e80704007f00070302"
+        );
+        assert_eq!(parsed.connection_handle.slot_handle, "00");
         assert_eq!(
             parsed.user_agent,
             Some(UserAgent {
