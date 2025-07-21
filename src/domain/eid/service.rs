@@ -4,8 +4,6 @@ use std::sync::{Arc, RwLock};
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use color_eyre::Result;
-use quick_xml::Reader;
-use quick_xml::events::Event;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::default::Default;
@@ -21,7 +19,7 @@ use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
 };
 use crate::eid::get_result::error::GetResultError;
-use crate::eid::get_result::model::{GetResultRequest, GetResultResponse};
+use crate::eid::get_result::model::GetResultResponse;
 use crate::eid::use_id::model::{Psk, UseIDRequest, UseIDResponse};
 use async_trait::async_trait;
 
@@ -83,28 +81,49 @@ pub struct UseidService {
     pub session_manager: Arc<dyn SessionManager>,
 }
 
-/// Structure to hold parsed personal data from XML
-#[derive(Debug, Default)]
-struct ParsedPersonalData {
+/// Structure to hold personal data from XML
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct PersonalData {
+    #[serde(rename = "DocumentType")]
     document_type: Option<String>,
+    #[serde(rename = "IssuingState")]
     issuing_state: Option<String>,
+    #[serde(rename = "DateOfExpiry")]
     date_of_expiry: Option<String>,
+    #[serde(rename = "GivenNames")]
     given_names: Option<String>,
+    #[serde(rename = "FamilyNames")]
     family_names: Option<String>,
+    #[serde(rename = "ArtisticName")]
     artistic_name: Option<String>,
+    #[serde(rename = "AcademicTitle")]
     academic_title: Option<String>,
+    #[serde(rename = "DateOfBirth")]
     date_of_birth_string: Option<String>,
+    #[serde(skip)]
     date_of_birth_value: Option<String>,
+    #[serde(rename = "PlaceOfBirth")]
     place_of_birth: Option<String>,
+    #[serde(rename = "Nationality")]
     nationality: Option<String>,
+    #[serde(rename = "BirthName")]
     birth_name: Option<String>,
+    #[serde(rename = "Street")]
     residence_street: Option<String>,
+    #[serde(rename = "City")]
     residence_city: Option<String>,
+    #[serde(rename = "Country")]
     residence_country: Option<String>,
+    #[serde(rename = "ZipCode")]
     residence_zipcode: Option<String>,
+    #[serde(rename = "CommunityID")]
     community_id: Option<String>,
+    #[serde(rename = "ResidencePermitID")]
     residence_permit_id: Option<String>,
+    #[serde(rename = "RestrictedID")]
     restricted_id: Option<String>,
+    #[serde(rename = "RestrictedID2")]
     restricted_id2: Option<String>,
 }
 
@@ -195,86 +214,32 @@ impl UseidService {
     }
 
     /// Parse personal data from XML authentication data
-    fn parse_personal_data_xml(
-        &self,
-        xml_data: &str,
-    ) -> Result<ParsedPersonalData, GetResultError> {
-        let mut reader = Reader::from_str(xml_data);
-        reader.config_mut().trim_text(true);
+    fn parse_personal_data_xml(&self, xml_data: &str) -> Result<PersonalData, GetResultError> {
+        use quick_xml::de::from_str;
 
-        let mut buf = Vec::new();
-        let mut parsed_data = ParsedPersonalData::default();
-        let mut current_element = String::new();
+        let mut parsed_data: PersonalData = from_str(xml_data)
+            .map_err(|e| GetResultError::GenericError(format!("XML parsing error: {e}")))?;
 
-        loop {
-            match reader.read_event_into(&mut buf) {
-                Ok(Event::Start(e)) => {
-                    current_element = String::from_utf8_lossy(e.name().as_ref()).to_string();
+        // Process date_of_birth_value if date_of_birth_string is available
+        if let Some(ref date_string) = parsed_data.date_of_birth_string {
+            if date_string.len() == 8 {
+                if let (Ok(year), Ok(month), Ok(day)) = (
+                    date_string[0..4].parse::<u32>(),
+                    date_string[4..6].parse::<u32>(),
+                    date_string[6..8].parse::<u32>(),
+                ) {
+                    parsed_data.date_of_birth_value =
+                        Some(format!("{year:04}-{month:02}-{day:02}"));
                 }
-                Ok(Event::Text(e)) => {
-                    let text = e
-                        .unescape()
-                        .map_err(|_| {
-                            GetResultError::GenericError("Failed to unescape XML text".to_string())
-                        })?
-                        .to_string();
-
-                    match current_element.as_str() {
-                        "DocumentType" => parsed_data.document_type = Some(text),
-                        "IssuingState" => parsed_data.issuing_state = Some(text),
-                        "DateOfExpiry" => parsed_data.date_of_expiry = Some(text),
-                        "GivenNames" => parsed_data.given_names = Some(text),
-                        "FamilyNames" => parsed_data.family_names = Some(text),
-                        "ArtisticName" => parsed_data.artistic_name = Some(text),
-                        "AcademicTitle" => parsed_data.academic_title = Some(text),
-                        "DateOfBirth" => {
-                            parsed_data.date_of_birth_string = Some(text.clone());
-
-                            if text.len() == 8 {
-                                if let (Ok(year), Ok(month), Ok(day)) = (
-                                    text[0..4].parse::<u32>(),
-                                    text[4..6].parse::<u32>(),
-                                    text[6..8].parse::<u32>(),
-                                ) {
-                                    parsed_data.date_of_birth_value =
-                                        Some(format!("{year:04}-{month:02}-{day:02}"));
-                                }
-                            }
-                        }
-                        "PlaceOfBirth" => parsed_data.place_of_birth = Some(text),
-                        "Nationality" => parsed_data.nationality = Some(text),
-                        "BirthName" => parsed_data.birth_name = Some(text),
-                        "Street" => parsed_data.residence_street = Some(text),
-                        "City" => parsed_data.residence_city = Some(text),
-                        "Country" => parsed_data.residence_country = Some(text),
-                        "ZipCode" => parsed_data.residence_zipcode = Some(text),
-                        "CommunityID" => parsed_data.community_id = Some(text),
-                        "ResidencePermitID" => parsed_data.residence_permit_id = Some(text),
-                        "RestrictedID" => parsed_data.restricted_id = Some(text),
-                        "RestrictedID2" => parsed_data.restricted_id2 = Some(text),
-                        _ => {} // Ignore unknown elements
-                    }
-                }
-                Ok(Event::End(_)) => {
-                    current_element.clear();
-                }
-                Ok(Event::Eof) => break,
-                Err(e) => {
-                    return Err(GetResultError::GenericError(format!(
-                        "XML parsing error: {e}",
-                    )));
-                }
-                _ => {}
             }
-            buf.clear();
         }
 
         Ok(parsed_data)
     }
 
     /// Create a GetResultResponse
-    /// This method parses the actual authentication data retrieved from the eID card
-    fn create_get_result_response(
+    /// This method parses authentication data retrieved from the eID card
+    pub fn create_get_result_response(
         &self,
         authentication_data: &str,
     ) -> Result<GetResultResponse, GetResultError> {
@@ -285,7 +250,7 @@ impl UseidService {
         };
         use crate::eid::get_result::model::FulfilsRequest;
 
-        // Parse the XML authentication data to extract real personal data
+        // Parse XML authentication data to extract personal data
         let parsed_data = self.parse_personal_data_xml(authentication_data)?;
 
         Ok(GetResultResponse {
@@ -505,62 +470,15 @@ impl EIDService for UseidService {
         Ok(response)
     }
 
-    fn handle_get_result(
+    fn get_sessions(&self) -> &Arc<RwLock<Vec<SessionInfo>>> {
+        &self.sessions
+    }
+
+    fn create_get_result_response_from_data(
         &self,
-        request: GetResultRequest,
+        authentication_data: &str,
     ) -> Result<GetResultResponse, GetResultError> {
-        debug!(
-            "Handling get_result request for session: {}",
-            request.session.id
-        );
-
-        // Find and validate session
-        let mut sessions = self.sessions.write().map_err(|e| {
-            GetResultError::GenericError(format!("Failed to acquire session write lock: {e}"))
-        })?;
-        let now = Utc::now();
-
-        // Clean up expired sessions
-        sessions.retain(|session| session.expiry > now);
-
-        // Find the session
-        let session_index = sessions
-            .iter()
-            .position(|s| s.id == request.session.id)
-            .ok_or(GetResultError::InvalidSession)?;
-
-        let session = &mut sessions[session_index];
-
-        // Validate request counter
-        let expected_counter = session.request_counter + 1;
-        if request.request_counter != expected_counter {
-            return Err(GetResultError::InvalidRequestCounter);
-        }
-
-        // Update request counter
-        session.request_counter = request.request_counter;
-
-        // Check if authentication is completed
-        if !session.authentication_completed {
-            return Err(GetResultError::NoResultYet);
-        }
-
-        // Create response
-        let authentication_data =
-            session
-                .authentication_data
-                .as_ref()
-                .ok_or(GetResultError::GenericError(
-                    "No authentication data available".to_string(),
-                ))?;
-
-        let response = self.create_get_result_response(authentication_data)?;
-
-        // Session becomes invalid after successful response (as per specification)
-        // "Upon success, the session becomes invalid and the server MUST delete the data"
-        sessions.remove(session_index);
-
-        Ok(response)
+        self.create_get_result_response(authentication_data)
     }
 }
 

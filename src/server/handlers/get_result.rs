@@ -3,12 +3,17 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
+use chrono::Utc;
+use std::sync::Arc;
 use tracing::{debug, error, info};
 
 use crate::{
     domain::eid::ports::{EIDService, EidService},
     eid::get_result::{
-        builder::build_get_result_response, error::GetResultError, parser::parse_get_result_request,
+        builder::build_get_result_response,
+        error::GetResultError,
+        model::{GetResultRequest, GetResultResponse},
+        parser::parse_get_result_request,
     },
     server::AppState,
 };
@@ -48,11 +53,11 @@ pub async fn get_result_handler<S: EIDService + EidService>(
 
     debug!("Parsed request: {:?}", request);
 
-    // Handle the request through the service
-    let response = match state.eid_service.handle_get_result(request) {
+    // Handle session management and validation in the handler layer (HTTP-specific concerns)
+    let response = match get_result(&state.eid_service, request) {
         Ok(resp) => resp,
         Err(e) => {
-            error!("Service error: {:?}", e);
+            error!("Handler error: {:?}", e);
             return handle_get_result_error(e);
         }
     };
@@ -124,6 +129,66 @@ fn create_soap_response_headers() -> HeaderMap {
         headers.insert("content-type", content_type);
     }
     headers
+}
+
+/// Handle get_result with proper separation of concerns
+/// This function handles HTTP-specific concerns (session management, request validation)
+/// while delegating external component interactions to the service layer
+fn get_result<S: EIDService + EidService>(
+    service: &Arc<S>,
+    request: GetResultRequest,
+) -> Result<GetResultResponse, GetResultError> {
+    debug!(
+        "Handler managing get_result request for session: {}",
+        request.session.id
+    );
+
+    // Session management
+    let mut sessions = service.get_sessions().write().map_err(|e| {
+        GetResultError::GenericError(format!("Failed to acquire session write lock: {e}"))
+    })?;
+    let now = Utc::now();
+
+    // Clean up expired sessions
+    sessions.retain(|session| session.expiry > now);
+
+    // Find the session
+    let session_index = sessions
+        .iter()
+        .position(|s| s.id == request.session.id)
+        .ok_or(GetResultError::InvalidSession)?;
+
+    let session = &mut sessions[session_index];
+
+    // Validate request counter
+    let expected_counter = session.request_counter + 1;
+    if request.request_counter != expected_counter {
+        return Err(GetResultError::InvalidRequestCounter);
+    }
+
+    // Update request counter
+    session.request_counter = request.request_counter;
+
+    // Check if authentication is completed
+    if !session.authentication_completed {
+        return Err(GetResultError::NoResultYet);
+    }
+
+    // Get authentication data
+    let authentication_data =
+        session
+            .authentication_data
+            .as_ref()
+            .ok_or(GetResultError::GenericError(
+                "No authentication data available".to_string(),
+            ))?;
+
+    let response = service.create_get_result_response_from_data(authentication_data)?;
+
+    // Session cleanup
+    sessions.remove(session_index);
+
+    Ok(response)
 }
 
 #[cfg(test)]

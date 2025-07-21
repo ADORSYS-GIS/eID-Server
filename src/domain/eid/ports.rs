@@ -1,19 +1,24 @@
 //! interface that external modules use to interact with the domain.
 
 use crate::eid::get_result::error::GetResultError;
-use crate::eid::get_result::model::{GetResultRequest, GetResultResponse};
+use crate::eid::get_result::model::GetResultResponse;
 use crate::eid::use_id::model::{UseIDRequest, UseIDResponse};
 use async_trait::async_trait;
 use color_eyre::Result;
+use std::sync::{Arc, RwLock};
 
 use super::models::{AuthError, DIDAuthenticateRequest, DIDAuthenticateResponse, ServerInfo};
+use super::service::SessionInfo;
 
 #[async_trait]
 pub trait EIDService: Clone + Send + Sync + 'static {
     async fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse>;
-    fn handle_get_result(
+
+    // Methods to support separation of concerns
+    fn get_sessions(&self) -> &Arc<RwLock<Vec<SessionInfo>>>;
+    fn create_get_result_response_from_data(
         &self,
-        request: GetResultRequest,
+        authentication_data: &str,
     ) -> Result<GetResultResponse, GetResultError>;
 }
 
