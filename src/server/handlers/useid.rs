@@ -250,6 +250,22 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                 .into_response();
         }
 
+        // First, try to parse the SOAP request to ensure it's valid XML
+        let use_id_request = match parse_use_id_request(&body) {
+            Ok(request) => {
+                info!("SOAP request parsed: {:?}", request);
+                request
+            }
+            Err(err) => {
+                error!("Failed to parse SOAP request: {}", err);
+                return (
+                    StatusCode::BAD_REQUEST,
+                    format!("Failed to parse SOAP request: {err}"),
+                )
+                    .into_response();
+            }
+        };
+
         // Validate XML signature (InitiatorToken) as per requirements
         let validator = match create_xml_signature_validator() {
             Ok(validator) => validator,
@@ -280,21 +296,6 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                 return (StatusCode::BAD_REQUEST, create_internal_error_response()).into_response();
             }
         }
-
-        let use_id_request = match parse_use_id_request(&body) {
-            Ok(request) => {
-                info!("SOAP request parsed: {:?}", request);
-                request
-            }
-            Err(err) => {
-                error!("Failed to parse SOAP request: {}", err);
-                return (
-                    StatusCode::BAD_REQUEST,
-                    format!("Failed to parse SOAP request: {err}"),
-                )
-                    .into_response();
-            }
-        };
 
         let response = match state.use_id.handle_use_id(use_id_request).await {
             Ok(response) => {
@@ -682,9 +683,24 @@ fn create_xml_signature_validator() -> Result<XmlSignatureValidator, String> {
 }
 
 /// Creates an internal error response as per requirements
+/// Returns a proper SOAP fault with the error code .../common#internalError
 fn create_internal_error_response() -> String {
-    // As per requirements, respond with error code .../common#internalError
-    "Internal Error: .../common#internalError".to_string()
+    // As per BSI requirements, respond with error code .../common#internalError
+    // This should be a proper SOAP fault response
+    let soap_fault = r#"<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+    <soap:Body>
+        <soap:Fault>
+            <faultcode>soap:Server</faultcode>
+            <faultstring>Internal Error</faultstring>
+            <detail>
+                <ErrorCode>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error/common#internalError</ErrorCode>
+            </detail>
+        </soap:Fault>
+    </soap:Body>
+</soap:Envelope>"#;
+
+    soap_fault.to_string()
 }
 
 /// Creates an XML signature signer with eID-Server certificate
