@@ -1,7 +1,5 @@
 //! Interface that external modules use to interact with the domain.
 
-use crate::eid::get_result::error::GetResultError;
-use crate::eid::get_result::model::{GetResultRequest, GetResultResponse};
 use crate::eid::use_id::model::{UseIDRequest, UseIDResponse};
 use async_trait::async_trait;
 use color_eyre::Result;
@@ -11,10 +9,6 @@ use super::models::{AuthError, DIDAuthenticateRequest, DIDAuthenticateResponse, 
 #[async_trait]
 pub trait EIDService: Clone + Send + Sync + 'static {
     async fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse>;
-    async fn handle_get_result(
-        &self,
-        request: GetResultRequest,
-    ) -> Result<GetResultResponse, GetResultError>;
     async fn is_session_valid(&self, session_id: &str) -> Result<bool>;
     async fn update_session_connection_handles(
         &self,

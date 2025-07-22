@@ -9,7 +9,7 @@ pub fn parse_start_paos(xml: &str) -> Result<StartPAOS, quick_xml::DeError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::sal::paos::{
+    use crate::eid::paos::{
         model::{SupportedAPIVersions, SupportedDIDProtocols, UserAgent},
         parser::parse_start_paos,
     };

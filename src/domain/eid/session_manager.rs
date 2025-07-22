@@ -31,16 +31,16 @@ pub struct InMemorySessionManager {
 impl PskStore for Arc<dyn SessionManager> {
     fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
         let id = String::from_utf8(identity.to_vec())
-            .map_err(|e| PskStoreError::msg(format!("Invalid UTF-8 identity: {}", e)))?;
+            .map_err(|e| PskStoreError::msg(format!("Invalid UTF-8 identity: {e}")))?;
 
         let task = self.get_session(&id);
         let session = tokio::task::block_in_place(move || Handle::current().block_on(task))
-            .map_err(|e| PskStoreError::msg(format!("Session lookup failed: {}", e)))?;
+            .map_err(|e| PskStoreError::msg(format!("Session lookup failed: {e}")))?;
 
         // Convert the hex PSK to raw bytes
         session
             .and_then(|s| hex::decode(s.psk).ok())
-            .map(|bytes| Ok(bytes))
+            .map(Ok)
             .transpose()
     }
 }

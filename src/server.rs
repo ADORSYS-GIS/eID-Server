@@ -8,13 +8,12 @@ use std::sync::Arc;
 
 use crate::config::Config;
 use crate::eid::get_server_info::handler::get_server_info;
-use crate::server::handlers::sal::paos::paos_handler;
+use crate::server::handlers::paos::paos_handler;
 use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
 use axum_server::tls_openssl::{OpenSSLAcceptor, OpenSSLConfig};
 use color_eyre::eyre::{Context, Result};
 use handlers::did_auth::did_authenticate;
-use handlers::get_result::get_result_handler;
 use handlers::health::health_check;
 use handlers::useid::use_id_handler;
 use tower_http::{
@@ -76,8 +75,7 @@ impl Server {
                 Router::new()
                     .route("/useID", post(use_id_handler))
                     .route("/useID", get(use_id_handler))
-                    .route("/getServerInfo", get(get_server_info))
-                    .route("/getResult", post(get_result_handler)),
+                    .route("/getServerInfo", get(get_server_info)),
             )
             .layer(cors_layer)
             .layer(trace_layer)

@@ -1,11 +1,10 @@
 use eid_server::{
-    config::{Config},
+    config::Config,
     domain::eid::service::{EIDServiceConfig, UseidService},
     server::Server,
     telemetry,
     tls::TlsConfig,
 };
-
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
@@ -33,5 +32,5 @@ async fn main() -> color_eyre::Result<()> {
     let tls_config = TlsConfig::new(cert, key).with_psk(session_mgr);
 
     let server = Server::new(eid_service, &config, tls_config).await?;
-        server.run().await
+    server.run().await
 }
