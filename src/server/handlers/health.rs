@@ -1,7 +1,7 @@
-use axum::http::StatusCode;
+use axum::response::IntoResponse;
 
-pub async fn health_check() -> StatusCode {
-    StatusCode::OK
+pub async fn health_check() -> impl IntoResponse {
+    "healthy"
 }
 
 #[cfg(test)]
@@ -10,6 +10,10 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_health_check() {
-        assert!(health_check().await == StatusCode::OK);
+        let response = health_check().await;
+        assert_eq!(
+            response.into_response().status(),
+            axum::http::StatusCode::OK
+        );
     }
 }
