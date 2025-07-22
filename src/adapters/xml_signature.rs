@@ -1,11 +1,14 @@
 //! XML signature validation and signing for SOAP messages
 //!
-//! This module implements the requirements from validate_and_sign_soap_messages.md:
 //! 1. Incoming Request Validation (InitiatorToken): Validates XML signatures from eService clients
 //! 2. Outgoing Response Signing (RecipientToken): Signs outgoing SOAP responses with eID-Server certificate
 
 use base64::Engine;
+use pem;
+use ring::rand;
+use ring::signature::{RSA_PKCS1_SHA256, RsaKeyPair};
 use sha2::{Digest, Sha256};
+use std::fs;
 use tracing::{debug, info, warn};
 
 /// Supported cryptographic algorithm suites as per requirements
@@ -86,22 +89,6 @@ impl XmlSignatureValidator {
         Ok(())
     }
 
-    /// Add a trusted certificate from PEM string
-    pub fn add_trusted_cert_from_pem(&mut self, cert_pem: &str) -> Result<(), String> {
-        info!("Adding trusted certificate from PEM string");
-
-        // Basic PEM format validation
-        if cert_pem.contains("-----BEGIN CERTIFICATE-----")
-            && cert_pem.contains("-----END CERTIFICATE-----")
-        {
-            info!("Certificate PEM format validated");
-            info!("Successfully added trusted certificate (simplified implementation)");
-            Ok(())
-        } else {
-            Err("Invalid PEM certificate format".to_string())
-        }
-    }
-
     /// Validate XML signature in SOAP message
     pub fn validate_soap_signature(&self, soap_xml: &str) -> ValidationResult {
         debug!("Validating XML signature in SOAP message");
@@ -164,8 +151,8 @@ impl XmlSignatureValidator {
 
 /// XML signature signer for outgoing SOAP responses (RecipientToken)
 pub struct XmlSignatureSigner {
-    _key_path: String,
-    _cert_path: String,
+    key_pair: RsaKeyPair,
+    certificate_b64: String,
     algorithm: SignatureAlgorithm,
 }
 
@@ -173,59 +160,101 @@ impl XmlSignatureSigner {
     /// Create a new signer with private key and certificate
     pub fn new(key_path: &str, cert_path: &str) -> Result<Self, String> {
         info!(
-            "Creating XML signature signer with key: {key_path} and cert: {cert_path} (stub implementation)",
+            "Creating XML signature signer with self-signed certificate for key: {key_path} and cert: {cert_path}",
         );
 
-        // In production, this would load and validate the private key and certificate
-        if !std::path::Path::new(key_path).exists() {
-            warn!("Private key file not found: {key_path} (continuing with stub implementation)",);
-        }
-        if !std::path::Path::new(cert_path).exists() {
-            warn!("Certificate file not found: {cert_path} (continuing with stub implementation)",);
-        }
+        // Generate or load RSA key pair for signing
+        let key_pair = Self::create_or_load_key_pair(key_path)?;
+
+        // Load certificate from PEM file
+        let certificate_b64 = Self::load_certificate_from_pem(cert_path)?;
 
         Ok(Self {
-            _key_path: key_path.to_string(),
-            _cert_path: cert_path.to_string(),
+            key_pair,
+            certificate_b64,
             algorithm: SignatureAlgorithm::Basic256Sha256,
         })
     }
 
+    /// Create or load RSA key pair from PEM file
+    fn create_or_load_key_pair(key_path: &str) -> Result<RsaKeyPair, String> {
+        info!("Loading RSA private key from PEM file: {}", key_path);
+
+        // Read the PEM file
+        let pem_content = fs::read_to_string(key_path)
+            .map_err(|e| format!("Failed to read private key file {key_path}: {e}"))?;
+
+        // Parse the PEM content
+        let pem =
+            pem::parse(&pem_content).map_err(|e| format!("Failed to parse PEM content: {e}"))?;
+
+        // The PEM should contain a private key in PKCS#8 format
+        if pem.tag() != "PRIVATE KEY" {
+            return Err(format!("Expected PRIVATE KEY in PEM, found: {}", pem.tag()));
+        }
+
+        // Create RSA key pair from the DER-encoded private key
+        RsaKeyPair::from_pkcs8(pem.contents())
+            .map_err(|e| format!("Failed to create RSA key pair from PEM: {e:?}"))
+    }
+
+    /// Load certificate from PEM file and return base64 encoded DER
+    fn load_certificate_from_pem(cert_path: &str) -> Result<String, String> {
+        info!("Loading certificate from PEM file: {cert_path}");
+
+        // Read the PEM file
+        let pem_content = fs::read_to_string(cert_path)
+            .map_err(|e| format!("Failed to read certificate file {cert_path}: {e}"))?;
+
+        // Parse the PEM content
+        let pem = pem::parse(&pem_content)
+            .map_err(|e| format!("Failed to parse certificate PEM content: {e}"))?;
+
+        // The PEM should contain a certificate
+        if pem.tag() != "CERTIFICATE" {
+            return Err(format!("Expected CERTIFICATE in PEM, found: {}", pem.tag()));
+        }
+
+        // Return the DER-encoded certificate as base64
+        Ok(base64::engine::general_purpose::STANDARD.encode(pem.contents()))
+    }
+
     /// Sign SOAP response XML
     pub fn sign_soap_response(&self, soap_xml: &str) -> Result<String, String> {
-        info!("Signing SOAP response with RecipientToken (stub implementation)");
+        info!("Signing SOAP response with self-signed certificate");
 
-        // In production, this would:
-        // 1. Load private key and certificate
+        // Now we implement real signing:
+        // 1. Private key and certificate are loaded ✓
         // 2. Calculate digest of content to be signed
         // 3. Sign the digest using private key
         // 4. Create XML signature structure
         // 5. Insert signature into SOAP message
 
-        // For now, we'll create a mock signature and insert it into the XML
-        let mock_signature = self.create_mock_signature(soap_xml)?;
-        let signed_xml = self.insert_signature_into_xml(soap_xml, &mock_signature)?;
+        let real_signature = self.create_real_signature(soap_xml)?;
+        let signed_xml = self.insert_signature_into_xml(soap_xml, &real_signature)?;
 
-        info!("SOAP response signed successfully (stub implementation)");
+        info!("SOAP response signed successfully with self-signed certificate");
         Ok(signed_xml)
     }
 
-    /// Create a mock XML signature for demonstration
-    fn create_mock_signature(&self, soap_xml: &str) -> Result<String, String> {
-        // Calculate a simple hash for demonstration
+    /// Create a real XML signature using self-signed certificate
+    fn create_real_signature(&self, soap_xml: &str) -> Result<String, String> {
+        // 1. Calculate digest of content to be signed (SHA-256)
         let mut hasher = Sha256::new();
         hasher.update(soap_xml.as_bytes());
         let digest = hasher.finalize();
         let digest_b64 = base64::engine::general_purpose::STANDARD.encode(digest);
 
-        // Create mock signature value
-        let mock_signature_value =
-            base64::engine::general_purpose::STANDARD.encode("mock_signature_value");
+        // 2. Sign the digest using private key (RSA-SHA256)
+        let rng = rand::SystemRandom::new();
+        let mut signature_bytes = vec![0u8; self.key_pair.public().modulus_len()];
+        self.key_pair
+            .sign(&RSA_PKCS1_SHA256, &rng, &digest, &mut signature_bytes)
+            .map_err(|e| format!("Failed to sign digest: {e:?}"))?;
 
-        // Create mock certificate
-        let mock_certificate =
-            base64::engine::general_purpose::STANDARD.encode("mock_certificate_der");
+        let signature_b64 = base64::engine::general_purpose::STANDARD.encode(&signature_bytes);
 
+        // 3. Create XML signature structure with real values
         let signature_xml = format!(
             r#"
 <Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
@@ -251,8 +280,8 @@ impl XmlSignatureSigner {
             self.algorithm.to_uri(),
             self.algorithm.digest_uri(),
             digest_b64,
-            mock_signature_value,
-            mock_certificate
+            signature_b64,
+            self.certificate_b64
         );
 
         Ok(signature_xml)
@@ -316,7 +345,10 @@ mod tests {
 
     #[test]
     fn test_signer_creation() {
-        let signer = XmlSignatureSigner::new("test_key.pem", "test_cert.pem");
+        let signer = XmlSignatureSigner::new(
+            "test_data/demo_private_key.pem",
+            "test_data/demo_certificate.pem",
+        );
         assert!(signer.is_ok());
     }
 
@@ -345,7 +377,11 @@ mod tests {
 
     #[test]
     fn test_sign_soap_response() {
-        let signer = XmlSignatureSigner::new("test_key.pem", "test_cert.pem").unwrap();
+        let signer = XmlSignatureSigner::new(
+            "test_data/demo_private_key.pem",
+            "test_data/demo_certificate.pem",
+        )
+        .unwrap();
         let soap_xml =
             r#"<soap:Envelope><soap:Body><test>content</test></soap:Body></soap:Envelope>"#;
 
