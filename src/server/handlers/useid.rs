@@ -670,6 +670,7 @@ fn build_use_id_response_local(response: &UseIDResponse) -> Result<String, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tls::{TestCertificates, TlsConfig, generate_test_certificates};
     use crate::{
         domain::eid::service::{EIDServiceConfig, UseidService},
         eid::{
@@ -684,6 +685,15 @@ mod tests {
     use http_body_util::BodyExt;
     use std::time::Duration;
     use std::{io::Write, sync::Arc};
+
+    fn create_test_tls_config() -> Arc<TlsConfig> {
+        let TestCertificates {
+            server_cert,
+            server_key,
+            ..
+        } = generate_test_certificates();
+        Arc::new(TlsConfig::new(server_cert, server_key))
+    }
 
     fn create_test_state() -> AppState<UseidService> {
         let service = UseidService::new(EIDServiceConfig {
@@ -700,6 +710,7 @@ mod tests {
                 crate::server::session::SessionManager::new(Duration::from_secs(60)),
                 Arc::new(crate::domain::eid::transmit::test_service::TestTransmitService),
                 crate::config::TransmitConfig::default(),
+                create_test_tls_config(),
             )
             .expect("TransmitChannel creation should succeed in tests"),
         );

@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 use color_eyre::eyre::Result;
-use config::{Config as ConfigLib, Environment, File};
+use config::{Config as ConfigLib, ConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
 use std::env;
 
@@ -7,6 +9,7 @@ use std::env;
 #[serde(default)]
 pub struct Config {
     pub server: ServerConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub redis_url: Option<String>,
 }
 
@@ -16,8 +19,6 @@ pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub transmit: TransmitConfig,
-    pub tls_cert_path: String,
-    pub tls_key_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,67 +76,80 @@ impl TransmitConfig {
 }
 
 impl Config {
-    pub fn load() -> Result<Self> {
-        // Build the config
-        let config = ConfigLib::builder()
-            // Set default values for server
+    pub fn load() -> Result<Self, ConfigError> {
+        Self::load_with_sources(None)
+    }
+
+    pub fn load_with_sources(
+        env_vars: Option<HashMap<String, String>>,
+    ) -> Result<Self, ConfigError> {
+        let mut builder = ConfigLib::builder()
             .set_default("server.host", "localhost")?
             .set_default("server.port", 3000)?
-            // Add default values for TLS paths
-            .set_default("server.tls_cert_path", "Config/cert.pem")?
-            .set_default("server.tls_key_path", "Config/key.pem")?
-            // Set default value for redis_url (None by default)
-            .set_default("redis_url", "")?
-            // Add a config file
-            .add_source(File::with_name("config/settings").required(false))
-            // Add environment variables
-            .add_source(Environment::with_prefix("APP").separator("_"))
-            .build()?;
+            .add_source(File::with_name("config/settings").required(false));
 
-        // Deserialize with automatic fallback to Default implementations via serde(default)
-        let mut config: Config = config.try_deserialize()?;
-
-        // Handle redis_url empty string conversion to None
-        if config.redis_url.as_ref().is_some_and(|url| url.is_empty()) {
-            config.redis_url = None;
+        // If env_vars is provided, we use it instead of system environment
+        // This is to avoid systems variables pollution across tests
+        if let Some(vars) = env_vars {
+            for (key, value) in vars {
+                builder = builder.set_override(&key, value)?;
+            }
+        } else {
+            // Use system environment variables
+            // Should be in the format APP_SERVER__HOST or APP_SERVER__REDIS_URL
+            builder = builder.add_source(
+                Environment::with_prefix("APP")
+                    .prefix_separator("_")
+                    .separator("__"),
+            );
         }
 
-        Ok(config)
+        builder.build()?.try_deserialize()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
+    use std::collections::HashMap;
 
     #[test]
     fn test_default_config() {
-        // This test simply checks that the config loads successfully with some value
         let config = Config::load().expect("Failed to load config");
 
-        // Just verify we can load the config and it has some host value
-        assert!(!config.server.host.is_empty());
-        // Default port should be 8080 unless overridden
-        assert!(config.server.port >= 3000);
+        assert_eq!(config.server.host, "localhost");
+        assert_eq!(config.server.port, 3000);
+        assert_eq!(config.redis_url, None);
     }
 
     #[test]
     fn test_env_config() {
-        // Set environment variables for this test
-        unsafe {
-            env::set_var("APP_SERVER_HOST", "0.0.0.0");
-            env::set_var("APP_SERVER_PORT", "3000");
-            env::set_var("EID_CLIENT_URL", "http://127.0.0.1:24727/eID-Client");
-        }
+        let mut env_vars = HashMap::new();
+        env_vars.insert("server.host".to_string(), "0.0.0.0".to_string());
+        env_vars.insert("server.port".to_string(), "443".to_string());
+        env_vars.insert(
+            "redis_url".to_string(),
+            "redis://localhost:6379".to_string(),
+        );
 
-        Config::load().expect("Failed to load config");
+        let config = Config::load_with_sources(Some(env_vars)).expect("Failed to load config");
 
-        // Clean up environment variables after test
-        unsafe {
-            env::remove_var("APP_SERVER_HOST");
-            env::remove_var("APP_SERVER_PORT");
-            env::remove_var("EID_CLIENT_URL");
-        }
+        assert_eq!(config.server.host, "0.0.0.0");
+        assert_eq!(config.server.port, 443);
+        assert_eq!(config.redis_url, Some("redis://localhost:6379".to_string()));
+    }
+
+    #[test]
+    fn test_partial_env_override() {
+        let mut env_vars = HashMap::new();
+        // We just override the host
+        env_vars.insert("server.host".to_string(), "192.168.1.1".to_string());
+
+        let config = Config::load_with_sources(Some(env_vars)).expect("Failed to load config");
+
+        assert_eq!(config.server.host, "192.168.1.1");
+        // The other values should use default
+        assert_eq!(config.server.port, 3000);
+        assert_eq!(config.redis_url, None);
     }
 }

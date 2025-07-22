@@ -182,12 +182,22 @@ mod tests {
         test_service::TestTransmitService,
     };
     use crate::server::session::SessionManager;
+    use crate::tls::{TestCertificates, TlsConfig, generate_test_certificates};
     use axum::{
         extract::State,
         http::{HeaderMap, HeaderValue, StatusCode},
     };
     use http_body_util::BodyExt;
     use std::{sync::Arc, time::Duration};
+
+    fn create_test_tls_config() -> Arc<TlsConfig> {
+        let TestCertificates {
+            server_cert,
+            server_key,
+            ..
+        } = generate_test_certificates();
+        Arc::new(TlsConfig::new(server_cert, server_key))
+    }
 
     fn create_test_state() -> crate::server::AppState<UseidService> {
         let service = UseidService::new(EIDServiceConfig::default());
@@ -199,6 +209,7 @@ mod tests {
                 SessionManager::new(Duration::from_secs(60)),
                 Arc::new(TestTransmitService),
                 TransmitConfig::default(),
+                create_test_tls_config(),
             )
             .expect("TransmitChannel creation should succeed in tests"),
         );
