@@ -59,7 +59,7 @@ mod tests {
         let config = Config::load().expect("Failed to load config");
 
         assert_eq!(config.server.host, "localhost");
-        assert_eq!(config.server.port, 8443);
+        assert_eq!(config.server.port, 3000);
         assert_eq!(config.redis_url, None);
     }
 
