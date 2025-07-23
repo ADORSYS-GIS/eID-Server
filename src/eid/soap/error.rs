@@ -2,12 +2,29 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum SoapError {
-    #[error("XML serialization failed: {0}")]
-    SerializationError(String),
-    #[error("XML deserialization failed at {path}: {message}")]
-    DeserializationError { path: String, message: String },
-    #[error("Missing required element: {0}")]
-    MissingElement(String),
-    #[error("Invalid element value at {path}: {message}")]
-    InvalidElement { path: String, message: String },
+    #[error("{kind} at {path:?}: {message}")]
+    XmlError {
+        kind: ErrorKind,
+        path: Option<String>,
+        message: String,
+    },
+}
+
+#[derive(Debug)]
+pub enum ErrorKind {
+    Serialization,
+    Deserialization,
+    MissingElement,
+    InvalidElement,
+}
+
+impl std::fmt::Display for ErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ErrorKind::Serialization => write!(f, "XML serialization failed"),
+            ErrorKind::Deserialization => write!(f, "XML deserialization failed"),
+            ErrorKind::MissingElement => write!(f, "Missing required element"),
+            ErrorKind::InvalidElement => write!(f, "Invalid element value"),
+        }
+    }
 }

@@ -47,7 +47,7 @@ mod tests {
             <soapenv:Header/>
             <soapenv:Body>
                 <eid:getResultRequest>
-                    <eid:Request Tarier>1</eid:RequestCounter>
+                    <eid:RequestCounter>1</eid:RequestCounter>
                 </eid:getResultRequest>
             </soapenv:Body>
         </soapenv:Envelope>

@@ -1,4 +1,4 @@
-use crate::eid::soap::error::SoapError;
+use crate::eid::soap::error::{ErrorKind, SoapError};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -20,16 +20,22 @@ pub enum GetResultError {
 impl From<SoapError> for GetResultError {
     fn from(error: SoapError) -> Self {
         match error {
-            SoapError::DeserializationError { path, message } => {
-                GetResultError::GenericError(format!("Failed at {path}: {message}"))
-            }
-            SoapError::MissingElement(elem) => {
-                GetResultError::GenericError(format!("Missing element: {elem}"))
-            }
-            SoapError::InvalidElement { path, message } => {
-                GetResultError::GenericError(format!("Invalid element at {path}: {message}"))
-            }
-            SoapError::SerializationError(msg) => GetResultError::GenericError(msg),
+            SoapError::XmlError {
+                kind,
+                path,
+                message,
+            } => match kind {
+                ErrorKind::Deserialization => {
+                    GetResultError::GenericError(format!("Failed at {path:?}: {message}"))
+                }
+                ErrorKind::MissingElement => {
+                    GetResultError::GenericError(format!("Missing element: {message}"))
+                }
+                ErrorKind::InvalidElement => {
+                    GetResultError::GenericError(format!("Invalid element at {path:?}: {message}"))
+                }
+                ErrorKind::Serialization => GetResultError::GenericError(message),
+            },
         }
     }
 }

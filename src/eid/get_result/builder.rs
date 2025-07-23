@@ -1,4 +1,5 @@
 use crate::eid::{
+    common::models::Header,
     get_result::{
         error::GetResultError,
         model::{GetResultResponse, GetResultResponseBody},
@@ -19,13 +20,14 @@ use crate::eid::{
 /// ```rust
 /// let response = GetResultResponse { /* ... */ };
 /// let xml_string = build_get_result_response(response)?;
-/// println!("{}", xml);
+/// println!("{}", xml_string);
 /// ```
 pub fn build_get_result_response(response: GetResultResponse) -> Result<String, GetResultError> {
     let body = GetResultResponseBody {
         get_result_response: response,
     };
-    serialize_soap(body, true).map_err(|e| GetResultError::GenericError(e.to_string()))
+    serialize_soap(body, Some(Header::default()), true)
+        .map_err(|e| GetResultError::GenericError(e.to_string()))
 }
 
 #[cfg(test)]

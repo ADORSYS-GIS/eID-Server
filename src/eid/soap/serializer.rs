@@ -1,34 +1,51 @@
-use quick_xml::se::to_string;
-
-use super::envelope::{SoapBody, SoapEnvelope};
-use super::error::SoapError;
+use super::envelope::SoapBody;
+use super::error::{ErrorKind, SoapError};
 use crate::eid::common::models::Header;
+use quick_xml::se::to_string;
+use serde::Serialize;
 
-pub fn serialize_soap<T: serde::Serialize>(
+// Define namespace constants
+const SOAPENV_NS: &str = "http://schemas.xmlsoap.org/soap/envelope/";
+const EID_NS: &str = "http://bsi.bund.de/eID/";
+const DSS_NS: &str = "urn:oasis:names:tc:dss:1.0:core:schema";
+
+pub fn serialize_soap<T: Serialize>(
     body: T,
+    header: Option<Header>,
     include_dss_namespace: bool,
 ) -> Result<String, SoapError> {
-    let envelope = SoapEnvelope {
-        header: Some(Header::default()),
+    #[derive(Serialize)]
+    #[serde(rename = "soapenv:Envelope")]
+    struct SoapEnvelopeWithNs<T: Serialize> {
+        #[serde(rename = "@xmlns:soapenv")]
+        soapenv_ns: &'static str,
+        #[serde(rename = "@xmlns:eid")]
+        eid_ns: &'static str,
+        #[serde(rename = "@xmlns:dss", skip_serializing_if = "Option::is_none")]
+        dss_ns: Option<&'static str>,
+        #[serde(rename = "soapenv:Header")]
+        header: Option<Header>,
+        #[serde(rename = "soapenv:Body")]
+        body: SoapBody<T>,
+    }
+
+    let envelope = SoapEnvelopeWithNs {
+        soapenv_ns: SOAPENV_NS,
+        eid_ns: EID_NS,
+        dss_ns: if include_dss_namespace {
+            Some(DSS_NS)
+        } else {
+            None
+        },
+        header,
         body: SoapBody { request: body },
     };
 
-    let xml = to_string(&envelope).map_err(|e| SoapError::SerializationError(e.to_string()))?;
+    let xml = to_string(&envelope).map_err(|e| SoapError::XmlError {
+        kind: ErrorKind::Serialization,
+        path: None,
+        message: e.to_string(),
+    })?;
 
-    let namespaces = if include_dss_namespace {
-        "<soapenv:Envelope \
-         xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" \
-         xmlns:eid=\"http://bsi.bund.de/eID/\" \
-         xmlns:dss=\"urn:oasis:names:tc:dss:1.0:core:schema\""
-    } else {
-        "<soapenv:Envelope \
-         xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" \
-         xmlns:eid=\"http://bsi.bund.de/eID/\""
-    };
-
-    let xml_with_ns = xml.replacen("<soapenv:Envelope", namespaces, 1);
-
-    Ok(format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>{xml_with_ns}"
-    ))
+    Ok(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>{xml}"))
 }
