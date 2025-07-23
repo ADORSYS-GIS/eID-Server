@@ -23,10 +23,6 @@ use tracing::{debug, instrument, trace, warn};
 // TLS_RSA_PSK_WITH_AES_128_GCM_SHA256 = {0x00,0xAC}
 const PSK_CIPHER_IDS: &[u16] = &[0x0095, 0x0094, 0x00AD, 0x00AC];
 const PSK_CIPHER_SUITES: &[&str] = &[
-    "PSK-AES256-CBC-SHA",
-    "PSK-AES128-CBC-SHA",
-    "PSK-AES256-GCM-SHA384",
-    "PSK-AES128-GCM-SHA256",
     "RSA-PSK-AES256-CBC-SHA",
     "RSA-PSK-AES128-CBC-SHA",
     "RSA-PSK-AES256-GCM-SHA384",
