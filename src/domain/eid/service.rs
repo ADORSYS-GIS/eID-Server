@@ -290,45 +290,6 @@ impl EIDService for UseidService {
         Ok(response)
     }
 
-    async fn update_session_connection_handles(
-        &self,
-        session_id: &str,
-        connection_handles: Vec<String>,
-    ) -> Result<()> {
-        let session = self
-            .session_manager
-            .get_session(session_id)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to get session: {}", e))?;
-
-        if let Some(mut session) = session {
-            session.connection_handles = connection_handles
-                .into_iter()
-                .map(|handle| ConnectionHandle {
-                    connection_handle: handle,
-                })
-                .collect();
-
-            self.session_manager
-                .store_session(session)
-                .await
-                .map_err(|e| color_eyre::eyre::eyre!("Failed to update session: {}", e))?;
-
-            Ok(())
-        } else {
-            Err(color_eyre::eyre::eyre!("Session not found"))
-        }
-    }
-
-    async fn is_session_valid(&self, session_id: &str) -> Result<bool> {
-        let session = self
-            .session_manager
-            .get_session(session_id)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to get session: {}", e))?;
-
-        Ok(session.is_some_and(|s| s.expiry > Utc::now()))
-    }
 }
 
 // Implement the EidService trait for UseidService

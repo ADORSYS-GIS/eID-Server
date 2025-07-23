@@ -9,12 +9,6 @@ use super::models::{AuthError, DIDAuthenticateRequest, DIDAuthenticateResponse, 
 #[async_trait]
 pub trait EIDService: Clone + Send + Sync + 'static {
     async fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse>;
-    async fn is_session_valid(&self, session_id: &str) -> Result<bool>;
-    async fn update_session_connection_handles(
-        &self,
-        session_id: &str,
-        connection_handles: Vec<String>,
-    ) -> Result<()>;
 }
 
 #[async_trait]
