@@ -7,6 +7,7 @@ edition = "2024"
 # Web server framework
 axum = { version = "0.8", features = ["macros"] }
 axum-server = { version = "0.7", features = ["tls-openssl"] }
+tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
@@ -34,7 +35,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # Miscellaneous utilities
 async-trait = "0.1"
 base64 = "0.22"
-rand = "0.9.1"
+rand = "0.9"
 urlencoding = "2.1"
 flate2 = "1.0"
 dashmap = "6.1"
@@ -43,8 +44,8 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 
 # Cryptographic utilities
 ring = "0.17"
-x509-parser = "0.15"
-lru = "0.12"
+x509-parser = "0.17"
+lru = "0.16"
 hex = "0.4"
 openssl = { version = "0.10", features = ["vendored"] }
 
