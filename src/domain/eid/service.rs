@@ -1,5 +1,5 @@
 use base64::Engine;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use color_eyre::Result;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -51,15 +51,22 @@ pub struct SessionInfo {
     pub expiry: DateTime<Utc>,
     pub psk: String,
     pub operations: Vec<String>,
+    pub connection_handles: Vec<ConnectionHandle>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConnectionHandle {
+    pub connection_handle: String,
 }
 
 impl SessionInfo {
     pub fn new(id: String, psk: String, operations: Vec<String>, timeout_minutes: i64) -> Self {
         SessionInfo {
             id,
-            expiry: Utc::now() + Duration::minutes(timeout_minutes),
+            expiry: Utc::now() + chrono::Duration::minutes(timeout_minutes),
             psk,
             operations,
+            connection_handles: Vec::new(),
         }
     }
 }
@@ -194,6 +201,7 @@ impl EIDService for UseidService {
             error!("Generated empty PSK");
             return Err(color_eyre::eyre::eyre!("Failed to generate PSK"));
         }
+
         debug!("Generated PSK: {}", psk);
 
         // Store session with PSK
@@ -270,6 +278,43 @@ impl EIDService for UseidService {
         }
 
         Ok(response)
+    }
+}
+
+#[async_trait]
+impl SessionManager for UseidService {
+    async fn generate_session_id(&self) -> color_eyre::Result<String> {
+        self.session_manager.generate_session_id().await
+    }
+
+    async fn store_session(&self, session: SessionInfo) -> color_eyre::Result<()> {
+        self.session_manager.store_session(session).await
+    }
+
+    async fn get_session(&self, session_id: &str) -> color_eyre::Result<Option<SessionInfo>> {
+        self.session_manager.get_session(session_id).await
+    }
+
+    async fn remove_expired_sessions(&self) -> color_eyre::Result<()> {
+        self.session_manager.remove_expired_sessions().await
+    }
+
+    async fn session_count(&self) -> color_eyre::Result<usize> {
+        self.session_manager.session_count().await
+    }
+
+    async fn is_session_valid(&self, session_id: &str) -> color_eyre::Result<bool> {
+        self.session_manager.is_session_valid(session_id).await
+    }
+
+    async fn update_session_connection_handles(
+        &self,
+        session_id: &str,
+        connection_handles: Vec<String>,
+    ) -> color_eyre::Result<()> {
+        self.session_manager
+            .update_session_connection_handles(session_id, connection_handles)
+            .await
     }
 }
 

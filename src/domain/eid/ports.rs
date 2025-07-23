@@ -1,5 +1,3 @@
-//! interface that external modules use to interact with the domain.
-
 use crate::eid::use_id::model::{UseIDRequest, UseIDResponse};
 use async_trait::async_trait;
 use color_eyre::Result;
@@ -12,7 +10,7 @@ pub trait EIDService: Clone + Send + Sync + 'static {
 }
 
 #[async_trait]
-pub trait DIDAuthenticate: Send + Sync {
+pub trait DIDAuthenticate {
     async fn handle_did_authenticate(
         &self,
         request: DIDAuthenticateRequest,
