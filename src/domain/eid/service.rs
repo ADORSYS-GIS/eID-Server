@@ -17,6 +17,7 @@ use super::ports::{DIDAuthenticate, EIDService, EidService};
 use super::session_manager::{InMemorySessionManager, RedisSessionManager, SessionManager};
 use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
+    TRANSACTION_ATTESTATION_FORMAT,
 };
 use crate::eid::get_result::error::GetResultError;
 use crate::eid::get_result::model::GetResultResponse;
@@ -325,8 +326,7 @@ impl UseidService {
                 place_verification: AttributeResponder::ALLOWED,
             },
             transaction_attestation_response: TransactionAttestationResponse {
-                transaction_attestation_format: "http://bsi.bund.de/eID/ExampleAttestationFormat"
-                    .to_string(),
+                transaction_attestation_format: TRANSACTION_ATTESTATION_FORMAT.to_string(),
                 transaction_attestation_data: authentication_data.to_string(),
             },
             level_of_assurance: LevelOfAssurance::Hoch.to_string(),
@@ -337,7 +337,7 @@ impl UseidService {
                 se_endorsed: "".to_string(),
             },
             result: ResultMajor {
-                result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok".to_string(),
+                result_major: ResultCode::Ok.to_string(),
             },
         })
     }

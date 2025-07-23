@@ -3,6 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::eid::common::models::ResultCode;
+
 /// ServerInfo model according to TR-03130 specification
 /// This structure represents the information returned by the getServerInfo endpoint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -322,7 +324,7 @@ pub struct DIDAuthenticateResponse {
 impl DIDAuthenticateResponse {
     pub fn success(data: ResponseProtocolData) -> Self {
         Self {
-            result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok".to_string(),
+            result_major: ResultCode::Ok.to_string(),
             result_minor: None,
             authentication_protocol_data: data,
             timestamp: SystemTime::now()
