@@ -1,5 +1,5 @@
 use base64::Engine;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use color_eyre::Result;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -51,9 +51,6 @@ pub struct SessionInfo {
     pub expiry: DateTime<Utc>,
     pub psk: String,
     pub operations: Vec<String>,
-    pub request_counter: u8,
-    pub authentication_completed: bool,
-    pub authentication_data: Option<String>,
     pub connection_handles: Vec<ConnectionHandle>,
 }
 
@@ -66,12 +63,9 @@ impl SessionInfo {
     pub fn new(id: String, psk: String, operations: Vec<String>, timeout_minutes: i64) -> Self {
         SessionInfo {
             id,
-            expiry: Utc::now() + Duration::minutes(timeout_minutes),
+            expiry: Utc::now() + chrono::Duration::minutes(timeout_minutes),
             psk,
             operations,
-            request_counter: 0,
-            authentication_completed: false,
-            authentication_data: None,
             connection_handles: Vec::new(),
         }
     }
@@ -285,45 +279,42 @@ impl EIDService for UseidService {
 
         Ok(response)
     }
+}
+
+#[async_trait]
+impl SessionManager for UseidService {
+    async fn generate_session_id(&self) -> color_eyre::Result<String> {
+        self.session_manager.generate_session_id().await
+    }
+
+    async fn store_session(&self, session: SessionInfo) -> color_eyre::Result<()> {
+        self.session_manager.store_session(session).await
+    }
+
+    async fn get_session(&self, session_id: &str) -> color_eyre::Result<Option<SessionInfo>> {
+        self.session_manager.get_session(session_id).await
+    }
+
+    async fn remove_expired_sessions(&self) -> color_eyre::Result<()> {
+        self.session_manager.remove_expired_sessions().await
+    }
+
+    async fn session_count(&self) -> color_eyre::Result<usize> {
+        self.session_manager.session_count().await
+    }
+
+    async fn is_session_valid(&self, session_id: &str) -> color_eyre::Result<bool> {
+        self.session_manager.is_session_valid(session_id).await
+    }
 
     async fn update_session_connection_handles(
         &self,
         session_id: &str,
         connection_handles: Vec<String>,
-    ) -> Result<()> {
-        let session = self
-            .session_manager
-            .get_session(session_id)
+    ) -> color_eyre::Result<()> {
+        self.session_manager
+            .update_session_connection_handles(session_id, connection_handles)
             .await
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to get session: {}", e))?;
-
-        if let Some(mut session) = session {
-            session.connection_handles = connection_handles
-                .into_iter()
-                .map(|handle| ConnectionHandle {
-                    connection_handle: handle,
-                })
-                .collect();
-
-            self.session_manager
-                .store_session(session)
-                .await
-                .map_err(|e| color_eyre::eyre::eyre!("Failed to update session: {}", e))?;
-
-            Ok(())
-        } else {
-            Err(color_eyre::eyre::eyre!("Session not found"))
-        }
-    }
-
-    async fn is_session_valid(&self, session_id: &str) -> Result<bool> {
-        let session = self
-            .session_manager
-            .get_session(session_id)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to get session: {}", e))?;
-
-        Ok(session.is_some_and(|s| s.expiry > Utc::now()))
     }
 }
 

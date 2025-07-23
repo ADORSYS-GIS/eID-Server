@@ -1,14 +1,17 @@
 use dashmap::DashMap;
 use eid_server::{
     config::Config,
-    domain::eid::ports::{DIDAuthenticate, EIDService, EidService},
+    domain::eid::{
+        ports::{DIDAuthenticate, EIDService, EidService},
+        session_manager::SessionManager,
+    },
     server::Server,
     telemetry,
     tls::{TestCertificates, TlsConfig, generate_test_certificates},
 };
 
 pub async fn spawn_server(
-    eid_service: impl EIDService + EidService + DIDAuthenticate,
+    eid_service: impl EIDService + EidService + DIDAuthenticate + SessionManager,
     tls_config: TlsConfig,
 ) -> String {
     telemetry::init_tracing();

@@ -8,15 +8,18 @@ use crate::{
     domain::eid::{
         models::{AuthenticationProtocolData, ConnectionHandle, DIDAuthenticateRequest},
         ports::{DIDAuthenticate, EIDService, EidService},
+        session_manager::SessionManager,
     },
     eid::paos::parser::parse_start_paos,
     server::{AppState, handlers::did_auth::DIDAuthenticateHandler},
 };
 
-pub async fn paos_handler<S: EIDService + EidService + DIDAuthenticate>(
-    State(state): State<AppState<S>>,
-    body: String,
-) -> impl IntoResponse {
+pub const EAC_REQUIRED_CHAT: &str = "7f4c12060904007f00070301020253053c0ff3ffff";
+
+pub async fn paos_handler<S>(State(state): State<AppState<S>>, body: String) -> impl IntoResponse
+where
+    S: EIDService + EidService + DIDAuthenticate + SessionManager + Send + Sync + 'static,
+{
     // Parse the SOAP request
     let paos_request = match parse_start_paos(&body) {
         Ok(request) => request,
@@ -92,7 +95,7 @@ pub async fn paos_handler<S: EIDService + EidService + DIDAuthenticate>(
         did_name: "EAC".to_string(),
         authentication_protocol_data: AuthenticationProtocolData {
             certificate_description: "".to_string(),
-            required_chat: "7f4c12060904007f00070301020253053c0ff3ffff".to_string(),
+            required_chat: EAC_REQUIRED_CHAT.to_string(),
             optional_chat: None,
             transaction_info: None,
         },
@@ -157,7 +160,7 @@ mod tests {
     use super::*;
 
     async fn create_test_state(id: String) -> AppState<UseidService> {
-        let session_manager = InMemorySessionManager::new();
+        let session_manager = Arc::new(InMemorySessionManager::new()) as Arc<dyn SessionManager>;
 
         // Use a valid 32-byte hex-encoded PSK (64 characters)
         let valid_psk =
@@ -168,9 +171,6 @@ mod tests {
             expiry: Utc::now() + Duration::minutes(5),
             psk: valid_psk,
             operations: vec![],
-            request_counter: 0,
-            authentication_completed: false,
-            authentication_data: None,
             connection_handles: vec![],
         };
 
@@ -187,7 +187,7 @@ mod tests {
                 ecard_server_address: Some("https://test.eid.example.com/ecard".to_string()),
                 redis_url: None,
             },
-            session_manager: Arc::new(session_manager),
+            session_manager,
         };
 
         AppState {

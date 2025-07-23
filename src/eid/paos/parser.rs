@@ -31,18 +31,18 @@ mod tests {
         assert_eq!(
             parsed.user_agent,
             Some(UserAgent {
-                name: "Client eID Exemple".to_string(),
-                version_major: 2,
-                version_minor: 0,
-                version_subminor: 0,
+                name: Some("Client eID Exemple".to_string()),
+                version_major: Some(2),
+                version_minor: Some(0),
+                version_subminor: Some(0),
             })
         );
         assert_eq!(
             parsed.supported_api_versions,
             Some(SupportedAPIVersions {
                 major: 1,
-                minor: 1,
-                subminor: 0,
+                minor: Some(1),
+                subminor: Some(0),
             })
         );
         assert_eq!(

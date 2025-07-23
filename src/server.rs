@@ -7,6 +7,7 @@ use std::net::TcpListener;
 use std::sync::Arc;
 
 use crate::config::Config;
+use crate::domain::eid::session_manager::SessionManager;
 use crate::eid::get_server_info::handler::get_server_info;
 use crate::server::handlers::paos::paos_handler;
 use axum::{Router, routing::get};
@@ -39,7 +40,7 @@ pub struct Server {
 impl Server {
     /// Creates a new HTTPS server.
     pub async fn new(
-        eid_service: impl EIDService + EidService + DIDAuthenticate,
+        eid_service: impl EIDService + EidService + DIDAuthenticate + SessionManager,
         config: &Config,
         tls_config: TlsConfig,
     ) -> Result<Self> {
