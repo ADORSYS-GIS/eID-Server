@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use color_eyre::eyre::eyre;
 use redis::AsyncCommands;
 use std::sync::Arc;
 use tokio::{runtime::Handle, sync::RwLock};
@@ -30,18 +31,18 @@ pub struct InMemorySessionManager {
 
 impl PskStore for Arc<dyn SessionManager> {
     fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
-        let id = String::from_utf8(identity.to_vec())
-            .map_err(|e| PskStoreError::msg(format!("Invalid UTF-8 identity: {e}")))?;
+        let id = String::from_utf8_lossy(identity).into_owned();
 
         let task = self.get_session(&id);
         let session = tokio::task::block_in_place(move || Handle::current().block_on(task))
             .map_err(|e| PskStoreError::msg(format!("Session lookup failed: {e}")))?;
 
-        // Convert the hex PSK to raw bytes
-        session
-            .and_then(|s| hex::decode(s.psk).ok())
-            .map(Ok)
-            .transpose()
+        match session {
+            Some(s) => hex::decode(&s.psk)
+                .map(Some)
+                .map_err(|e| PskStoreError::msg(format!("Invalid PSK hex format: {e}"))),
+            None => Ok(None),
+        }
     }
 }
 
@@ -91,8 +92,8 @@ impl SessionManager for InMemorySessionManager {
 
     async fn store_session(&self, session: SessionInfo) -> color_eyre::Result<()> {
         // Validate PSK format before storing
-        if session.psk.len() != 64 || hex::decode(&session.psk).is_err() {
-            return Err(color_eyre::eyre::eyre!("Invalid PSK format in session"));
+        if hex::decode(&session.psk).is_err() {
+            return Err(eyre!("Invalid PSK hex format in session"));
         }
 
         let mut sessions = self.sessions.write().await;
@@ -192,8 +193,8 @@ impl SessionManager for RedisSessionManager {
 
     async fn store_session(&self, session: SessionInfo) -> color_eyre::Result<()> {
         // Validate PSK format before storing
-        if session.psk.len() != 64 || hex::decode(&session.psk).is_err() {
-            return Err(color_eyre::eyre::eyre!("Invalid PSK format in session"));
+        if hex::decode(&session.psk).is_err() {
+            return Err(eyre!("Invalid PSK hex format in session"));
         }
 
         let mut conn = self.get_redis_connection().await?;

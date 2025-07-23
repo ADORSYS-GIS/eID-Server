@@ -6,6 +6,7 @@ use std::sync::Arc;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use color_eyre::Result;
+use color_eyre::eyre::eyre;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
@@ -206,10 +207,9 @@ impl EIDService for UseidService {
             None => self.generate_psk(),
         };
 
-        // Ensure PSK is valid hex and correct length (64 chars for 32 bytes)
-        if psk.len() != 64 || hex::decode(&psk).is_err() {
-            error!("Invalid PSK format: {}", psk);
-            return Err(color_eyre::eyre::eyre!("Invalid PSK format"));
+        if psk.is_empty() {
+            error!("Generated empty PSK");
+            return Err(eyre!("Failed to generate PSK"));
         }
 
         debug!("Generated PSK: {}", psk);
@@ -289,7 +289,6 @@ impl EIDService for UseidService {
 
         Ok(response)
     }
-
 }
 
 // Implement the EidService trait for UseidService
