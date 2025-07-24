@@ -52,6 +52,9 @@ sha2 = "0.10"
 digest = "0.10"
 pem = "3.0"
 openssl = { version = "0.10", features = ["vendored"] }
+# XML canonicalization and processing
+xml-rs = "0.8"
+xmltree = "0.10"
 
 [dev-dependencies]
 http-body-util = "0.1"

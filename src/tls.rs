@@ -1,4 +1,4 @@
-mod cert_utils;
+pub mod cert_utils;
 mod errors;
 mod psk;
 

@@ -321,6 +321,7 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                 );
 
                 // Sign SOAP response (RecipientToken) as per requirements
+                // BSI requirement: eID-Server MUST apply XML digital signature - no fallback to unsigned responses
                 let signed_response = match create_xml_signature_signer() {
                     Ok(signer) => {
                         match signer.sign_soap_response(&soap_response) {
@@ -330,13 +331,17 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                             }
                             Err(e) => {
                                 error!("Failed to sign SOAP response: {}", e);
-                                soap_response // Fall back to unsigned response
+                                // BSI compliance: Return internalError instead of unsigned response
+                                return (StatusCode::BAD_REQUEST, create_internal_error_response())
+                                    .into_response();
                             }
                         }
                     }
                     Err(e) => {
                         error!("Failed to create XML signature signer: {}", e);
-                        soap_response // Fall back to unsigned response
+                        // BSI compliance: Return internalError instead of unsigned response
+                        return (StatusCode::BAD_REQUEST, create_internal_error_response())
+                            .into_response();
                     }
                 };
 
@@ -673,11 +678,19 @@ fn create_soap_response_headers() -> HeaderMap {
 
 /// Creates an XML signature validator with trusted certificates
 fn create_xml_signature_validator() -> Result<XmlSignatureValidator, String> {
-    let validator = XmlSignatureValidator::new()?;
+    let mut validator = XmlSignatureValidator::new()?;
 
     // Add trusted certificates from configuration
-    // For now, we'll use a placeholder - in production this should load from config
-    // validator.add_trusted_cert_from_file("Config/trusted_certs/eservice.pem")?;
+    let cert_path = "Config/cert.pem";
+
+    // Load certificate data and add it to validator (following TLS pattern)
+    if std::path::Path::new(cert_path).exists() {
+        validator.add_trusted_cert_from_file(cert_path)?;
+    } else {
+        // For development/testing, we can continue without trusted certificates
+        // In production, this should be a hard error
+        warn!("Trusted certificate file not found: {}", cert_path);
+    }
 
     Ok(validator)
 }
@@ -709,7 +722,8 @@ fn create_xml_signature_signer() -> Result<XmlSignatureSigner, String> {
     let key_path = "Config/key.pem";
     let cert_path = "Config/cert.pem";
 
-    XmlSignatureSigner::new(key_path, cert_path)
+    // Use the new PEM data approach (following TLS pattern)
+    XmlSignatureSigner::new_from_files(key_path, cert_path)
 }
 
 /// Builds a SOAP response from a UseIDResponse struct using serde
