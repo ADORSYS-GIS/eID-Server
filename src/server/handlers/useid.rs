@@ -683,7 +683,6 @@ fn create_xml_signature_validator() -> Result<XmlSignatureValidator, String> {
     // Add trusted certificates from configuration
     let cert_path = "Config/cert.pem";
 
-    // Load certificate data and add it to validator (following TLS pattern)
     if std::path::Path::new(cert_path).exists() {
         validator.add_trusted_cert_from_file(cert_path)?;
     } else {
@@ -699,7 +698,6 @@ fn create_xml_signature_validator() -> Result<XmlSignatureValidator, String> {
 /// Returns a proper SOAP fault with the error code .../common#internalError
 fn create_internal_error_response() -> String {
     // As per BSI requirements, respond with error code .../common#internalError
-    // This should be a proper SOAP fault response
     let soap_fault = r#"<?xml version="1.0" encoding="UTF-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
     <soap:Body>
@@ -718,11 +716,9 @@ fn create_internal_error_response() -> String {
 
 /// Creates an XML signature signer with eID-Server certificate
 fn create_xml_signature_signer() -> Result<XmlSignatureSigner, String> {
-    // Use the same certificate paths as configured for TLS
     let key_path = "Config/key.pem";
     let cert_path = "Config/cert.pem";
 
-    // Use the new PEM data approach (following TLS pattern)
     XmlSignatureSigner::new_from_files(key_path, cert_path)
 }
 
