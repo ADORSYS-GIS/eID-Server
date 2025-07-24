@@ -894,7 +894,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -1510,7 +1510,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2",
+ "socket2 0.5.10",
  "thiserror 2.0.12",
  "tokio",
  "tracing",
@@ -1547,7 +1547,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.59.0",
 ]
@@ -1598,9 +1598,9 @@ dependencies = [
 
 [[package]]
 name = "redis"
-version = "0.31.0"
+version = "0.32.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bc1ea653e0b2e097db3ebb5b7f678be339620b8041f66b30a308c1d45d36a7f"
+checksum = "e1f66bf4cac9733a23bcdf1e0e01effbaaad208567beba68be8f67e5f4af3ee1"
 dependencies = [
  "arc-swap",
  "backon",
@@ -1617,7 +1617,7 @@ dependencies = [
  "rustls-native-certs",
  "ryu",
  "sha1_smol",
- "socket2",
+ "socket2 0.6.0",
  "tokio",
  "tokio-rustls",
  "tokio-util",
@@ -1997,6 +1997,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "socket2"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "233504af464074f9d066d7b5416c5f9b894a5862a6506e306f7b816cdd6f1807"
+dependencies = [
+ "libc",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2191,7 +2201,7 @@ dependencies = [
  "pin-project-lite",
  "signal-hook-registry",
  "slab",
- "socket2",
+ "socket2 0.5.10",
  "tokio-macros",
  "windows-sys 0.52.0",
 ]
