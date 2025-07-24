@@ -22,6 +22,7 @@ async fn main() -> color_eyre::Result<()> {
         ecard_server_address: Some("https://localhost:3000".to_string()),
         redis_url: config.redis_url.clone(),
     });
+    let session_mgr = eid_service.session_manager.clone();
 
     // build the tls configuration
     // TODO : Use real data to build the config
