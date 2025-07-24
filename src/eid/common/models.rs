@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
 use std::str::FromStr;
 
+// Constants for eID URLs
+pub const TRANSACTION_ATTESTATION_FORMAT: &str = "http://bsi.bund.de/eID/ExampleAttestationFormat";
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub enum EIDTypeSelection {
     ALLOWED,
