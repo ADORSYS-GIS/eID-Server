@@ -1,11 +1,13 @@
+use async_trait::async_trait;
 use color_eyre::Report;
 use dashmap::DashMap;
 use std::{collections::HashMap, error::Error as StdError, fmt, sync::Arc};
 
 /// Abstract interface for a PSK store.
+#[async_trait]
 pub trait PskStore: Send + Sync {
     /// Returns the PSK for the given identity.
-    fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError>;
+    async fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError>;
 }
 
 /// Error type for PSK store operations.
@@ -45,29 +47,33 @@ impl fmt::Debug for PskStoreError {
     }
 }
 
+#[async_trait]
 impl PskStore for DashMap<String, Vec<u8>> {
-    fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
+    async fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
         let identity = std::str::from_utf8(identity).map_err(PskStoreError::new)?;
         Ok(self.get(identity).map(|entry| entry.value().clone()))
     }
 }
 
+#[async_trait]
 impl PskStore for Arc<DashMap<String, Vec<u8>>> {
-    fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
+    async fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
         let identity = std::str::from_utf8(identity).map_err(PskStoreError::new)?;
         Ok(self.get(identity).map(|entry| entry.value().clone()))
     }
 }
 
+#[async_trait]
 impl PskStore for HashMap<String, Vec<u8>> {
-    fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
+    async fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
         let identity = std::str::from_utf8(identity).map_err(PskStoreError::new)?;
         Ok(self.get(identity).cloned())
     }
 }
 
+#[async_trait]
 impl PskStore for Arc<HashMap<String, Vec<u8>>> {
-    fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
+    async fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
         let identity = std::str::from_utf8(identity).map_err(PskStoreError::new)?;
         Ok(self.get(identity).cloned())
     }
@@ -77,19 +83,19 @@ impl PskStore for Arc<HashMap<String, Vec<u8>>> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_psk_store() {
+    #[tokio::test]
+    async fn test_psk_store() {
         let psk_store = DashMap::new();
         psk_store.insert("test".to_string(), vec![0x01, 0x02, 0x03, 0x04]);
         assert_eq!(
-            psk_store.get_psk(b"test").unwrap(),
+            psk_store.get_psk(b"test").await.unwrap(),
             Some(vec![0x01, 0x02, 0x03, 0x04])
         );
 
         let mut psk_store = HashMap::new();
         psk_store.insert("test".to_string(), vec![0x01, 0x02, 0x03, 0x04]);
         assert_eq!(
-            psk_store.get_psk(b"test").unwrap(),
+            psk_store.get_psk(b"test").await.unwrap(),
             Some(vec![0x01, 0x02, 0x03, 0x04])
         );
     }

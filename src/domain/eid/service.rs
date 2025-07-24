@@ -1,11 +1,14 @@
-use base64::Engine;
-use chrono::{DateTime, Duration, Utc};
-use color_eyre::Result;
-use rand::RngCore;
-use serde::{Deserialize, Serialize};
-use std::default::Default;
+//! Service layer that provides the business logic of the domain.
+
 use std::fs;
 use std::sync::Arc;
+
+use base64::Engine;
+use chrono::{DateTime, Utc};
+use color_eyre::Result;
+use color_eyre::eyre::eyre;
+use rand::RngCore;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
 use super::certificate::{CardCommunicator, CertificateStore, CryptoProvider};
@@ -51,15 +54,28 @@ pub struct SessionInfo {
     pub expiry: DateTime<Utc>,
     pub psk: String,
     pub operations: Vec<String>,
+    pub request_counter: u8,
+    pub authentication_completed: bool,
+    pub authentication_data: Option<String>,
+    pub connection_handles: Vec<ConnectionHandle>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConnectionHandle {
+    pub connection_handle: String,
 }
 
 impl SessionInfo {
     pub fn new(id: String, psk: String, operations: Vec<String>, timeout_minutes: i64) -> Self {
         SessionInfo {
             id,
-            expiry: Utc::now() + Duration::minutes(timeout_minutes),
+            expiry: Utc::now() + chrono::Duration::minutes(timeout_minutes),
             psk,
             operations,
+            request_counter: 0,
+            authentication_completed: false,
+            authentication_data: None,
+            connection_handles: Vec::new(),
         }
     }
 }
@@ -92,7 +108,7 @@ impl UseidService {
     pub fn generate_psk(&self) -> String {
         let mut bytes = [0u8; 32];
         rand::rng().fill_bytes(&mut bytes);
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
+        hex::encode(bytes)
     }
 
     /// Helper function to extract required operations from OperationsRequester
@@ -190,10 +206,12 @@ impl EIDService for UseidService {
             }
             None => self.generate_psk(),
         };
+
         if psk.is_empty() {
             error!("Generated empty PSK");
-            return Err(color_eyre::eyre::eyre!("Failed to generate PSK"));
+            return Err(eyre!("Failed to generate PSK"));
         }
+
         debug!("Generated PSK: {}", psk);
 
         // Store session with PSK
@@ -401,6 +419,21 @@ impl DIDAuthenticateService {
                 &request.authentication_protocol_data,
             )
             .await?;
+
+        // Store the authentication data in the session
+        if let Some(mut session_info) = session_manager
+            .get_session(session_id)
+            .await
+            .map_err(|e| AuthError::internal_error(format!("Failed to get session: {e}")))?
+        {
+            session_info.authentication_completed = true;
+            session_info.authentication_data = Some(personal_data.clone());
+            session_manager
+                .store_session(session_info)
+                .await
+                .map_err(|e| AuthError::internal_error(format!("Failed to update session: {e}")))?;
+            info!("Stored authentication data for session: {}", session_id);
+        }
 
         // Generate authentication token
         let auth_token = self

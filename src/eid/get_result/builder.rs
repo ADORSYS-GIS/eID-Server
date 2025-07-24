@@ -1,23 +1,20 @@
-use quick_xml::se::to_string;
-
-use super::{
-    error::GetResultError,
-    model::{GetResultResponse, GetResultResponseBody, GetResultResponseEnvelope, SoapHeader},
+use crate::eid::{
+    common::models::Header,
+    get_result::{
+        error::GetResultError,
+        model::{GetResultResponse, GetResultResponseBody},
+    },
+    soap::serializer::serialize_soap,
 };
 
 /// Serializes a `GetResultResponse` into a fully namespaced SOAP XML envelope.
-///
-/// Uses `serde` and `quick-xml` to serialize the provided response data into XML,
-/// injects the required `xmlns:` namespace attributes onto the `<soapenv:Envelope>` element,
-/// and prepends the standard XML declaration, producing a valid SOAP message compliant
-/// with the eID service schema (`soapenv`, `eid`, `dss`).
 ///
 /// # Arguments
 /// * `response` - A `GetResultResponse` value containing all payload fields.
 ///
 /// # Returns
 /// * `Ok(String)` containing the UTF-8 encoded SOAP XML document.
-/// * `Err(GetResultError::GenericError)` if serialization via Serde fails.
+/// * `Err(GetResultError::GenericError)` if serialization fails.
 ///
 /// # Example
 /// ```rust
@@ -26,26 +23,16 @@ use super::{
 /// println!("{}", xml_string);
 /// ```
 pub fn build_get_result_response(response: GetResultResponse) -> Result<String, GetResultError> {
-    let envelope = GetResultResponseEnvelope {
-        header: SoapHeader,
-        body: GetResultResponseBody {
-            get_result_response: response,
-        },
+    let body = GetResultResponseBody {
+        get_result_response: response,
     };
-    let xml = to_string(&envelope).map_err(|e| GetResultError::GenericError(e.to_string()))?;
-
-    let xml_with_ns = xml.replacen(
-                    "<soapenv:Envelope",
-                        "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:eid=\"http://bsi.bund.de/eID/\" xmlns:dss=\"urn:oasis:names:tc:dss:1.0:core:schema\"",
-                    1,
-                );
-
-    Ok(r#"<?xml version="1.0" encoding="UTF-8"?>"#.to_string() + &xml_with_ns)
+    serialize_soap(body, Some(Header::default()), true)
+        .map_err(|e| GetResultError::GenericError(e.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
-
+    use super::*;
     use crate::eid::{
         common::models::{
             AttributeResponder, EIDTypeResponse, GeneralDateType, GeneralPlaceType,
@@ -54,8 +41,6 @@ mod tests {
         },
         get_result::model::FulfilsRequest,
     };
-
-    use super::*;
 
     #[test]
     fn test_build_get_result_response_complete() {
@@ -83,7 +68,7 @@ mod tests {
                     structured_place: Some(PlaceType {
                         street: "HEIDESTRASSE 17".to_string(),
                         city: "KÖLN".to_string(),
-                        state: "".to_string(), 
+                        state: "".to_string(),
                         country: "D".to_string(),
                         zipcode: "51147".to_string(),
                     }),
@@ -133,9 +118,9 @@ mod tests {
             level_of_assurance: LevelOfAssurance::Hoch.to_string(),
             eid_type_response: EIDTypeResponse {
                 card_certified: "USED".to_string(),
-                hw_keystore: "".to_string(),   
-                se_certified: "".to_string(),  
-                se_endorsed: "".to_string(),    
+                hw_keystore: "".to_string(),
+                se_certified: "".to_string(),
+                se_endorsed: "".to_string(),
             },
             result: ResultMajor {
                 result_major: "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok".to_string(),

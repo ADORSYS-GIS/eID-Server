@@ -12,7 +12,7 @@ pub trait EIDService: Clone + Send + Sync + 'static {
 }
 
 #[async_trait]
-pub trait DIDAuthenticate: Send + Sync {
+pub trait DIDAuthenticate {
     async fn handle_did_authenticate(
         &self,
         request: DIDAuthenticateRequest,
