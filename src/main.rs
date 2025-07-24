@@ -27,7 +27,13 @@ async fn main() -> color_eyre::Result<()> {
     // build the tls configuration
     // TODO : Use real data to build the config
     let tls_session_store = tls::InMemorySessionStore::new();
-    let tls_config = TlsConfig::new([], []).with_session_store(tls_session_store);
+    let cert = include_bytes!("../Config/cert.pem");
+    let key = include_bytes!("../Config/key.pem");
+
+    // Build the TLS configuration
+    let tls_config = TlsConfig::new(cert, key)
+        .with_psk(session_mgr)
+        .with_session_store(tls_session_store);
 
     let server = Server::new(eid_service, &config, tls_config).await?;
     server.run().await

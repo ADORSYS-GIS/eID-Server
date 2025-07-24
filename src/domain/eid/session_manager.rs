@@ -29,8 +29,9 @@ pub struct InMemorySessionManager {
     sessions: Arc<RwLock<Vec<SessionInfo>>>,
 }
 
+#[async_trait]
 impl PskStore for Arc<dyn SessionManager> {
-    fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
+    async fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
         let id = String::from_utf8_lossy(identity).into_owned();
 
         let task = self.get_session(&id);
