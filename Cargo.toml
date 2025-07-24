@@ -40,6 +40,7 @@ rand = "0.9.1"
 urlencoding = "2.1"
 flate2 = "1.0"
 dashmap = "6.1"
+time = { version = "0.3", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.6", features = ["v4", "serde"] }
 
