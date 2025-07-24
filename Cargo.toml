@@ -24,7 +24,6 @@ quick-xml = { version = "0.37.5", features = ["serialize"] }
 
 # Configuration
 config = "0.15"
-redis = { version = "0.32", features = ["tokio-comp"] }
 
 # Logging and metrics
 tracing = "0.1"
@@ -38,6 +37,7 @@ rand = "0.9.1"
 urlencoding = "2.1"
 flate2 = "1.0"
 dashmap = "6.1"
+time = { version = "0.3", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.6", features = ["v4", "serde"] }
 
@@ -47,6 +47,10 @@ x509-parser = "0.15"
 lru = "0.12"
 hex = "0.4"
 openssl = { version = "0.10", features = ["vendored"] }
+
+[dependencies.redis]
+version = "0.31"
+features = ["tokio-rustls-comp", "connection-manager"]
 
 [dev-dependencies]
 http-body-util = "0.1"
