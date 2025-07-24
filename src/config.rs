@@ -1,19 +1,78 @@
 use std::collections::HashMap;
 
+use color_eyre::eyre::Result;
 use config::{Config as ConfigLib, ConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
+use std::env;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
 pub struct Config {
     pub server: ServerConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub redis_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    pub transmit: TransmitConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TransmitConfig {
+    pub max_apdu_size: usize,
+    pub session_timeout_secs: u64,
+    pub max_requests_per_minute: u32,
+    pub max_retries: u32,
+    pub allowed_cipher_suites: Vec<String>,
+    pub require_client_certificate: bool,
+    pub min_tls_version: String,
+    pub client_url: String,
+}
+
+impl Default for TransmitConfig {
+    fn default() -> Self {
+        // Read client URL from environment variable with fallback to default
+        let client_url = env::var("EID_CLIENT_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:24727/eID-Client".to_string());
+
+        Self {
+            max_apdu_size: 4096,
+            session_timeout_secs: 300,
+            max_requests_per_minute: 60,
+            max_retries: 3,
+            allowed_cipher_suites: vec![
+                "TLS_AES_128_GCM_SHA256".to_string(),
+                "TLS_AES_256_GCM_SHA384".to_string(),
+            ],
+            require_client_certificate: true,
+            min_tls_version: "TLSv1.2".to_string(),
+            client_url,
+        }
+    }
+}
+
+impl TransmitConfig {
+    /// Validates the configuration settings
+    pub fn validate(&self) -> Result<(), String> {
+        if self.client_url.is_empty() {
+            return Err("Client URL cannot be empty".to_string());
+        }
+        if self.max_apdu_size == 0 {
+            return Err("Max APDU size must be greater than 0".to_string());
+        }
+        if self.session_timeout_secs == 0 {
+            return Err("Session timeout must be greater than 0".to_string());
+        }
+        if self.allowed_cipher_suites.is_empty() {
+            return Err("At least one cipher suite must be allowed".to_string());
+        }
+        Ok(())
+    }
 }
 
 impl Config {
@@ -26,7 +85,7 @@ impl Config {
     ) -> Result<Self, ConfigError> {
         let mut builder = ConfigLib::builder()
             .set_default("server.host", "localhost")?
-            .set_default("server.port", 8443)?
+            .set_default("server.port", 3000)?
             .add_source(File::with_name("config/settings").required(false));
 
         // If env_vars is provided, we use it instead of system environment
@@ -59,7 +118,7 @@ mod tests {
         let config = Config::load().expect("Failed to load config");
 
         assert_eq!(config.server.host, "localhost");
-        assert_eq!(config.server.port, 8443);
+        assert_eq!(config.server.port, 3000);
         assert_eq!(config.redis_url, None);
     }
 
@@ -90,7 +149,7 @@ mod tests {
 
         assert_eq!(config.server.host, "192.168.1.1");
         // The other values should use default
-        assert_eq!(config.server.port, 8443);
+        assert_eq!(config.server.port, 3000);
         assert_eq!(config.redis_url, None);
     }
 }

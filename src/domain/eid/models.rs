@@ -365,3 +365,16 @@ impl Default for ServerInfo {
         }
     }
 }
+
+// XML structures for eID-Client communication
+// These models represent the XML response structures used for APDU transmission
+// according to TR-03130 and ISO 24727-3 specifications
+// Note: Request structures are now consolidated in the protocol module
+
+/// XML response structure from the eID-Client
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct ClientResponse {
+    #[serde(rename = "OutputAPDU")]
+    pub output_apdu: String,
+}

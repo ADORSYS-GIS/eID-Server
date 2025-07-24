@@ -284,11 +284,22 @@ mod tests {
         ports::DIDAuthenticate,
         service::{EIDServiceConfig, UseidService},
     };
+    use crate::tls::{TestCertificates, TlsConfig, generate_test_certificates};
     use async_trait::async_trait;
     use axum::{extract::State, response::IntoResponse};
     use base64::Engine;
     use chrono::DateTime;
     use std::sync::Arc;
+    use std::time::Duration;
+
+    fn create_test_tls_config() -> Arc<TlsConfig> {
+        let TestCertificates {
+            server_cert,
+            server_key,
+            ..
+        } = generate_test_certificates();
+        Arc::new(TlsConfig::new(server_cert, server_key))
+    }
 
     // Create a more realistic test service that implements DIDAuthenticate
     struct TestDIDAuthenticateService {
@@ -564,6 +575,16 @@ mod tests {
         let state = AppState {
             eid_service: useid_service.clone(),
             use_id: useid_service.clone(),
+            transmit_channel: Arc::new(
+                crate::domain::eid::transmit::channel::TransmitChannel::new(
+                    crate::domain::eid::transmit::protocol::ProtocolHandler::new(),
+                    crate::server::session::SessionManager::new(Duration::from_secs(60)),
+                    Arc::new(crate::domain::eid::transmit::test_service::TestTransmitService), // or appropriate test service
+                    crate::config::TransmitConfig::default(),
+                    create_test_tls_config(),
+                )
+                .expect("TransmitChannel creation should succeed in tests"),
+            ),
         };
 
         let soap_request = create_minimal_valid_soap_request();

@@ -1,3 +1,4 @@
+use color_eyre::eyre::Context;
 use eid_server::{
     config::Config,
     domain::eid::service::{EIDServiceConfig, UseidService},
@@ -12,7 +13,7 @@ async fn main() -> color_eyre::Result<()> {
     telemetry::init_tracing();
 
     // Load configuration
-    let config = Config::load()?;
+    let config = Config::load().wrap_err("Failed to load configuration")?;
     tracing::info!("Loaded configuration: {:?}", config);
 
     // Create EIDService with configuration

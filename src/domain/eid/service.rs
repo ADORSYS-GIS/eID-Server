@@ -1,24 +1,33 @@
 use base64::Engine;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use color_eyre::Result;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::default::Default;
 use std::fs;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use super::certificate::{CardCommunicator, CertificateStore, CryptoProvider};
 use super::models::{
-    AuthError, DIDAuthenticateRequest, DIDAuthenticateResponse, ResponseProtocolData, ServerInfo,
+    AuthError, ClientResponse, DIDAuthenticateRequest, DIDAuthenticateResponse,
+    ResponseProtocolData, ServerInfo,
 };
-use super::ports::{DIDAuthenticate, EIDService, EidService};
+use super::ports::{
+    DIDAuthenticate, EIDService, EidService, TransmitError, TransmitResult, TransmitService,
+};
 use super::session_manager::{InMemorySessionManager, RedisSessionManager, SessionManager};
+use super::transmit::protocol::{APDU_SUCCESS_STATUS, ProtocolHandler};
+use crate::config::TransmitConfig;
 use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
 };
 use crate::eid::use_id::model::{Psk, UseIDRequest, UseIDResponse};
 use async_trait::async_trait;
+use hex;
+use quick_xml::de::from_str;
+use reqwest::Client;
 
 // Configuration for the eID Service
 #[derive(Clone, Debug)]
@@ -57,7 +66,7 @@ impl SessionInfo {
     pub fn new(id: String, psk: String, operations: Vec<String>, timeout_minutes: i64) -> Self {
         SessionInfo {
             id,
-            expiry: Utc::now() + Duration::minutes(timeout_minutes),
+            expiry: Utc::now() + ChronoDuration::minutes(timeout_minutes),
             psk,
             operations,
         }
@@ -447,5 +456,183 @@ impl DIDAuthenticate for UseidService {
         let did_service =
             DIDAuthenticateService::new_with_defaults(self.session_manager.clone()).await;
         Ok(did_service.authenticate(request).await)
+    }
+}
+
+/// HTTP-based transmit service implementation
+/// This service handles the business logic for APDU transmission including
+/// HTTP client management, retry logic, XML serialization, and error handling
+pub struct HttpTransmitService {
+    client: Client,
+    config: TransmitConfig,
+}
+
+impl HttpTransmitService {
+    /// Creates a new HTTP transmit service
+    pub fn new(config: TransmitConfig) -> TransmitResult<Self> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(config.session_timeout_secs))
+            .tls_built_in_root_certs(true)
+            .min_tls_version(reqwest::tls::Version::TLS_1_2)
+            .build()
+            .map_err(|e| {
+                TransmitError::InternalError(format!("Failed to create HTTP client: {e}"))
+            })?;
+
+        Ok(Self { client, config })
+    }
+
+    /// Serializes the APDU request to XML format
+    fn serialize_request(&self, apdu: &[u8], slot_handle: &str) -> TransmitResult<String> {
+        let apdu_hex = hex::encode_upper(apdu);
+        let protocol_handler = ProtocolHandler::new();
+
+        // Create a single APDU transmit request using the protocol handler
+        let transmit_request = ProtocolHandler::create_single_apdu_request(
+            slot_handle,
+            &apdu_hex,
+            Some(APDU_SUCCESS_STATUS),
+        );
+
+        // Serialize using the protocol handler
+        protocol_handler.serialize_transmit_request(&transmit_request)
+    }
+
+    /// Parses the XML response from the eID-Client
+    fn parse_response(&self, response_text: &str) -> TransmitResult<Vec<u8>> {
+        let client_response: ClientResponse = from_str(response_text).map_err(|e| {
+            TransmitError::TransmitError(format!("Failed to parse XML response: {e}"))
+        })?;
+
+        hex::decode(&client_response.output_apdu)
+            .map_err(|e| TransmitError::TransmitError(format!("Failed to decode APDU hex: {e}")))
+    }
+
+    /// Sends a single HTTP request to the eID-Client
+    async fn send_request(&self, xml_payload: &str) -> TransmitResult<String> {
+        let response = self
+            .client
+            .post(&self.config.client_url)
+            .header("Content-Type", "application/xml")
+            .body(xml_payload.to_string())
+            .send()
+            .await
+            .map_err(|e| TransmitError::TransmitError(format!("HTTP request failed: {e}")))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            return Err(TransmitError::TransmitError(format!(
+                "HTTP request failed with status: {status}"
+            )));
+        }
+
+        response
+            .text()
+            .await
+            .map_err(|e| TransmitError::TransmitError(format!("Failed to read response body: {e}")))
+    }
+}
+
+#[async_trait]
+impl TransmitService for HttpTransmitService {
+    async fn transmit_apdu(&self, apdu: Vec<u8>, slot_handle: &str) -> TransmitResult<Vec<u8>> {
+        // Serialize the request
+        let xml_payload = self.serialize_request(&apdu, slot_handle)?;
+
+        // Send request with retries
+        let mut retries = 0;
+        let mut last_error = None;
+
+        while retries < self.config.max_retries {
+            match self.send_request(&xml_payload).await {
+                Ok(response_text) => {
+                    // Parse and return the response
+                    return self.parse_response(&response_text);
+                }
+                Err(e) => {
+                    error!("APDU transmission attempt {} failed: {}", retries + 1, e);
+                    last_error = Some(e);
+                    retries += 1;
+                }
+            }
+        }
+
+        // All retries failed
+        Err(last_error
+            .unwrap_or_else(|| TransmitError::TransmitError("All retries failed".to_string())))
+    }
+}
+
+#[cfg(test)]
+mod transmit_tests {
+    use super::*;
+
+    #[test]
+    fn test_transmit_config_usage() {
+        let transmit_config = TransmitConfig {
+            client_url: "http://test.example.com".to_string(),
+            session_timeout_secs: 60,
+            max_apdu_size: 4096,
+            max_retries: 3,
+            allowed_cipher_suites: vec!["TLS_AES_128_GCM_SHA256".to_string()],
+            max_requests_per_minute: 60,
+            require_client_certificate: true,
+            min_tls_version: "TLSv1.2".to_string(),
+        };
+
+        // Test that we can create a service directly with TransmitConfig
+        let service = HttpTransmitService::new(transmit_config.clone())
+            .expect("Service creation should succeed");
+        assert_eq!(service.config.client_url, "http://test.example.com");
+        assert_eq!(service.config.session_timeout_secs, 60);
+        assert_eq!(service.config.max_retries, 3);
+    }
+
+    #[test]
+    fn test_serialize_request() {
+        let config = TransmitConfig {
+            client_url: "http://test.example.com".to_string(),
+            session_timeout_secs: 30,
+            max_apdu_size: 4096,
+            max_retries: 3,
+            allowed_cipher_suites: vec!["TLS_AES_128_GCM_SHA256".to_string()],
+            max_requests_per_minute: 60,
+            require_client_certificate: true,
+            min_tls_version: "TLSv1.2".to_string(),
+        };
+
+        let service = HttpTransmitService::new(config).expect("Service creation should succeed");
+        let apdu = vec![0x00, 0xA4, 0x04, 0x00];
+        let slot_handle = "test-slot";
+
+        let xml = service
+            .serialize_request(&apdu, slot_handle)
+            .expect("Serialization should succeed");
+
+        assert!(xml.contains("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+        assert!(xml.contains("<SlotHandle>test-slot</SlotHandle>"));
+        assert!(xml.contains("<InputAPDU>00A40400</InputAPDU>"));
+    }
+
+    #[test]
+    fn test_parse_response() {
+        let config = TransmitConfig {
+            client_url: "http://test.example.com".to_string(),
+            session_timeout_secs: 30,
+            max_apdu_size: 4096,
+            max_retries: 3,
+            allowed_cipher_suites: vec!["TLS_AES_128_GCM_SHA256".to_string()],
+            max_requests_per_minute: 60,
+            require_client_certificate: true,
+            min_tls_version: "TLSv1.2".to_string(),
+        };
+
+        let service = HttpTransmitService::new(config).expect("Service creation should succeed");
+        let response_xml = r#"<TransmitResponse><OutputAPDU>9000</OutputAPDU></TransmitResponse>"#;
+
+        let result = service
+            .parse_response(response_xml)
+            .expect("Parsing should succeed");
+        assert_eq!(result, vec![0x90, 0x00]);
     }
 }
