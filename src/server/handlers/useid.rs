@@ -16,6 +16,7 @@ use std::io::Read;
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    adapters::xml_signature::{ValidationResult, XmlSignatureSigner, XmlSignatureValidator},
     domain::eid::ports::{EIDService, EidService},
     eid::{
         common::models::{AttributeRequester, LevelOfAssurance, OperationsRequester},
@@ -28,6 +29,15 @@ use crate::{
     },
     server::AppState,
 };
+
+// Centralized XML signature configuration
+fn get_xml_signature_cert_path() -> String {
+    std::env::var("XML_SIGNATURE_CERT_PATH").unwrap_or_else(|_| "Config/cert.pem".to_string())
+}
+
+fn get_xml_signature_key_path() -> String {
+    std::env::var("XML_SIGNATURE_KEY_PATH").unwrap_or_else(|_| "Config/key.pem".to_string())
+}
 
 // TCTokenType structs for serialization
 #[derive(Debug, Serialize)]
@@ -249,6 +259,7 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                 .into_response();
         }
 
+        // First, try to parse the SOAP request to ensure it's valid XML
         let use_id_request = match parse_use_id_request(&body) {
             Ok(request) => {
                 info!("SOAP request parsed: {:?}", request);
@@ -263,6 +274,37 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                     .into_response();
             }
         };
+
+        // Validate XML signature (InitiatorToken) as per requirements
+        let validator = match create_xml_signature_validator() {
+            Ok(validator) => validator,
+            Err(e) => {
+                error!("Failed to create XML signature validator: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error".to_string(),
+                )
+                    .into_response();
+            }
+        };
+
+        match validator.validate_soap_signature(&body) {
+            ValidationResult::Valid => {
+                info!("XML signature validation successful");
+            }
+            ValidationResult::Invalid(reason) => {
+                error!("XML signature validation failed: {}", reason);
+                return (StatusCode::BAD_REQUEST, create_internal_error_response()).into_response();
+            }
+            ValidationResult::MissingSignature => {
+                error!("Missing XML signature in SOAP request");
+                return (StatusCode::BAD_REQUEST, create_internal_error_response()).into_response();
+            }
+            ValidationResult::CertificateError(reason) => {
+                error!("Certificate validation failed: {}", reason);
+                return (StatusCode::BAD_REQUEST, create_internal_error_response()).into_response();
+            }
+        }
 
         let response = match state.use_id.handle_use_id(use_id_request).await {
             Ok(response) => {
@@ -286,10 +328,36 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                     "Response serialized successfully, length: {} bytes",
                     soap_response.len()
                 );
+
+                // Sign SOAP response (RecipientToken) as per requirements
+                // BSI requirement: eID-Server MUST apply XML digital signature - no fallback to unsigned responses
+                let signed_response = match create_xml_signature_signer() {
+                    Ok(signer) => {
+                        match signer.sign_soap_response(&soap_response) {
+                            Ok(signed) => {
+                                info!("SOAP response signed successfully");
+                                signed
+                            }
+                            Err(e) => {
+                                error!("Failed to sign SOAP response: {}", e);
+                                // BSI compliance: Return internalError instead of unsigned response
+                                return (StatusCode::BAD_REQUEST, create_internal_error_response())
+                                    .into_response();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to create XML signature signer: {}", e);
+                        // BSI compliance: Return internalError instead of unsigned response
+                        return (StatusCode::BAD_REQUEST, create_internal_error_response())
+                            .into_response();
+                    }
+                };
+
                 (
                     StatusCode::OK,
                     create_soap_response_headers(),
-                    soap_response,
+                    signed_response,
                 )
                     .into_response()
             }
@@ -615,6 +683,52 @@ fn create_soap_response_headers() -> HeaderMap {
         "application/soap+xml; charset=utf-8".parse().unwrap(),
     );
     headers
+}
+
+/// Creates an XML signature validator with trusted certificates
+fn create_xml_signature_validator() -> Result<XmlSignatureValidator, String> {
+    let mut validator = XmlSignatureValidator::new()?;
+
+    // Add trusted certificates from configuration
+    let cert_path = get_xml_signature_cert_path();
+
+    if std::path::Path::new(&cert_path).exists() {
+        validator.add_trusted_cert_from_file(&cert_path)?;
+    } else {
+        // For development/testing, we can continue without trusted certificates
+        // In production, this should be a hard error
+        warn!("Trusted certificate file not found: {}", cert_path);
+    }
+
+    Ok(validator)
+}
+
+/// Creates an internal error response as per requirements
+/// Returns a proper SOAP fault with the error code .../common#internalError
+fn create_internal_error_response() -> String {
+    // As per BSI requirements, respond with error code .../common#internalError
+    let soap_fault = r#"<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+    <soap:Body>
+        <soap:Fault>
+            <faultcode>soap:Server</faultcode>
+            <faultstring>Internal Error</faultstring>
+            <detail>
+                <ErrorCode>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error/common#internalError</ErrorCode>
+            </detail>
+        </soap:Fault>
+    </soap:Body>
+</soap:Envelope>"#;
+
+    soap_fault.to_string()
+}
+
+/// Creates an XML signature signer with eID-Server certificate
+fn create_xml_signature_signer() -> Result<XmlSignatureSigner, String> {
+    let key_path = get_xml_signature_key_path();
+    let cert_path = get_xml_signature_cert_path();
+
+    XmlSignatureSigner::new_from_files(&key_path, &cert_path)
 }
 
 /// Builds a SOAP response from a UseIDResponse struct using serde

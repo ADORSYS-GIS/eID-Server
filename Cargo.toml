@@ -48,7 +48,12 @@ ring = "0.17"
 x509-parser = "0.15"
 lru = "0.12"
 hex = "0.4"
+# XML signature dependencies
+sha2 = "0.10"
+pem = "3.0"
 openssl = { version = "0.10", features = ["vendored"] }
+# XML canonicalization and processing
+xmltree = "0.10"
 
 [dependencies.redis]
 version = "0.32"
