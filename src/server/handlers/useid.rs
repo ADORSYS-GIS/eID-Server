@@ -30,6 +30,15 @@ use crate::{
     server::AppState,
 };
 
+// Centralized XML signature configuration
+fn get_xml_signature_cert_path() -> String {
+    std::env::var("XML_SIGNATURE_CERT_PATH").unwrap_or_else(|_| "Config/cert.pem".to_string())
+}
+
+fn get_xml_signature_key_path() -> String {
+    std::env::var("XML_SIGNATURE_KEY_PATH").unwrap_or_else(|_| "Config/key.pem".to_string())
+}
+
 // TCTokenType structs for serialization
 #[derive(Debug, Serialize)]
 #[serde(rename = "TCTokenType")]
@@ -681,10 +690,10 @@ fn create_xml_signature_validator() -> Result<XmlSignatureValidator, String> {
     let mut validator = XmlSignatureValidator::new()?;
 
     // Add trusted certificates from configuration
-    let cert_path = "Config/cert.pem";
+    let cert_path = get_xml_signature_cert_path();
 
-    if std::path::Path::new(cert_path).exists() {
-        validator.add_trusted_cert_from_file(cert_path)?;
+    if std::path::Path::new(&cert_path).exists() {
+        validator.add_trusted_cert_from_file(&cert_path)?;
     } else {
         // For development/testing, we can continue without trusted certificates
         // In production, this should be a hard error
@@ -716,10 +725,10 @@ fn create_internal_error_response() -> String {
 
 /// Creates an XML signature signer with eID-Server certificate
 fn create_xml_signature_signer() -> Result<XmlSignatureSigner, String> {
-    let key_path = "Config/key.pem";
-    let cert_path = "Config/cert.pem";
+    let key_path = get_xml_signature_key_path();
+    let cert_path = get_xml_signature_cert_path();
 
-    XmlSignatureSigner::new_from_files(key_path, cert_path)
+    XmlSignatureSigner::new_from_files(&key_path, &cert_path)
 }
 
 /// Builds a SOAP response from a UseIDResponse struct using serde
