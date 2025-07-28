@@ -1,4 +1,5 @@
 use crate::tls::psk::PskStoreError;
+use crate::tls::session::SessionStoreError;
 use openssl::error::ErrorStack;
 use thiserror::Error;
 
@@ -10,4 +11,7 @@ pub enum TlsError {
 
     #[error(transparent)]
     OpenSSL(#[from] ErrorStack),
+
+    #[error(transparent)]
+    SessionStore(#[from] SessionStoreError),
 }

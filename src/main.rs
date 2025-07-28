@@ -3,7 +3,7 @@ use eid_server::{
     domain::eid::service::{EIDServiceConfig, UseidService},
     server::Server,
     telemetry,
-    tls::TlsConfig,
+    tls::{self, TlsConfig},
 };
 
 #[tokio::main]
@@ -22,10 +22,18 @@ async fn main() -> color_eyre::Result<()> {
         ecard_server_address: Some("https://localhost:3000".to_string()),
         redis_url: config.redis_url.clone(),
     });
+    let session_mgr = eid_service.session_manager.clone();
 
     // build the tls configuration
-    // TODO : Use real certificates to build the config
-    let tls_config = TlsConfig::new([], []);
+    // TODO : Use real data to build the config
+    let tls_session_store = tls::InMemorySessionStore::new();
+    let cert = include_bytes!("../Config/cert.pem");
+    let key = include_bytes!("../Config/key.pem");
+
+    // Build the TLS configuration
+    let tls_config = TlsConfig::new(cert, key)
+        .with_psk(session_mgr)
+        .with_session_store(tls_session_store);
 
     let server = Server::new(eid_service, &config, tls_config).await?;
     server.run().await

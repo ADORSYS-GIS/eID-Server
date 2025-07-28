@@ -1,11 +1,14 @@
+//! Service layer that provides the business logic of the domain.
+
+use std::fs;
+use std::sync::Arc;
+
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use color_eyre::Result;
+use color_eyre::eyre::eyre;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use std::default::Default;
-use std::fs;
-use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 use super::certificate::{CardCommunicator, CertificateStore, CryptoProvider};
@@ -99,7 +102,7 @@ impl UseidService {
     pub fn generate_psk(&self) -> String {
         let mut bytes = [0u8; 32];
         rand::rng().fill_bytes(&mut bytes);
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
+        hex::encode(bytes)
     }
 
     /// Helper function to extract required operations from OperationsRequester
@@ -197,9 +200,10 @@ impl EIDService for UseidService {
             }
             None => self.generate_psk(),
         };
+
         if psk.is_empty() {
             error!("Generated empty PSK");
-            return Err(color_eyre::eyre::eyre!("Failed to generate PSK"));
+            return Err(eyre!("Failed to generate PSK"));
         }
 
         debug!("Generated PSK: {}", psk);
