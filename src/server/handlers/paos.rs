@@ -2,45 +2,56 @@ use std::sync::Arc;
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use base64::Engine;
 use tracing::{debug, error, warn};
-use std::string::String;
 use crate::{
     domain::eid::{
-        models::{AuthenticationProtocolData, ConnectionHandle, DIDAuthenticateRequest, EAC1InputType, EAC2InputType, EACPhase},
         ports::{DIDAuthenticate, EIDService, EidService},
-        service::{DIDAuthenticateService},
-        session_manager::SessionManager,
+        service::DIDAuthenticateService, session_manager::SessionManager,
     },
     eid::paos::parser::parse_start_paos,
-    server::{handlers::did_auth::DIDAuthenticateHandler, AppState},
+    server::AppState,
 };
 
-pub const EAC_REQUIRED_CHAT: &str = "7f4c12060904007f00070301020253053c0ff3ffff";
+pub const EAC_REQUIRED_CHAT: &str = "7f4c12060904007f00070301020253050000000004";
+pub const EAC_OPTIONAL_CHAT: &str = "7f4c12060904007f0007030102025305000503ff00";
 
 pub async fn paos_handler<S>(State(state): State<AppState<S>>, body: String) -> impl IntoResponse
 where
     S: EIDService + EidService + DIDAuthenticate + SessionManager + Send + Sync + 'static,
 {
+    // Log the raw SOAP request for debugging
+    debug!("Received StartPAOS request: {}", body);
+
     // Parse the SOAP request
     let paos_request = match parse_start_paos(&body) {
         Ok(request) => request,
         Err(err) => {
-            error!("Failed to parse PAOS request: {}", err);
+            error!("Failed to parse PAOS request: {}. Raw request: {}", err, body);
             return (
                 StatusCode::BAD_REQUEST,
-                "Failed to parse PAOS request".to_string(),
+                format!("Failed to parse PAOS request: {}", err),
             ).into_response();
         }
     };
 
     // Verify session identifier exists
     if paos_request.session_identifier.is_empty() {
-        error!("Session identifier is required");
+        error!("Session identifier is empty in StartPAOS request");
         return (
             StatusCode::BAD_REQUEST,
             "Session identifier is required".to_string(),
         ).into_response();
     }
     let session_id = paos_request.session_identifier;
+
+    // Verify message ID exists
+    let message_id = match paos_request.message_id {
+        Some(id) if !id.is_empty() => id,
+        _ => {
+            warn!("Message ID missing or empty in StartPAOS request. Using fallback UUID. Raw request: {}", body);
+            format!("urn:uuid:{}", uuid::Uuid::new_v4())
+        }
+    };
+    debug!("Parsed session_id: {}, message_id: {}", session_id, message_id);
 
     // Verify session validity
     let session_info = match state.use_id.get_session(&session_id).await {
@@ -61,6 +72,9 @@ where
         }
     };
 
+    // Clone card_application to avoid move
+    let card_application = paos_request.connection_handle.card_application.clone();
+
     // Update session with connection handles
     if let Err(err) = state
         .use_id
@@ -79,134 +93,104 @@ where
 
     debug!("Successfully updated session: {}", session_id);
 
-    // Create DIDAuthenticate request based on session phase
-    let did_authenticate_request = match session_info.eac_phase {
-        EACPhase::EAC1 => {
-            // Load certificate chain
-            // Since we need certificate_store, we need a temporary DIDAuthenticateService
-            let temp_service = DIDAuthenticateService::new_with_defaults(state.use_id.clone()).await;
-            let certificate_der = match temp_service.certificate_store.load_cv_chain().await {
-                Ok(der) => der,
-                Err(err) => {
-                    error!("Failed to load certificate chain: {}", err);
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "Failed to load certificate chain".to_string(),
-                    ).into_response();
-                }
-            };
-            let certificate_b64 = base64::engine::general_purpose::STANDARD.encode(&certificate_der);
+    // Create temporary DIDAuthenticateService for certificate operations
+    let temp_service = DIDAuthenticateService::new_with_defaults(state.use_id.clone()).await;
 
-            DIDAuthenticateRequest {
-                connection_handle: ConnectionHandle {
-                    channel_handle: Some(session_id.clone()),
-                    ifd_name: Some("IFD".to_string()),
-                    slot_index: Some(0),
-                },
-                did_name: "EAC".to_string(),
-                authentication_protocol_data: AuthenticationProtocolData {
-                    phase: EACPhase::EAC1,
-                    eac1_input: Some(EAC1InputType {
-                        certificate: certificate_b64,
-                        certificate_description: "".to_string(),
-                        required_chat: EAC_REQUIRED_CHAT.to_string(),
-                        optional_chat: None,
-                        transaction_info: None,
-                    }),
-                    eac2_input: None,
-                },
-            }
+    // Load certificate chain
+    let certificate_der = match temp_service.certificate_store.load_cv_chain().await {
+        Ok(der) => {
+            debug!("Loaded certificate chain (raw DER, {} bytes): {:02x?}", der.len(), der);
+            der
         }
-        EACPhase::EAC2 => {
-            let challenge = match session_info.eac1_challenge {
-                Some(ch) => ch,
-                None => {
-                    error!("No challenge stored for EAC2 phase");
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "No challenge stored for EAC2 phase".to_string(),
-                    ).into_response();
-                }
-            };
-
-            // Generate ephemeral key pair and sign challenge
-            // Use a temporary DIDAuthenticateService for crypto operations
-            let temp_service = DIDAuthenticateService::new_with_defaults(state.use_id.clone()).await;
-            let (_private_key, public_key) = match temp_service.crypto_provider.generate_keypair().await {
-                Ok(kp) => kp,
-                Err(err) => {
-                    error!("Failed to generate keypair: {}", err);
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "Failed to generate keypair".to_string(),
-                    ).into_response();
-                }
-            };
-            let public_key_b64 = base64::engine::general_purpose::STANDARD.encode(&public_key);
-            let signature = match temp_service.crypto_provider.hash_data(challenge.as_bytes(), "SHA256").await {
-                Ok(sig) => sig,
-                Err(err) => {
-                    error!("Failed to sign challenge: {}", err);
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "Failed to sign challenge".to_string(),
-                    ).into_response();
-                }
-            };
-            let signature_b64 = base64::engine::general_purpose::STANDARD.encode(&signature);
-
-            DIDAuthenticateRequest {
-                connection_handle: ConnectionHandle {
-                    channel_handle: Some(session_id.clone()),
-                    ifd_name: Some("IFD".to_string()),
-                    slot_index: Some(0),
-                },
-                did_name: "EAC".to_string(),
-                authentication_protocol_data: AuthenticationProtocolData {
-                    phase: EACPhase::EAC2,
-                    eac1_input: None,
-                    eac2_input: Some(EAC2InputType {
-                        ephemeral_public_key: public_key_b64,
-                        signature: signature_b64,
-                    }),
-                },
-            }
-        }
-    };
-
-    // Call DIDAuthenticate handler
-    let did_response = match state
-        .eid_service
-        .handle_did_authenticate(did_authenticate_request)
-        .await
-    {
-        Ok(response) => response,
         Err(err) => {
-            error!("DIDAuthenticate failed: {}", err);
+            error!("Failed to load certificate chain: {}", err);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to process DIDAuthenticate".to_string(),
+                "Failed to load certificate chain".to_string(),
             ).into_response();
         }
     };
 
-    // Convert to SOAP response
-    let handler = DIDAuthenticateHandler::new(Arc::clone(&state.eid_service));
-    let soap_response = match handler.to_soap_response(did_response) {
-        Ok(response) => response,
+    // Split certificate chain into individual certificates
+    let certs = match temp_service.certificate_store.split_concatenated_der(&certificate_der) {
+        Ok(certs) => {
+            debug!("Split certificate chain into {} certificates", certs.len());
+            for (i, cert) in certs.iter().enumerate() {
+                debug!("Certificate {} ({} bytes): {:02x?}", i + 1, cert.len(), cert);
+            }
+            certs
+        }
         Err(err) => {
-            error!("Failed to serialize DIDAuthenticate response: {}", err);
+            error!("Failed to split certificate chain: {}", err);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to generate response".to_string(),
+                "Failed to split certificate chain".to_string(),
             ).into_response();
         }
     };
+
+    let certificates_b64: Vec<String> = certs
+        .into_iter()
+        .map(|cert| {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&cert);
+            debug!("Base64-encoded certificate: {}", b64);
+            b64
+        })
+        .collect();
+
+    // Create certificate description (simplified, adjust as needed)
+    let certificate_description = r#"308202e9060a04007f00070301030101a1160c14476f7665726e696b757320546573742044564341a21a1318687474703a2f2f7777772e676f7665726e696b75732e6465a31a0c18476f7665726e696b757320476d6248202620436f2e204b47a418131668747470733a2f2f6c6f63616c686f73743a38343433a58201e10c8201dd4e616d652c20416e7363687269667420756e6420452d4d61696c2d4164726573736520646573204469656e737465616e626965746572733a0d0a476f7665726e696b757320476d6248202620436f2e204b470d0a486f6368736368756c72696e6720340d0a3238333539204272656d656e0d0a6b6f6e74616b7440676f7665726e696b75732e64650d0a0d0a48696e7765697320617566206469652066c3bc722064656e204469656e737465616e626965746572207a757374c3a46e646967656e205374656c6c656e2c20646965206469652045696e68616c74756e672064657220566f7273636872696674656e207a756d20446174656e73636875747a206b6f6e74726f6c6c696572656e3a0d0a446965204c616e64657362656175667472616774652066c3bc7220446174656e73636875747a20756e6420496e666f726d6174696f6e736672656968656974206465722046726569656e2048616e73657374616474204272656d656e0d0a41726e647473747261c39f6520310d0a3237353730204272656d6572686176656e0d0a303432312f3539362d323031300d0a6f666669636540646174656e73636875747a2e6272656d656e2e64650d0a687474703a2f2f7777772e646174656e73636875747a2e6272656d656e2e6465a7818b31818804202a97cf32df5962486b3fb2fc21c70774908add9d699c9a9b491ce302c8ae849e04202d29c23103995d203fba7dc5271da2872ca0bf110d99455f53614b6d7236b83204202f2fcaa87ec0fc2487ceee9718ec272def0f310041c16b2ad8718bc51c3c7d1204206dec4dd3f51fdcac550188e3a91526ba8b693cac0e38562a03993cc877b54a21"#;
+
+    // Construct PAOS response with DIDAuthenticate SOAP message for PACE
+    let certificates_xml: String = certificates_b64
+        .into_iter()
+        .map(|cert| format!("<iso:Certificate>{}</iso:Certificate>", cert))
+        .collect::<Vec<String>>()
+        .join("");
+
+    let paos_response = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">
+    <SOAP-ENV:Header>
+        <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
+        <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
+    </SOAP-ENV:Header>
+    <SOAP-ENV:Body>
+        <iso:DIDAuthenticate xmlns:iso="urn:iso:std:iso-iec:24727:tech:schema">
+            <iso:ConnectionHandle>
+                <iso:CardApplication>{}</iso:CardApplication>
+                <iso:SlotHandle>00</iso:SlotHandle>
+            </iso:ConnectionHandle>
+            <iso:DIDName>PIN</iso:DIDName>
+            <iso:AuthenticationProtocolData xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Protocol="urn:oid:1.3.162.15480.3.0.14.2" xsi:type="iso:EAC1InputType">
+                {}
+                <iso:CertificateDescription>{}</iso:CertificateDescription>
+                <iso:RequiredCHAT>{}</iso:RequiredCHAT>
+                <iso:OptionalCHAT>{}</iso:OptionalCHAT>
+                <iso:AuthenticatedAuxiliaryData>67177315060904007f00070301040253083230323530373238</iso:AuthenticatedAuxiliaryData>
+                <iso:AcceptedEIDType>CardCertified</iso:AcceptedEIDType>
+            </iso:AuthenticationProtocolData>
+        </iso:DIDAuthenticate>
+    </SOAP-ENV:Body>
+</SOAP-ENV:Envelope>"#,
+        message_id,
+        uuid::Uuid::new_v4(),
+        card_application,
+        certificates_xml,
+        certificate_description,
+        EAC_REQUIRED_CHAT,
+        EAC_OPTIONAL_CHAT
+    );
+
+    debug!("Generated PAOS response: {}", paos_response);
 
     (
         StatusCode::OK,
-        [("Content-Type", "application/xml")],
-        soap_response,
+        [
+            ("Content-Type", "application/xml"),
+            ("PAOS-Version", "urn:liberty:paos:2006-08"),
+        ],
+        paos_response,
     ).into_response()
 }
 

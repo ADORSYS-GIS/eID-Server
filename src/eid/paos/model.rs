@@ -23,6 +23,7 @@ pub struct StartPAOS {
     pub supported_api_versions: Option<SupportedAPIVersions>,
     #[serde(rename = "SupportedDIDProtocols", alias = "iso:SupportedDIDProtocols")]
     pub supported_did_protocols: Option<SupportedDIDProtocols>,
+    pub message_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]

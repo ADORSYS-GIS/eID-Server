@@ -6,6 +6,7 @@ use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use color_eyre::Result;
 use quick_xml::{Reader, events::Event, se::to_string};
 use serde::{Deserialize, Serialize};
+use tracing::error;
 
 use crate::{
     domain::eid::{
@@ -399,7 +400,10 @@ pub async fn did_authenticate<
     let response = handler
         .handle(&body)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| {
+            error!("DIDAuthenticate handler error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     let status_code = StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
     Ok((status_code, response.body))

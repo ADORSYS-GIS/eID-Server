@@ -13,7 +13,8 @@ use tracing::{debug, error, info, warn};
 use x509_parser::{pem, prelude::X509Certificate};
 
 use crate::domain::eid::models::{
-    AuthError, AuthenticationProtocolData, ConnectionHandle, EAC1OutputType, EAC2OutputType, EACPhase
+    AuthError, AuthenticationProtocolData, ConnectionHandle, EAC1OutputType, EAC2OutputType,
+    EACPhase,
 };
 
 // Define ParsedCvc struct at module level
@@ -116,25 +117,31 @@ impl CertificateStore {
                 )));
             }
 
-            // Log certificate details
+            // Validate CV certificate structure
+            if cert_data.len() < 2 || cert_data[0] != 0x7F || cert_data[1] != 0x21 {
+                return Err(AuthError::invalid_certificate(format!(
+                    "Certificate at {path} is not a CV certificate (expected 0x7F21, got {:02x}{:02x})",
+                    cert_data[0],
+                    cert_data.get(1).unwrap_or(&0)
+                )));
+            }
+
+            // Parse to extract CertificateHolderReference (for debugging)
+            let parsed_cvc = Self::parse_cvc(&cert_data).map_err(|e| {
+                AuthError::invalid_certificate(format!(
+                    "Failed to parse certificate at {path}: {e}"
+                ))
+            })?;
+            let holder_ref = Self::extract_holder_reference(&cert_data).unwrap_or_default();
             debug!(
-                "Loaded certificate from {} ({} bytes, first 20 bytes: {:?})",
+                "Loaded certificate from {} ({} bytes, holder_ref: {}, first 20 bytes: {:02x?})",
                 path,
                 cert_data.len(),
+                holder_ref,
                 &cert_data[..cert_data.len().min(20)]
             );
 
-            // If PEM format, convert to DER
-            if cert_data.starts_with(b"-----BEGIN") {
-                let pem = Self::pem_parse(cert_data).map_err(|e| {
-                    AuthError::invalid_certificate(format!(
-                        "Failed to parse PEM certificate at {path}: {e}"
-                    ))
-                })?;
-                chain.extend_from_slice(&pem.contents);
-            } else {
-                chain.extend_from_slice(&cert_data);
-            }
+            chain.extend_from_slice(&cert_data);
         }
 
         if chain.is_empty() {
@@ -145,6 +152,24 @@ impl CertificateStore {
 
         debug!("Loaded certificate chain ({} bytes)", chain.len());
         Ok(chain)
+    }
+
+    // Add helper method to extract CertificateHolderReference
+    fn extract_holder_reference(data: &[u8]) -> Option<String> {
+        let mut pos = 0;
+        while pos + 2 < data.len() {
+            if data[pos] == 0x5F && data[pos + 1] == 0x20 {
+                // appl [ 32 ]
+                let (len, len_bytes) = Self::parse_der_length(&data[pos + 2..]).ok()?;
+                if pos + 2 + len_bytes + len <= data.len() {
+                    let holder_ref = &data[pos + 2 + len_bytes..pos + 2 + len_bytes + len];
+                    return Some(String::from_utf8_lossy(holder_ref).to_string());
+                }
+                break;
+            }
+            pos += 1;
+        }
+        None
     }
 
     pub async fn validate_certificate_chain(
@@ -185,7 +210,6 @@ impl CertificateStore {
 
         Ok(true)
     }
-
 
     fn parse_cvc(data: &[u8]) -> Result<ParsedCvc, String> {
         debug!("Parsing CVC certificate (len: {} bytes)", data.len());
@@ -449,19 +473,25 @@ impl CertificateStore {
         }
     }
 
-    fn split_concatenated_der(&self, data: &[u8]) -> Result<Vec<Vec<u8>>, AuthError> {
+    pub fn split_concatenated_der(&self, data: &[u8]) -> Result<Vec<Vec<u8>>, AuthError> {
         let mut certs = Vec::new();
         let mut pos = 0;
 
         debug!("Input certificate chain length: {} bytes", data.len());
-        debug!("First 20 bytes of input: {:?}", &data[..data.len().min(20)]);
+        debug!(
+            "First 20 bytes of input: {:02x?}",
+            &data[..data.len().min(20)]
+        );
 
         while pos < data.len() {
             if data.len() > pos + 1 && data[pos] == 0x7F && data[pos + 1] == 0x21 {
-                let (body_len, header_len) =
-                    Self::parse_der_length(&data[pos + 2..]).map_err(|e| {
-                        AuthError::invalid_certificate(format!("DER length parsing failed: {}", e))
-                    })?;
+                let parse_result = Self::parse_der_length(&data[pos + 2..]).map_err(|e| {
+                    AuthError::invalid_certificate(format!(
+                        "Failed to parse DER length at position {}: {}",
+                        pos, e
+                    ))
+                })?;
+                let (body_len, header_len) = parse_result;
                 let total_len = 2 + header_len + body_len;
 
                 if data.len() < pos + total_len {
@@ -473,17 +503,13 @@ impl CertificateStore {
                     )));
                 }
 
-                let cert_type = match certs.len() {
-                    0 => "eService CV",
-                    1 => "DV",
-                    2 => "CVCA",
-                    _ => "Unknown",
-                };
+                let cert = &data[pos..pos + total_len];
+                let holder_ref = Self::extract_holder_reference(cert).unwrap_or_default();
                 debug!(
-                    "Found {} certificate at position {}, length: {} bytes",
-                    cert_type, pos, total_len
+                    "Found certificate at position {}, length: {} bytes, holder_ref: {}",
+                    pos, total_len, holder_ref
                 );
-                certs.push(data[pos..pos + total_len].to_vec());
+                certs.push(cert.to_vec());
                 pos += total_len;
             } else {
                 return Err(AuthError::invalid_certificate(format!(
@@ -504,7 +530,6 @@ impl CertificateStore {
         debug!("Extracted {} certificates from chain", certs.len());
         Ok(certs)
     }
-
     async fn is_trusted_root(&self, cert: &[u8]) -> Result<bool, AuthError> {
         let roots = self.trusted_roots.read().await;
         Ok(roots.iter().any(|root| root == cert))
@@ -888,73 +913,53 @@ impl Default for CryptoProvider {
     }
 }
 
-// CardCommunicator implementation with serde-based SOAP request building
+// Define structs for XML serialization
 #[derive(Debug, Serialize)]
-#[serde(rename = "Envelope", rename_all = "camelCase")]
-struct SoapEnvelope {
-    #[serde(rename = "xmlns:soapenv")]
-    soapenv: &'static str,
+#[serde(rename = "ecard:DIDAuthenticate")]
+#[serde(rename_all = "PascalCase")]
+pub struct DidAuthenticate {
     #[serde(rename = "xmlns:ecard")]
-    ecard: &'static str,
-    header: SoapHeader,
-    body: SoapBody,
-}
-
-#[derive(Debug, Serialize)]
-struct SoapHeader {}
-
-#[derive(Debug, Serialize)]
-#[serde(rename = "Body")]
-struct SoapBody {
-    #[serde(rename = "DIDAuthenticate")]
-    did_authenticate: DidAuthenticate,
-}
-
-#[derive(Debug, Serialize)]
-struct DidAuthenticate {
-    #[serde(rename = "ConnectionHandle")]
-    connection_handle: ConnectionHandleData,
-    #[serde(rename = "DIDName")]
+    xmlns_ecard: &'static str,
+    #[serde(rename = "xmlns:iso")]
+    xmlns_iso: &'static str,
+    connection_handle: ConnectionHandleXml,
     did_name: String,
-    #[serde(rename = "AuthenticationProtocolData")]
     authentication_protocol_data: AuthenticationProtocolDataXml,
 }
 
 #[derive(Debug, Serialize)]
-struct ConnectionHandleData {
-    #[serde(rename = "ChannelHandle", skip_serializing_if = "Option::is_none")]
+#[serde(rename = "iso:ConnectionHandle")]
+#[serde(rename_all = "PascalCase")]
+pub struct ConnectionHandleXml {
     channel_handle: Option<String>,
-    #[serde(rename = "IFDName", skip_serializing_if = "Option::is_none")]
     ifd_name: Option<String>,
-    #[serde(rename = "SlotIndex", skip_serializing_if = "Option::is_none")]
-    slot_index: Option<String>,
+    slot_index: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename = "AuthenticationProtocolData")]
-struct AuthenticationProtocolDataXml {
-    #[serde(rename = "Protocol")]
+#[serde(rename = "iso:AuthenticationProtocolData")]
+#[serde(rename_all = "PascalCase")]
+pub enum AuthenticationProtocolDataXml {
+    EAC1(EAC1InputXml),
+    EAC2(EAC2InputXml),
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct EAC1InputXml {
     protocol: &'static str,
-    #[serde(rename = "Certificate", skip_serializing_if = "String::is_empty")]
-    certificate: String, // eService CV certificate
-    #[serde(
-        rename = "CertificateDescription",
-        skip_serializing_if = "String::is_empty"
-    )]
+    certificate: String,
     certificate_description: String,
-    #[serde(rename = "RequiredCHAT", skip_serializing_if = "String::is_empty")]
     required_chat: String,
-    #[serde(rename = "OptionalCHAT", skip_serializing_if = "Option::is_none")]
     optional_chat: Option<String>,
-    #[serde(
-        rename = "AuthenticatedAuxiliaryData",
-        skip_serializing_if = "Option::is_none"
-    )]
-    authenticated_auxiliary_data: Option<String>,
-    #[serde(rename = "EphemeralPublicKey", skip_serializing_if = "Option::is_none")]
-    ephemeral_public_key: Option<String>, // Added for EAC2
-    #[serde(rename = "Signature", skip_serializing_if = "Option::is_none")]
-    signature: Option<String>, // Added for EAC2
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct EAC2InputXml {
+    protocol: &'static str,
+    ephemeral_public_key: String,
+    signature: String,
 }
 
 #[derive(Debug, Clone)]
@@ -978,10 +983,11 @@ impl CardCommunicator {
         connection: &ConnectionHandle,
         did_name: &str,
         auth_data: &AuthenticationProtocolData,
+        send_request: bool,
     ) -> Result<String, AuthError> {
         debug!(
-            "Sending DIDAuthenticate to AusweisApp2 at {} with phase: {:?}",
-            self.ausweisapp2_endpoint, auth_data.phase
+            "Preparing DIDAuthenticate for AusweisApp2 at {} with phase: {:?}, send_request: {}",
+            self.ausweisapp2_endpoint, auth_data.phase, send_request
         );
         if !connection.is_valid() {
             return Err(AuthError::invalid_connection("Invalid connection handle"));
@@ -993,6 +999,12 @@ impl CardCommunicator {
 
         debug!("SOAP request: {}", soap_request);
 
+        if !send_request {
+            // Return the SOAP request for PAOS channel
+            return Ok(soap_request);
+        }
+
+        // Send HTTP POST (for non-PAOS or testing scenarios)
         let response = self
             .client
             .post(&self.ausweisapp2_endpoint)
@@ -1042,108 +1054,72 @@ impl CardCommunicator {
         }
     }
 
-    async fn build_soap_request(
+    pub async fn build_soap_request(
         &self,
         connection: &ConnectionHandle,
         did_name: &str,
         auth_data: &AuthenticationProtocolData,
     ) -> Result<String, AuthError> {
-        debug!("Building SOAP request for phase: {:?}", auth_data.phase);
+        let protocol = match auth_data.phase {
+            EACPhase::EAC1 => "urn:iso:std:iso-iec:24727:tech:schema:EAC1InputType",
+            EACPhase::EAC2 => "urn:iso:std:iso-iec:24727:tech:schema:EAC2InputType",
+        };
 
-        if did_name.is_empty() {
-            return Err(AuthError::protocol_error("DID name cannot be empty"));
-        }
-
-        let envelope = match auth_data.phase {
+        let auth_protocol_data = match auth_data.phase {
             EACPhase::EAC1 => {
                 let eac1_input = auth_data
                     .eac1_input
                     .as_ref()
                     .ok_or_else(|| AuthError::protocol_error("Missing EAC1 input data"))?;
-                if eac1_input.certificate.is_empty() {
-                    return Err(AuthError::protocol_error(
-                        "EAC1 certificate cannot be empty",
-                    ));
-                }
-                if eac1_input.required_chat.is_empty() {
-                    return Err(AuthError::protocol_error(
-                        "EAC1 required CHAT cannot be empty",
-                    ));
-                }
-                SoapEnvelope {
-                    soapenv: "http://schemas.xmlsoap.org/soap/envelope/",
-                    ecard: "http://www.bsi.bund.de/ecard/api/1.1",
-                    header: SoapHeader {},
-                    body: SoapBody {
-                        did_authenticate: DidAuthenticate {
-                            connection_handle: ConnectionHandleData {
-                                channel_handle: connection.channel_handle.clone(),
-                                ifd_name: connection.ifd_name.clone(),
-                                slot_index: connection.slot_index.map(|i| i.to_string()),
-                            },
-                            did_name: did_name.to_string(),
-                            authentication_protocol_data: AuthenticationProtocolDataXml {
-                                protocol: "urn:iso:std:iso-iec:24727:part:3:profile:EAC1InputType",
-                                certificate: eac1_input.certificate.clone(),
-                                certificate_description: eac1_input.certificate_description.clone(),
-                                required_chat: eac1_input.required_chat.clone(),
-                                optional_chat: eac1_input.optional_chat.clone(),
-                                authenticated_auxiliary_data: eac1_input.transaction_info.clone(),
-                                ephemeral_public_key: None,
-                                signature: None,
-                            },
-                        },
-                    },
-                }
+                format!(
+                    r#"<iso:AuthenticationProtocolData>
+                        <iso:Protocol>{}</iso:Protocol>
+                        <iso:Certificate>{}</iso:Certificate>
+                        <iso:CertificateDescription>{}</iso:CertificateDescription>
+                        <iso:RequiredCHAT>{}</iso:RequiredCHAT>
+                        <iso:OptionalCHAT>{}</iso:OptionalCHAT>
+                    </iso:AuthenticationProtocolData>"#,
+                    protocol,
+                    eac1_input.certificate,
+                    eac1_input.certificate_description,
+                    eac1_input.required_chat,
+                    eac1_input.optional_chat.as_deref().unwrap_or("")
+                )
             }
             EACPhase::EAC2 => {
                 let eac2_input = auth_data
                     .eac2_input
                     .as_ref()
                     .ok_or_else(|| AuthError::protocol_error("Missing EAC2 input data"))?;
-                if eac2_input.ephemeral_public_key.is_empty() {
-                    return Err(AuthError::protocol_error(
-                        "EAC2 ephemeral public key cannot be empty",
-                    ));
-                }
-                if eac2_input.signature.is_empty() {
-                    return Err(AuthError::protocol_error("EAC2 signature cannot be empty"));
-                }
-                SoapEnvelope {
-                    soapenv: "http://schemas.xmlsoap.org/soap/envelope/",
-                    ecard: "http://www.bsi.bund.de/ecard/api/1.1",
-                    header: SoapHeader {},
-                    body: SoapBody {
-                        did_authenticate: DidAuthenticate {
-                            connection_handle: ConnectionHandleData {
-                                channel_handle: connection.channel_handle.clone(),
-                                ifd_name: connection.ifd_name.clone(),
-                                slot_index: connection.slot_index.map(|i| i.to_string()),
-                            },
-                            did_name: did_name.to_string(),
-                            authentication_protocol_data: AuthenticationProtocolDataXml {
-                                protocol: "urn:iso:std:iso-iec:24727:part:3:profile:EAC2InputType",
-                                certificate: String::new(),
-                                certificate_description: String::new(),
-                                required_chat: String::new(),
-                                optional_chat: None,
-                                authenticated_auxiliary_data: None,
-                                ephemeral_public_key: Some(eac2_input.ephemeral_public_key.clone()),
-                                signature: Some(eac2_input.signature.clone()),
-                            },
-                        },
-                    },
-                }
+                format!(
+                    r#"<iso:AuthenticationProtocolData>
+                        <iso:Protocol>{}</iso:Protocol>
+                        <iso:EphemeralPublicKey>{}</iso:EphemeralPublicKey>
+                        <iso:Signature>{}</iso:Signature>
+                    </iso:AuthenticationProtocolData>"#,
+                    protocol, eac2_input.ephemeral_public_key, eac2_input.signature
+                )
             }
         };
 
-        let xml = to_string(&envelope).map_err(|e| {
-            error!("Failed to serialize SOAP request: {}", e);
-            AuthError::protocol_error(format!("Failed to serialize SOAP request: {e}"))
-        })?;
+        let soap = format!(
+            r#"<ecard:DIDAuthenticate xmlns:ecard="http://www.bsi.bund.de/ecard/api/1.1" xmlns:iso="urn:iso:std:iso-iec:24727:tech:schema">
+                <iso:ConnectionHandle>
+                    <iso:ChannelHandle>{}</iso:ChannelHandle>
+                    <iso:IFDName>{}</iso:IFDName>
+                    <iso:SlotIndex>{}</iso:SlotIndex>
+                </iso:ConnectionHandle>
+                <iso:DIDName>{}</iso:DIDName>
+                {}
+            </ecard:DIDAuthenticate>"#,
+            connection.channel_handle.as_deref().unwrap_or(""),
+            connection.ifd_name.as_deref().unwrap_or(""),
+            connection.slot_index.unwrap_or(0),
+            did_name,
+            auth_protocol_data
+        );
 
-        debug!("Successfully built SOAP request: {}", xml);
-        Ok(xml)
+        Ok(soap)
     }
 
     fn parse_eac1_response(&self, response: &str) -> Result<String, AuthError> {

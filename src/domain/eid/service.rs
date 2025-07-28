@@ -338,7 +338,7 @@ impl EidService for UseidService {
 pub struct DIDAuthenticateService {
     pub(crate) certificate_store: CertificateStore,
     pub(crate) crypto_provider: CryptoProvider,
-    card_communicator: CardCommunicator,
+    pub(crate) card_communicator: CardCommunicator,
     session_manager: Arc<dyn SessionManager>,
 }
 
@@ -371,7 +371,7 @@ impl DIDAuthenticateService {
 
         // Use the correct AusweisApp2 endpoint
         let ausweisapp2_endpoint = std::env::var("AUSWEISAPP2_ENDPOINT")
-            .unwrap_or_else(|_| "http://127.0.0.1:24727/".to_string()); 
+            .unwrap_or_else(|_| "http://127.0.0.1:24727/".to_string());
 
         Self {
             certificate_store: certificate_store.clone(),
@@ -463,7 +463,7 @@ impl DIDAuthenticateService {
                     ));
                 }
 
-                let _personal_data = self
+                let personal_data = self
                     .card_communicator
                     .send_did_authenticate(
                         &request.connection_handle,
@@ -480,23 +480,17 @@ impl DIDAuthenticateService {
                             }),
                             eac2_input: None,
                         },
+                        false, // Do not send HTTP POST, return SOAP for PAOS
                     )
                     .await?;
 
-                // Parse EAC1OutputType (simplified for example)
-                let eac1_output = EAC1OutputType {
-                    certificate_holder_authorization_template: "mock_chat".to_string(),
-                    certification_authority_reference: "mock_car".to_string(),
-                    ef_card_access: "mock_ef_card_access".to_string(),
-                    id_picc: "mock_id_picc".to_string(),
-                    challenge: self
-                        .crypto_provider
-                        .generate_challenge()
-                        .await?
-                        .iter()
-                        .map(|b| format!("{b:02x}"))
-                        .collect(),
-                };
+                // Parse EAC1OutputType from the SOAP response
+                let eac1_output: EAC1OutputType =
+                    serde_json::from_str(&personal_data).map_err(|e| {
+                        AuthError::card_communication_error(format!(
+                            "Failed to parse EAC1 output: {e}"
+                        ))
+                    })?;
 
                 // Update session to EAC2 phase and store challenge
                 session_info.eac_phase = EACPhase::EAC2;
@@ -534,7 +528,6 @@ impl DIDAuthenticateService {
                     .ok_or_else(|| AuthError::protocol_error("No challenge stored from EAC1"))?;
 
                 // Generate ephemeral key pair
-
                 let (_private_key, public_key) = self.crypto_provider.generate_keypair().await?;
                 let public_key_b64 = base64::engine::general_purpose::STANDARD.encode(&public_key);
 
@@ -558,21 +551,17 @@ impl DIDAuthenticateService {
                                 signature: signature_b64.clone(),
                             }),
                         },
+                        false, // Do not send HTTP POST, return SOAP for PAOS
                     )
                     .await?;
 
-                // Parse EAC2OutputType (simplified for example)
-                let eac2_output = EAC2OutputType::A {
-                    ef_card_security: "mock_ef_card_security".to_string(),
-                    authentication_token: self
-                        .crypto_provider
-                        .generate_challenge()
-                        .await?
-                        .iter()
-                        .map(|b| format!("{b:02x}"))
-                        .collect(),
-                    nonce: "mock_nonce".to_string(),
-                };
+                // Parse EAC2OutputType from the SOAP response
+                let eac2_output: EAC2OutputType =
+                    serde_json::from_str(&personal_data).map_err(|e| {
+                        AuthError::card_communication_error(format!(
+                            "Failed to parse EAC2 output: {e}"
+                        ))
+                    })?;
 
                 // Update session to complete authentication
                 session_info.eac_phase = EACPhase::EAC2;
