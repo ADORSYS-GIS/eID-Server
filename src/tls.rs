@@ -14,7 +14,7 @@ use openssl::ssl::{
 };
 use openssl::x509::X509;
 use std::sync::Arc;
-use tracing::{debug, instrument, trace, warn};
+use tracing::{debug, error, instrument, trace, warn};
 
 // RSA PSK Cipher suites
 // TLS_RSA_PSK_WITH_AES_256_CBC_SHA = {0x00,0x95}
@@ -130,7 +130,7 @@ impl TlsConfig {
                         debug!("Client offers PSK cipher suites, switching to PSK context");
                         ssl.set_ssl_context(psk_ctx)?;
                     } else {
-                        debug!("Client offers PSK cipher suites, but no PSK context is configured");
+                        warn!("Client offers PSK cipher suites, but no PSK context is configured");
                     }
                 } else {
                     debug!("Client offers regular TLS cipher suites, using standard TLS context");
@@ -221,15 +221,15 @@ impl TlsConfig {
                             warn!(identity = %psk_identity_str, "PSK not found for identity");
                         }
                         Err(e) => {
-                            warn!(error = ?e, "Error retrieving PSK for identity");
+                            error!(error = ?e, "Error retrieving PSK for identity");
                         }
                     }
                 } else {
-                    debug!("No PSK identity provided by client");
+                    warn!("No PSK identity provided by client");
                 }
 
                 // Fallback for failed PSK
-                debug!("PSK handshake failed, returning 0");
+                error!("PSK handshake failed, returning 0");
                 Ok(0)
             });
         }
