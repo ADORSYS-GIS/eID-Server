@@ -7,6 +7,7 @@ use super::models::{AuthError, DIDAuthenticateRequest, DIDAuthenticateResponse, 
 #[async_trait]
 pub trait EIDService: Clone + Send + Sync + 'static {
     async fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse>;
+
 }
 
 #[async_trait]

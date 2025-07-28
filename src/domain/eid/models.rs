@@ -212,26 +212,42 @@ impl ConnectionHandle {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthenticationProtocolData {
-    pub certificate_description: String,
-    pub required_chat: String,
-    pub optional_chat: Option<String>,
-    pub transaction_info: Option<String>,
+    pub phase: EACPhase,
+    pub eac1_input: Option<EAC1InputType>,
+    pub eac2_input: Option<EAC2InputType>,
 }
 
 impl AuthenticationProtocolData {
-    pub fn new(
+    pub fn new_eac1(
+        certificate: String,
         certificate_description: String,
         required_chat: String,
         optional_chat: Option<String>,
         transaction_info: Option<String>,
     ) -> Self {
         Self {
-            certificate_description,
-            required_chat,
-            optional_chat,
-            transaction_info,
+            phase: EACPhase::EAC1,
+            eac1_input: Some(EAC1InputType {
+                certificate,
+                certificate_description,
+                required_chat,
+                optional_chat,
+                transaction_info,
+            }),
+            eac2_input: None,
+        }
+    }
+
+    pub fn new_eac2(ephemeral_public_key: String, signature: String) -> Self {
+        Self {
+            phase: EACPhase::EAC2,
+            eac1_input: None,
+            eac2_input: Some(EAC2InputType {
+                ephemeral_public_key,
+                signature,
+            }),
         }
     }
 }
@@ -273,41 +289,55 @@ impl DIDAuthenticateRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseProtocolData {
-    pub challenge: Option<String>,
-    pub certificate: Option<String>,
-    pub personal_data: Option<String>,
+    pub phase: EACPhase,
+    pub eac1_output: Option<EAC1OutputType>,
+    pub eac2_output: Option<EAC2OutputType>,
     pub authentication_token: Option<String>,
+    pub personal_data: Option<String>,
 }
 
 impl ResponseProtocolData {
-    pub fn new() -> Self {
+    pub fn new_eac1(
+        certificate_holder_authorization_template: String,
+        certification_authority_reference: String,
+        ef_card_access: String,
+        id_picc: String,
+        challenge: String,
+    ) -> Self {
         Self {
-            challenge: None,
-            certificate: None,
-            personal_data: None,
+            phase: EACPhase::EAC1,
+            eac1_output: Some(EAC1OutputType {
+                certificate_holder_authorization_template,
+                certification_authority_reference,
+                ef_card_access,
+                id_picc,
+                challenge,
+            }),
+            eac2_output: None,
             authentication_token: None,
+            personal_data: None,
         }
     }
 
-    pub fn with_personal_data(mut self, data: String) -> Self {
-        self.personal_data = Some(data);
-        self
+    pub fn new_eac2(output: EAC2OutputType) -> Self {
+        Self {
+            phase: EACPhase::EAC2,
+            eac1_output: None,
+            eac2_output: Some(output),
+            authentication_token: None,
+            personal_data: None,
+        }
     }
 
-    pub fn with_certificate(mut self, cert: String) -> Self {
-        self.certificate = Some(cert);
-        self
-    }
-
-    pub fn with_authentication_token(mut self, token: String) -> Self {
-        self.authentication_token = Some(token);
-        self
-    }
-}
-
-impl Default for ResponseProtocolData {
-    fn default() -> Self {
-        Self::new()
+    // New constructor for error cases
+    pub fn new_error(phase: EACPhase) -> Self {
+        Self {
+            phase,
+            eac1_output: None,
+            eac2_output: None,
+            authentication_token: None,
+            personal_data: None,
+        }
     }
 }
 
@@ -337,7 +367,8 @@ impl DIDAuthenticateResponse {
         Self {
             result_major: major,
             result_minor: minor,
-            authentication_protocol_data: ResponseProtocolData::new(),
+            // Use new_error with the phase determined by the error context
+            authentication_protocol_data: ResponseProtocolData::new_error(EACPhase::EAC1), // Default to EAC1 for errors; adjust if needed
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
@@ -364,4 +395,46 @@ impl Default for ServerInfo {
             additional_info: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum EACPhase {
+    EAC1,
+    EAC2,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EAC1InputType {
+    pub certificate: String,
+    pub certificate_description: String,
+    pub required_chat: String,
+    pub optional_chat: Option<String>,
+    pub transaction_info: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EAC1OutputType {
+    pub certificate_holder_authorization_template: String,
+    pub certification_authority_reference: String,
+    pub ef_card_access: String,
+    pub id_picc: String,
+    pub challenge: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EAC2InputType {
+    pub ephemeral_public_key: String,
+    pub signature: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum EAC2OutputType {
+    A {
+        ef_card_security: String,
+        authentication_token: String,
+        nonce: String,
+    },
+    B {
+        challenge: String,
+    },
 }
