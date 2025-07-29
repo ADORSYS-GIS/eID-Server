@@ -4,13 +4,7 @@ pub mod store;
 pub use errors::SessionError;
 pub use store::{ExpiredDeletion, SessionStore, SessionStoreError};
 
-use std::{
-    result,
-    sync::{
-        Arc,
-        atomic::{self, AtomicBool},
-    },
-};
+use std::{result, sync::Arc};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -55,7 +49,6 @@ impl AsRef<[u8]> for SessionId {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Session {
     pub data: Value,
-    pub is_modified: AtomicBool,
     pub expiry_date: UtcDateTime,
 }
 
@@ -105,7 +98,6 @@ impl<Store: SessionStore> SessionManager<Store> {
 
         let session = Session {
             data: serde_json::to_value(value)?,
-            is_modified: AtomicBool::new(true),
             expiry_date: UtcDateTime::now().saturating_add(self.expiry),
         };
 
@@ -134,7 +126,6 @@ impl<Store: SessionStore> SessionManager<Store> {
         if let Some(session_data) = self.store.load(key.as_ref()).await? {
             let mut session: Session = serde_json::from_slice(&session_data)?;
             session.expiry_date = UtcDateTime::now().saturating_add(duration);
-            session.is_modified.store(true, atomic::Ordering::Release);
             let updated_session_bytes = serde_json::to_vec(&session)?;
             self.store
                 .save(key.as_ref(), &updated_session_bytes)
