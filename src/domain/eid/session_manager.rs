@@ -78,9 +78,7 @@ impl SessionManager for InMemorySessionManager {
                     "Failed to generate unique session ID after {} attempts",
                     MAX_ATTEMPTS
                 );
-                return Err(eyre!(
-                    "Failed to generate unique session ID"
-                ));
+                return Err(eyre!("Failed to generate unique session ID"));
             }
 
             let session_id = Uuid::new_v4().simple().to_string();
@@ -197,9 +195,7 @@ impl SessionManager for RedisSessionManager {
                     "Failed to generate unique session ID after {} attempts",
                     MAX_ATTEMPTS
                 );
-                return Err(eyre!(
-                    "Failed to generate unique session ID"
-                ));
+                return Err(eyre!("Failed to generate unique session ID"));
             }
 
             let session_id = Uuid::new_v4().simple().to_string();
