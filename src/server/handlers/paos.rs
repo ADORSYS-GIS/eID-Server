@@ -1,15 +1,15 @@
-use std::sync::Arc;
-use axum::{extract::State, http::StatusCode, response::IntoResponse};
-use base64::Engine;
-use tracing::{debug, error, warn};
 use crate::{
     domain::eid::{
         ports::{DIDAuthenticate, EIDService, EidService},
-        service::DIDAuthenticateService, session_manager::SessionManager,
+        service::DIDAuthenticateService,
+        session_manager::SessionManager,
     },
     eid::paos::parser::parse_start_paos,
     server::AppState,
 };
+use axum::{extract::State, http::StatusCode, response::IntoResponse};
+use base64::Engine;
+use tracing::{debug, error, warn};
 
 pub const EAC_REQUIRED_CHAT: &str = "7f4c12060904007f00070301020253050000000004";
 pub const EAC_OPTIONAL_CHAT: &str = "7f4c12060904007f0007030102025305000503ff00";
@@ -25,11 +25,15 @@ where
     let paos_request = match parse_start_paos(&body) {
         Ok(request) => request,
         Err(err) => {
-            error!("Failed to parse PAOS request: {}. Raw request: {}", err, body);
+            error!(
+                "Failed to parse PAOS request: {}. Raw request: {}",
+                err, body
+            );
             return (
                 StatusCode::BAD_REQUEST,
                 format!("Failed to parse PAOS request: {}", err),
-            ).into_response();
+            )
+                .into_response();
         }
     };
 
@@ -39,7 +43,8 @@ where
         return (
             StatusCode::BAD_REQUEST,
             "Session identifier is required".to_string(),
-        ).into_response();
+        )
+            .into_response();
     }
     let session_id = paos_request.session_identifier;
 
@@ -47,28 +52,36 @@ where
     let message_id = match paos_request.message_id {
         Some(id) if !id.is_empty() => id,
         _ => {
-            warn!("Message ID missing or empty in StartPAOS request. Using fallback UUID. Raw request: {}", body);
+            warn!(
+                "Message ID missing or empty in StartPAOS request. Using fallback UUID. Raw request: {}",
+                body
+            );
             format!("urn:uuid:{}", uuid::Uuid::new_v4())
         }
     };
-    debug!("Parsed session_id: {}, message_id: {}", session_id, message_id);
+    debug!(
+        "Parsed session_id: {}, message_id: {}",
+        session_id, message_id
+    );
 
     // Verify session validity
-    let session_info = match state.use_id.get_session(&session_id).await {
+    let _session_info = match state.use_id.get_session(&session_id).await {
         Ok(Some(info)) => info,
         Ok(None) => {
             warn!("Invalid session identifier: {}", session_id);
             return (
                 StatusCode::UNAUTHORIZED,
                 "Invalid session identifier".to_string(),
-            ).into_response();
+            )
+                .into_response();
         }
         Err(err) => {
             error!("Session validation error: {}", err);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal server error".to_string(),
-            ).into_response();
+            )
+                .into_response();
         }
     };
 
@@ -88,7 +101,8 @@ where
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Failed to update session with connection handles".to_string(),
-        ).into_response();
+        )
+            .into_response();
     }
 
     debug!("Successfully updated session: {}", session_id);
@@ -99,7 +113,11 @@ where
     // Load certificate chain
     let certificate_der = match temp_service.certificate_store.load_cv_chain().await {
         Ok(der) => {
-            debug!("Loaded certificate chain (raw DER, {} bytes): {:02x?}", der.len(), der);
+            debug!(
+                "Loaded certificate chain (raw DER, {} bytes): {:02x?}",
+                der.len(),
+                der
+            );
             der
         }
         Err(err) => {
@@ -107,16 +125,25 @@ where
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Failed to load certificate chain".to_string(),
-            ).into_response();
+            )
+                .into_response();
         }
     };
 
     // Split certificate chain into individual certificates
-    let certs = match temp_service.certificate_store.split_concatenated_der(&certificate_der) {
+    let certs = match temp_service
+        .certificate_store
+        .split_concatenated_der(&certificate_der)
+    {
         Ok(certs) => {
             debug!("Split certificate chain into {} certificates", certs.len());
             for (i, cert) in certs.iter().enumerate() {
-                debug!("Certificate {} ({} bytes): {:02x?}", i + 1, cert.len(), cert);
+                debug!(
+                    "Certificate {} ({} bytes): {:02x?}",
+                    i + 1,
+                    cert.len(),
+                    cert
+                );
             }
             certs
         }
@@ -125,7 +152,8 @@ where
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Failed to split certificate chain".to_string(),
-            ).into_response();
+            )
+                .into_response();
         }
     };
 
@@ -139,7 +167,7 @@ where
         .collect();
 
     // Create certificate description (simplified, adjust as needed)
-    let certificate_description = r#"308202e9060a04007f00070301030101a1160c14476f7665726e696b757320546573742044564341a21a1318687474703a2f2f7777772e676f7665726e696b75732e6465a31a0c18476f7665726e696b757320476d6248202620436f2e204b47a418131668747470733a2f2f6c6f63616c686f73743a38343433a58201e10c8201dd4e616d652c20416e7363687269667420756e6420452d4d61696c2d4164726573736520646573204469656e737465616e626965746572733a0d0a476f7665726e696b757320476d6248202620436f2e204b470d0a486f6368736368756c72696e6720340d0a3238333539204272656d656e0d0a6b6f6e74616b7440676f7665726e696b75732e64650d0a0d0a48696e7765697320617566206469652066c3bc722064656e204469656e737465616e626965746572207a757374c3a46e646967656e205374656c6c656e2c20646965206469652045696e68616c74756e672064657220566f7273636872696674656e207a756d20446174656e73636875747a206b6f6e74726f6c6c696572656e3a0d0a446965204c616e64657362656175667472616774652066c3bc7220446174656e73636875747a20756e6420496e666f726d6174696f6e736672656968656974206465722046726569656e2048616e73657374616474204272656d656e0d0a41726e647473747261c39f6520310d0a3237353730204272656d6572686176656e0d0a303432312f3539362d323031300d0a6f666669636540646174656e73636875747a2e6272656d656e2e64650d0a687474703a2f2f7777772e646174656e73636875747a2e6272656d656e2e6465a7818b31818804202a97cf32df5962486b3fb2fc21c70774908add9d699c9a9b491ce302c8ae849e04202d29c23103995d203fba7dc5271da2872ca0bf110d99455f53614b6d7236b83204202f2fcaa87ec0fc2487ceee9718ec272def0f310041c16b2ad8718bc51c3c7d1204206dec4dd3f51fdcac550188e3a91526ba8b693cac0e38562a03993cc877b54a21"#;
+    let certificate_description = r#"308202e9060a04007f00070301030101a1160c14476f7665726e696b757320546573742044564341a21a1318687474703a2f2f7777772e676f7665726e696b75732e6465a31a0c18476f7665726e696b757320476d6248202620436f2e204b47a418131668747470733a2f2f6c6f63616c686f73743a38343433a58201e10c8201dd4e616d652c20416e7363687269667420756e6420452d4d61696c2d4164726573736520646573204469656e737465616e626965746572733a0d0a476f7665726e696b757320476d6248202620436f2e204b470d0a486f6368736368756c72696e6720340d0a3238333539204272656d656e0d0a6b6f6e74616b7440676f7665726e696b75732e64650d0a0d0a48696e7765697320617566206469652066c3bc722064656e204469656e737465616e62696574657273207a757374c3a46e646967656e205374656c6c656e2c20646965206469652045696e68616c74756e672064657220566f7273636872696674656e207a756d20446174656e73636875747a206b6f6e74726f6c6c696572656e3a0d0a446965204c616e64657362656175667472616774652066c3bc7220446174656e73636875747a20756e6420496e666f726d6174696f6e736672656968656974206465722046726569656e2048616e73657374616474204272656d656e0d0a41726e647473747261c39f6520310d0a3237353730204272656d6572686176656e0d0a303432312f3539362d323031300d0a6f666669636540646174656e73636875747a2e6272656d656e2e64650d0a687474703a2f2f7777772e646174656e73636875747a2e6272656d656e2e6465a7818b31818804202a97cf32df5962486b3fb2fc21c70774908add9d699c9a9b491ce302c8ae849e04202d29c23103995d203fba7dc5271da2872ca0bf110d99455f53614b6d7236b83204202f2fcaa87ec0fc2487ceee9718ec272def0f310041c16b2ad8718bc51c3c7d1204206dec4dd3f51fdcac550188e3a91526ba8b693cac0e38562a03993cc877b54a21"#;
 
     // Construct PAOS response with DIDAuthenticate SOAP message for PACE
     let certificates_xml: String = certificates_b64
@@ -191,7 +219,8 @@ where
             ("PAOS-Version", "urn:liberty:paos:2006-08"),
         ],
         paos_response,
-    ).into_response()
+    )
+        .into_response()
 }
 
 // #[cfg(test)]

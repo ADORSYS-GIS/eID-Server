@@ -1,5 +1,5 @@
 use lru::LruCache;
-use quick_xml::{Reader, events::Event, se::to_string};
+use quick_xml::{Reader, events::Event};
 use reqwest::Client;
 use ring::{
     agreement, digest, hkdf,
@@ -10,7 +10,7 @@ use serde::Serialize;
 use std::{fs, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
-use x509_parser::{pem, prelude::X509Certificate};
+use x509_parser::prelude::X509Certificate;
 
 use crate::domain::eid::models::{
     AuthError, AuthenticationProtocolData, ConnectionHandle, EAC1OutputType, EAC2OutputType,
@@ -18,12 +18,16 @@ use crate::domain::eid::models::{
 };
 
 // Define ParsedCvc struct at module level
+
 #[derive(Debug)]
 pub struct ParsedCvc {
     body: Vec<u8>,
+    #[allow(dead_code)]
     signature: Vec<u8>,
+    #[allow(dead_code)]
     public_key: Vec<u8>,
     tls_cert_hash: Option<Vec<u8>>,
+    #[allow(dead_code)]
     signature_algorithm: Option<String>,
 }
 
@@ -31,6 +35,7 @@ pub struct ParsedCvc {
 #[derive(Debug, Clone)]
 pub struct CertificateStore {
     trusted_roots: Arc<RwLock<Vec<Vec<u8>>>>,
+    #[allow(dead_code)]
     certificate_cache: Arc<RwLock<LruCache<String, Vec<u8>>>>,
 }
 
@@ -84,16 +89,16 @@ impl CertificateStore {
         Ok(())
     }
 
-    fn pem_parse(data: Vec<u8>) -> Result<pem::Pem, String> {
-        let (remaining, pem) = pem::parse_x509_pem(&data)
-            .map_err(|e| format!("Failed to parse PEM certificate: {}", e))?;
+    // fn pem_parse(data: Vec<u8>) -> Result<pem::Pem, String> {
+    //     let (remaining, pem) = pem::parse_x509_pem(&data)
+    //         .map_err(|e| format!("Failed to parse PEM certificate: {}", e))?;
 
-        if !remaining.is_empty() {
-            return Err("Extra data after PEM certificate".to_string());
-        }
+    //     if !remaining.is_empty() {
+    //         return Err("Extra data after PEM certificate".to_string());
+    //     }
 
-        Ok(pem)
-    }
+    //     Ok(pem)
+    // }
 
     pub async fn load_cv_chain(&self) -> Result<Vec<u8>, AuthError> {
         let cert_paths = vec![
@@ -126,20 +131,29 @@ impl CertificateStore {
                 )));
             }
 
-            // Parse to extract CertificateHolderReference (for debugging)
-            let parsed_cvc = Self::parse_cvc(&cert_data).map_err(|e| {
+            // Parse and validate certificate
+            let _parsed_cvc = Self::parse_cvc(&cert_data).map_err(|e| {
                 AuthError::invalid_certificate(format!(
                     "Failed to parse certificate at {path}: {e}"
                 ))
             })?;
             let holder_ref = Self::extract_holder_reference(&cert_data).unwrap_or_default();
-            debug!(
-                "Loaded certificate from {} ({} bytes, holder_ref: {}, first 20 bytes: {:02x?})",
+            info!(
+                "Loaded certificate {} from {} ({} bytes, holder_ref: {}, first 20 bytes: {:02x?})",
+                i + 1,
                 path,
                 cert_data.len(),
                 holder_ref,
                 &cert_data[..cert_data.len().min(20)]
             );
+
+            // Validate HolderReference format (e.g., DETESTeID00001 or similar)
+            if !holder_ref.starts_with("DETEST") {
+                warn!(
+                    "Certificate at {} has unexpected HolderReference: {}",
+                    path, holder_ref
+                );
+            }
 
             chain.extend_from_slice(&cert_data);
         }
@@ -150,12 +164,25 @@ impl CertificateStore {
             ));
         }
 
-        debug!("Loaded certificate chain ({} bytes)", chain.len());
+        // Validate chain
+        let certs = self.split_concatenated_der(&chain)?;
+        if certs.len() != 3 {
+            return Err(AuthError::invalid_certificate(format!(
+                "Expected 3 certificates in chain, got {}",
+                certs.len()
+            )));
+        }
+
+        info!(
+            "Loaded certificate chain ({} bytes, {} certificates)",
+            chain.len(),
+            certs.len()
+        );
         Ok(chain)
     }
 
     // Add helper method to extract CertificateHolderReference
-    fn extract_holder_reference(data: &[u8]) -> Option<String> {
+    pub fn extract_holder_reference(data: &[u8]) -> Option<String> {
         let mut pos = 0;
         while pos + 2 < data.len() {
             if data[pos] == 0x5F && data[pos + 1] == 0x20 {
@@ -170,6 +197,62 @@ impl CertificateStore {
             pos += 1;
         }
         None
+    }
+
+    pub fn generate_certificate_description(&self, certs: &[Vec<u8>]) -> Result<String, AuthError> {
+        let mut description = String::new();
+        for (i, cert) in certs.iter().enumerate() {
+            let holder_ref = CertificateStore::extract_holder_reference(cert).unwrap_or_default();
+            let parsed_cvc = Self::parse_cvc(cert).map_err(|e| {
+                AuthError::invalid_certificate(format!(
+                    "Failed to parse certificate {}: {}",
+                    i + 1,
+                    e
+                ))
+            })?;
+            // Use a dummy TLSHash for testing (replace with actual hash if available)
+            let tls_hash = parsed_cvc
+                .tls_cert_hash
+                .as_ref()
+                .map(hex::encode)
+                .unwrap_or_else(|| {
+                    warn!("No TLSHash for certificate {}, using dummy hash", i + 1);
+                    "0000000000000000000000000000000000000000000000000000000000000000".to_string()
+                });
+            let cert_info = format!(
+                "Certificate {}: HolderReference={}\nIssuer=Governikus GmbH & Co. KG\nURL=https://localhost:8443\nTLSHash={}\n",
+                i + 1,
+                holder_ref,
+                tls_hash
+            );
+            description.push_str(&cert_info);
+        }
+
+        // Align with Governikus server format
+        description.push_str(
+        "Name, Anschrift und E-Mail-Adresse des Diensteanbieters:\n\
+         Governikus GmbH & Co. KG\n\
+         Hochschulring 4\n\
+         28359 Bremen\n\
+         kontakt@governikus.de\n\n\
+         Hinweis auf die für den Diensteanbieter zuständigen Stellen, die die Einhaltung der Vorschriften zum Datenschutz kontrollieren:\n\
+         Die Landesbeauftragte für Datenschutz und Informationsfreiheit der Freien Hansestadt Bremen\n\
+         Arndtstraße 1\n\
+         27570 Bremerhaven\n\
+         0421/596-2010\n\
+         office@datenschutz.bremen.de\n\
+         http://www.datenschutz.bremen.de\n"
+    );
+
+        let encoded_description = description.as_bytes().to_vec();
+        let hex_description = hex::encode(&encoded_description);
+        debug!(
+            "Generated certificate description ({} bytes, hex): {}",
+            encoded_description.len(),
+            hex_description
+        );
+        debug!("Decoded certificate description: {}", description);
+        Ok(hex_description)
     }
 
     pub async fn validate_certificate_chain(
@@ -966,6 +1049,7 @@ pub struct EAC2InputXml {
 pub struct CardCommunicator {
     client: Client,
     ausweisapp2_endpoint: String,
+    #[allow(dead_code)]
     certificate_store: CertificateStore,
 }
 
