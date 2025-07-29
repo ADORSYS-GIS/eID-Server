@@ -78,7 +78,7 @@ impl SessionManager for InMemorySessionManager {
                     "Failed to generate unique session ID after {} attempts",
                     MAX_ATTEMPTS
                 );
-                return Err(color_eyre::eyre::eyre!(
+                return Err(eyre!(
                     "Failed to generate unique session ID"
                 ));
             }
@@ -130,7 +130,7 @@ impl SessionManager for InMemorySessionManager {
         let session = self
             .get_session(session_id)
             .await
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to get session: {e}"))?;
+            .map_err(|e| eyre!("Failed to get session: {e}"))?;
 
         Ok(session.is_some_and(|s| s.expiry > chrono::Utc::now()))
     }
@@ -150,7 +150,7 @@ impl SessionManager for InMemorySessionManager {
                 .collect();
             Ok(())
         } else {
-            Err(color_eyre::eyre::eyre!("Session not found"))
+            Err(eyre!("Session not found"))
         }
     }
 }
@@ -165,7 +165,7 @@ impl RedisSessionManager {
     pub fn new(redis_url: &str, session_ttl_minutes: i64) -> color_eyre::Result<Self> {
         let client = redis::Client::open(redis_url).map_err(|e| {
             error!("Failed to create Redis client: {}", e);
-            color_eyre::eyre::eyre!("Failed to create Redis client: {}", e)
+            eyre!("Failed to create Redis client: {}", e)
         })?;
         Ok(Self {
             client,
@@ -179,7 +179,7 @@ impl RedisSessionManager {
             .await
             .map_err(|e| {
                 error!("Failed to get multiplexed async Redis connection: {}", e);
-                color_eyre::eyre::eyre!("Failed to get multiplexed async Redis connection: {}", e)
+                eyre!("Failed to get multiplexed async Redis connection: {}", e)
             })
     }
 }
@@ -197,7 +197,7 @@ impl SessionManager for RedisSessionManager {
                     "Failed to generate unique session ID after {} attempts",
                     MAX_ATTEMPTS
                 );
-                return Err(color_eyre::eyre::eyre!(
+                return Err(eyre!(
                     "Failed to generate unique session ID"
                 ));
             }
@@ -207,7 +207,7 @@ impl SessionManager for RedisSessionManager {
 
             let exists: bool = conn.exists(&session_id).await.map_err(|e| {
                 error!("Failed to check session ID existence: {}", e);
-                color_eyre::eyre::eyre!("Failed to check session ID existence: {}", e)
+                eyre!("Failed to check session ID existence: {}", e)
             })?;
 
             if !exists {
@@ -228,7 +228,7 @@ impl SessionManager for RedisSessionManager {
         let mut conn = self.get_redis_connection().await?;
         let serialized = serde_json::to_string(&session).map_err(|e| {
             error!("Failed to serialize session: {}", e);
-            color_eyre::eyre::eyre!("Failed to serialize session: {}", e)
+            eyre!("Failed to serialize session: {}", e)
         })?;
 
         // Explicitly specify the return type as () for set_ex
@@ -237,7 +237,7 @@ impl SessionManager for RedisSessionManager {
             .await
             .map_err(|e| {
                 error!("Failed to store session in Redis: {}", e);
-                color_eyre::eyre::eyre!("Failed to store session in Redis: {}", e)
+                eyre!("Failed to store session in Redis: {}", e)
             })?;
 
         Ok(())
@@ -247,14 +247,14 @@ impl SessionManager for RedisSessionManager {
         let mut conn = self.get_redis_connection().await?;
         let result: Option<String> = conn.get(session_id).await.map_err(|e| {
             error!("Failed to get session from Redis: {}", e);
-            color_eyre::eyre::eyre!("Failed to get session from Redis: {}", e)
+            eyre!("Failed to get session from Redis: {}", e)
         })?;
 
         match result {
             Some(serialized) => {
                 let session: SessionInfo = serde_json::from_str(&serialized).map_err(|e| {
                     error!("Failed to deserialize session: {}", e);
-                    color_eyre::eyre::eyre!("Failed to deserialize session: {}", e)
+                    eyre!("Failed to deserialize session: {}", e)
                 })?;
                 Ok(Some(session))
             }
@@ -272,7 +272,7 @@ impl SessionManager for RedisSessionManager {
         let mut conn = self.get_redis_connection().await?;
         let keys: Vec<String> = conn.keys("*").await.map_err(|e| {
             error!("Failed to get session keys from Redis: {e}");
-            color_eyre::eyre::eyre!("Failed to get session keys from Redis: {e}")
+            eyre!("Failed to get session keys from Redis: {e}")
         })?;
         Ok(keys.len())
     }
@@ -280,7 +280,7 @@ impl SessionManager for RedisSessionManager {
         let session = self
             .get_session(session_id)
             .await
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to get session: {e}"))?;
+            .map_err(|e| eyre!("Failed to get session: {e}"))?;
 
         Ok(session.is_some_and(|s| s.expiry > chrono::Utc::now()))
     }
@@ -293,13 +293,13 @@ impl SessionManager for RedisSessionManager {
         let mut conn = self.get_redis_connection().await?;
         let session: Option<String> = conn.get(session_id).await.map_err(|e| {
             error!("Failed to get session from Redis: {e}");
-            color_eyre::eyre::eyre!("Failed to get session from Redis: {e}")
+            eyre!("Failed to get session from Redis: {e}")
         })?;
 
         if let Some(serialized) = session {
             let mut session: SessionInfo = serde_json::from_str(&serialized).map_err(|e| {
                 error!("Failed to deserialize session: {e}");
-                color_eyre::eyre::eyre!("Failed to deserialize session: {e}")
+                eyre!("Failed to deserialize session: {e}")
             })?;
             session.connection_handles = connection_handles
                 .into_iter()
@@ -309,14 +309,14 @@ impl SessionManager for RedisSessionManager {
                 .collect();
             let serialized = serde_json::to_string(&session).map_err(|e| {
                 error!("Failed to serialize session: {}", e);
-                color_eyre::eyre::eyre!("Failed to serialize session: {e}")
+                eyre!("Failed to serialize session: {e}")
             })?;
             let _: () = conn
                 .set_ex(session_id, &serialized, self.session_ttl_seconds as u64)
                 .await
                 .map_err(|e| {
                     error!("Failed to update session in Redis: {e}");
-                    color_eyre::eyre::eyre!("Failed to update session in Redis: {e}")
+                    eyre!("Failed to update session in Redis: {e}")
                 })?;
             Ok(())
         } else {
