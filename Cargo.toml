@@ -49,11 +49,12 @@ ring = "0.17"
 x509-parser = "0.15"
 lru = "0.12"
 hex = "0.4"
+secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
 
 [dependencies.redis]
 version = "0.32"
-features = ["tokio-rustls-comp", "connection-manager"]
+features = ["tokio-native-tls-comp", "connection-manager", "safe_iterators"]
 
 [dev-dependencies]
 http-body-util = "0.1"
