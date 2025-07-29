@@ -70,7 +70,7 @@ impl SessionStore for RedisStore {
         let session: Session = serde_json::from_slice(data)?;
         let ttl = (session.expiry_date - UtcDateTime::now()).whole_seconds();
         let key = self.key(session_id);
-        let _: () = conn.set_ex(key, data, ttl as u64).await?;
+        let _: () = conn.set_ex(key, data, ttl.max(0) as u64).await?;
         Ok(())
     }
 
