@@ -55,7 +55,7 @@ impl RedisStore {
         let mut count = 0;
         let pattern = format!("{}*", self.prefix);
         let mut iter: AsyncIter<Vec<u8>> = conn.scan_match(pattern).await?;
-        while let Some(_) = iter.next_item().await {
+        while iter.next_item().await.is_some() {
             count += 1;
         }
         self.counter.store(count, atomic::Ordering::Release);
