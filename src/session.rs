@@ -143,3 +143,37 @@ impl<Store: SessionStore> SessionManager<Store> {
         Ok(None)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::session::store::memory::MemoryStore;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_session_manager_flow() {
+        let store = MemoryStore::default();
+        let session_id = "session_id";
+        let data = "data";
+        let manager = SessionManager::new(store);
+        manager
+            .insert(SessionId::new(session_id), data)
+            .await
+            .unwrap();
+        assert_eq!(
+            manager
+                .get::<String>(SessionId::new(session_id))
+                .await
+                .unwrap(),
+            Some(data.to_string())
+        );
+        manager.remove(SessionId::new(session_id)).await.unwrap();
+        assert_eq!(
+            manager
+                .get::<String>(SessionId::new(session_id))
+                .await
+                .unwrap(),
+            None
+        );
+    }
+}
