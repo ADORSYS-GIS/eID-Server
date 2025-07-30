@@ -8,7 +8,7 @@ use tracing::debug;
 use xml_c14n::{self, CanonicalizationOptions};
 
 /// Parse and validate PEM content with expected tags
-/// 
+///
 /// This function now supports multi-tag validation, allowing any of the provided
 /// expected tags to be considered valid. This utilizes the comprehensive PEM tag
 /// constants defined in constants.rs.

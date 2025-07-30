@@ -34,7 +34,8 @@ use crate::{
 const SOAP_NAMESPACE: &str = "http://schemas.xmlsoap.org/soap/envelope/";
 const SOAP_SERVER_FAULT_CODE: &str = "soap:Server";
 const INTERNAL_ERROR_FAULT_STRING: &str = "Internal Error";
-const BSI_INTERNAL_ERROR_CODE: &str = "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error/common#internalError";
+const BSI_INTERNAL_ERROR_CODE: &str =
+    "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error/common#internalError";
 
 // SOAP fault response structs for serialization
 #[derive(Debug, Serialize)]
@@ -343,7 +344,7 @@ pub async fn use_id_handler<S: EIDService + EidService>(
         match validator.validate_soap_signature(&body) {
             ValidationResult::Valid => {
                 info!(
-                    "XML signature validation successful - message_size: {} bytes, contains_signature: true", 
+                    "XML signature validation successful - message_size: {} bytes, contains_signature: true",
                     body.len()
                 );
             }
@@ -400,7 +401,10 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                             Err(e) => {
                                 error!("Failed to sign SOAP response: {}", e);
                                 // BSI compliance: Return internalError instead of unsigned response
-                                return (StatusCode::INTERNAL_SERVER_ERROR, create_internal_error_response())
+                                return (
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    create_internal_error_response(),
+                                )
                                     .into_response();
                             }
                         }
@@ -408,7 +412,10 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                     Err(e) => {
                         error!("Failed to create XML signature signer: {}", e);
                         // BSI compliance: Return internalError instead of unsigned response
-                        return (StatusCode::INTERNAL_SERVER_ERROR, create_internal_error_response())
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            create_internal_error_response(),
+                        )
                             .into_response();
                     }
                 };
