@@ -21,3 +21,5 @@ target/
 
 # Added by vscode
 .vscode/
+
+.env
