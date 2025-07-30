@@ -6,7 +6,6 @@ use tokio::{runtime::Handle, sync::RwLock};
 use tracing::{debug, error};
 use uuid::Uuid;
 
-
 use crate::{
     domain::eid::service::{ConnectionHandle, SessionInfo},
     tls::{PskStore, PskStoreError},
@@ -120,7 +119,6 @@ impl SessionManager for InMemorySessionManager {
         sessions.retain(|session| session.expiry > now);
         Ok(())
     }
-
 
     async fn session_count(&self) -> color_eyre::Result<usize> {
         let sessions = self.sessions.read().await;
@@ -268,7 +266,6 @@ impl SessionManager for RedisSessionManager {
         debug!("Redis handles session expiration via TTL, no manual cleanup needed");
         Ok(())
     }
-
 
     async fn session_count(&self) -> color_eyre::Result<usize> {
         let mut conn = self.get_redis_connection().await?;

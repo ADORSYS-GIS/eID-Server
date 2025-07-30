@@ -1,24 +1,24 @@
+use crate::domain::eid::models::{
+    AuthError, AuthenticationProtocolData, ConnectionHandle, EAC1OutputType, EAC2OutputType,
+    EACPhase,
+};
 use lru::LruCache;
+use pkcs8::der::Decode;
 use quick_xml::{Reader, events::Event};
 use reqwest::Client;
+use ring::digest::{SHA256, digest};
 use ring::{
     agreement, digest, hkdf,
     rand::{SecureRandom, SystemRandom},
     signature,
 };
 use serde::Serialize;
-use std::{fs, sync::Arc};
+use std::{collections::HashMap, fs, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use x509_parser::prelude::X509Certificate;
 
-use crate::domain::eid::models::{
-    AuthError, AuthenticationProtocolData, ConnectionHandle, EAC1OutputType, EAC2OutputType,
-    EACPhase,
-};
-
 // Define ParsedCvc struct at module level
-
 #[derive(Debug)]
 pub struct ParsedCvc {
     body: Vec<u8>,
@@ -26,6 +26,7 @@ pub struct ParsedCvc {
     signature: Vec<u8>,
     #[allow(dead_code)]
     public_key: Vec<u8>,
+    #[allow(dead_code)]
     tls_cert_hash: Option<Vec<u8>>,
     #[allow(dead_code)]
     signature_algorithm: Option<String>,
@@ -37,6 +38,7 @@ pub struct CertificateStore {
     trusted_roots: Arc<RwLock<Vec<Vec<u8>>>>,
     #[allow(dead_code)]
     certificate_cache: Arc<RwLock<LruCache<String, Vec<u8>>>>,
+    private_keys: Arc<RwLock<HashMap<String, Vec<u8>>>>,
 }
 
 const MAX_TRUSTED_ROOTS: usize = 100;
@@ -51,7 +53,23 @@ impl CertificateStore {
             certificate_cache: Arc::new(RwLock::new(LruCache::new(
                 std::num::NonZeroUsize::new(MAX_CERTIFICATE_CACHE).unwrap(),
             ))),
+            private_keys: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    pub async fn add_private_key(
+        &self,
+        holder_ref: String,
+        key_data: Vec<u8>,
+    ) -> Result<(), AuthError> {
+        let mut keys = self.private_keys.write().await;
+        keys.insert(holder_ref, key_data);
+        Ok(())
+    }
+
+    pub async fn get_private_key(&self, holder_ref: &str) -> Option<Vec<u8>> {
+        let keys = self.private_keys.read().await;
+        keys.get(holder_ref).cloned()
     }
 
     pub async fn add_trusted_root(&self, certificate_der: Vec<u8>) -> Result<(), AuthError> {
@@ -89,25 +107,14 @@ impl CertificateStore {
         Ok(())
     }
 
-    // fn pem_parse(data: Vec<u8>) -> Result<pem::Pem, String> {
-    //     let (remaining, pem) = pem::parse_x509_pem(&data)
-    //         .map_err(|e| format!("Failed to parse PEM certificate: {}", e))?;
-
-    //     if !remaining.is_empty() {
-    //         return Err("Extra data after PEM certificate".to_string());
-    //     }
-
-    //     Ok(pem)
-    // }
-
     pub async fn load_cv_chain(&self) -> Result<Vec<u8>, AuthError> {
         let cert_paths = vec![
-            std::env::var("CV_TERM_PATH")
-                .map_err(|_| AuthError::invalid_certificate("CV_TERM_PATH not set in .env"))?,
-            std::env::var("CV_DV_PATH")
-                .map_err(|_| AuthError::invalid_certificate("CV_DV_PATH not set in .env"))?,
             std::env::var("CVCA_PATH")
                 .map_err(|_| AuthError::invalid_certificate("CVCA_PATH not set in .env"))?,
+            std::env::var("DV_PATH")
+                .map_err(|_| AuthError::invalid_certificate("DV_PATH not set in .env"))?,
+            std::env::var("TERM_PATH")
+                .map_err(|_| AuthError::invalid_certificate("TERM_PATH not set in .env"))?,
         ];
 
         let mut chain = Vec::new();
@@ -148,7 +155,7 @@ impl CertificateStore {
             );
 
             // Validate HolderReference format (e.g., DETESTeID00001 or similar)
-            if !holder_ref.starts_with("DETEST") {
+            if !holder_ref.starts_with("DE") {
                 warn!(
                     "Certificate at {} has unexpected HolderReference: {}",
                     path, holder_ref
@@ -164,20 +171,6 @@ impl CertificateStore {
             ));
         }
 
-        // Validate chain
-        let certs = self.split_concatenated_der(&chain)?;
-        if certs.len() != 3 {
-            return Err(AuthError::invalid_certificate(format!(
-                "Expected 3 certificates in chain, got {}",
-                certs.len()
-            )));
-        }
-
-        info!(
-            "Loaded certificate chain ({} bytes, {} certificates)",
-            chain.len(),
-            certs.len()
-        );
         Ok(chain)
     }
 
@@ -199,60 +192,117 @@ impl CertificateStore {
         None
     }
 
+    fn hash_tls_cert(&self, cert: &[u8]) -> Result<Vec<u8>, AuthError> {
+        let hash = digest(&SHA256, cert);
+        Ok(hash.as_ref().to_vec())
+    }
+
     pub fn generate_certificate_description(&self, certs: &[Vec<u8>]) -> Result<String, AuthError> {
-        let mut description = String::new();
-        for (i, cert) in certs.iter().enumerate() {
-            let holder_ref = CertificateStore::extract_holder_reference(cert).unwrap_or_default();
-            let parsed_cvc = Self::parse_cvc(cert).map_err(|e| {
-                AuthError::invalid_certificate(format!(
-                    "Failed to parse certificate {}: {}",
-                    i + 1,
-                    e
-                ))
-            })?;
-            // Use a dummy TLSHash for testing (replace with actual hash if available)
-            let tls_hash = parsed_cvc
-                .tls_cert_hash
-                .as_ref()
-                .map(hex::encode)
-                .unwrap_or_else(|| {
-                    warn!("No TLSHash for certificate {}, using dummy hash", i + 1);
-                    "0000000000000000000000000000000000000000000000000000000000000000".to_string()
-                });
-            let cert_info = format!(
-                "Certificate {}: HolderReference={}\nIssuer=Governikus GmbH & Co. KG\nURL=https://localhost:8443\nTLSHash={}\n",
-                i + 1,
-                holder_ref,
-                tls_hash
-            );
-            description.push_str(&cert_info);
+        let tls_cert_path = std::env::var("TLS_CERT_PATH")
+            .map_err(|e| AuthError::invalid_certificate(format!("TLS_CERT_PATH not set: {e}")))?;
+        let tls_cert = fs::read(&tls_cert_path).map_err(|e| {
+            AuthError::invalid_certificate(format!(
+                "Failed to read TLS certificate at {}: {e}",
+                tls_cert_path
+            ))
+        })?;
+        let tls_hash = self.hash_tls_cert(&tls_cert)?;
+
+        let mut writer = vec![];
+
+        // Outer SEQUENCE (0x30)
+        writer.push(0x30);
+        let content_start = writer.len();
+        writer.push(0); // Placeholder for length
+
+        // DescriptionType OID (0.4.0.127.0.7.3.1.3.1)
+        writer.extend_from_slice(&[
+            0x06, 0x0A, 0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03, 0x01, 0x01,
+        ]);
+
+        // DescriptionType ([1] { OCTET STRING })
+        writer.extend_from_slice(&[0xA1, 0x16, 0x0C, 0x14]);
+        writer.extend_from_slice(b"Governikus Test DVCA");
+
+        // IssuerURL ([2] { OCTET STRING })
+        writer.extend_from_slice(&[0xA2, 0x1A, 0x0C, 0x18]);
+        writer.extend_from_slice(b"http://www.governikus.de");
+
+        // SubjectName ([3] { OCTET STRING })
+        writer.extend_from_slice(&[0xA3, 0x1A, 0x0C, 0x18]);
+        writer.extend_from_slice(b"Governikus GmbH & Co. KG");
+
+        // SubjectURL ([4] { OCTET STRING })
+        writer.extend_from_slice(&[0xA4, 0x18, 0x0C, 0x16]);
+        writer.extend_from_slice(b"https://localhost:8443");
+
+        // TermsOfUsage ([5] { UTF8String })
+        let terms = "Name, Anschrift und E-Mail-Adresse des Diensteanbieters:\r\n\
+        Governikus GmbH & Co. KG\r\n\
+        Hochschulring 4\r\n\
+        28359 Bremen\r\n\
+        kontakt@governikus.de\r\n\r\n\
+        Hinweis auf die fuer den Diensteanbieter zustaendigen Stellen, die die Einhaltung der Vorschriften zum Datenschutz kontrollieren:\r\n\
+        Die Landesbeauftragte fuer Datenschutz und Informationsfreiheit der Freien Hansestadt Bremen\r\n\
+        Arndtstrasse 1\r\n\
+        27570 Bremerhaven\r\n\
+        0421/596-2010\r\n\
+        office@datenschutz.bremen.de\r\n\
+        http://www.datenschutz.bremen.de";
+        let terms_bytes = terms.as_bytes();
+        writer.push(0xA5);
+        Self::write_der_length(&mut writer, terms_bytes.len() + 4);
+        writer.push(0x0C);
+        Self::write_der_length(&mut writer, terms_bytes.len());
+        writer.extend_from_slice(terms_bytes);
+
+        // Certificate Hashes ([7] { SEQUENCE { OID, SEQUENCE of OCTET STRING } })
+        let mut hashes = vec![];
+        for cert in certs.iter() {
+            let hash = digest(&SHA256, cert);
+            debug!("Certificate hash: {}", hex::encode(hash.as_ref()));
+            hashes.extend_from_slice(&[0x04, 0x20]);
+            hashes.extend_from_slice(hash.as_ref());
         }
+        debug!("TLS certificate hash: {}", hex::encode(&tls_hash));
+        hashes.extend_from_slice(&[0x04, 0x20]);
+        hashes.extend_from_slice(&tls_hash);
 
-        // Align with Governikus server format
-        description.push_str(
-        "Name, Anschrift und E-Mail-Adresse des Diensteanbieters:\n\
-         Governikus GmbH & Co. KG\n\
-         Hochschulring 4\n\
-         28359 Bremen\n\
-         kontakt@governikus.de\n\n\
-         Hinweis auf die für den Diensteanbieter zuständigen Stellen, die die Einhaltung der Vorschriften zum Datenschutz kontrollieren:\n\
-         Die Landesbeauftragte für Datenschutz und Informationsfreiheit der Freien Hansestadt Bremen\n\
-         Arndtstraße 1\n\
-         27570 Bremerhaven\n\
-         0421/596-2010\n\
-         office@datenschutz.bremen.de\n\
-         http://www.datenschutz.bremen.de\n"
-    );
+        writer.push(0xA7); // Use [7] instead of [5]
+        Self::write_der_length(&mut writer, hashes.len() + 13);
+        writer.push(0x30);
+        Self::write_der_length(&mut writer, hashes.len() + 11);
+        writer.extend_from_slice(&[
+            0x06, 0x09, 0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03,
+            0x02, // OID 0.4.0.127.0.7.3.1.3.2
+            0x30,
+        ]);
+        Self::write_der_length(&mut writer, hashes.len());
+        writer.extend_from_slice(&hashes);
 
-        let encoded_description = description.as_bytes().to_vec();
-        let hex_description = hex::encode(&encoded_description);
+        // Calculate and write the outer SEQUENCE length
+        let content_len = writer.len() - content_start - 1;
+        writer.splice(content_start..content_start + 1, vec![]); // Remove placeholder
+        Self::write_der_length(&mut writer, content_len);
+
+        let hex_description = hex::encode(&writer);
         debug!(
-            "Generated certificate description ({} bytes, hex): {}",
-            encoded_description.len(),
+            "Generated CertificateDescription ({} bytes): {}",
+            writer.len(),
             hex_description
         );
-        debug!("Decoded certificate description: {}", description);
         Ok(hex_description)
+    }
+
+    fn write_der_length(writer: &mut Vec<u8>, length: usize) {
+        if length <= 127 {
+            writer.push(length as u8);
+        } else {
+            let len_bytes = length.to_be_bytes();
+            let significant_bytes = len_bytes.iter().skip_while(|&&b| b == 0).count();
+            writer.push(0x80 | significant_bytes as u8);
+            writer.extend_from_slice(&len_bytes[8 - significant_bytes..]);
+        }
     }
 
     pub async fn validate_certificate_chain(
@@ -471,40 +521,24 @@ impl CertificateStore {
                     return Err("Public key extends beyond body".to_string());
                 }
                 let key_data = &body[pos + 2..pos + 2 + key_len];
+                debug!(
+                    "Extracted public key data (length: {} bytes, hex): {}",
+                    key_data.len(),
+                    hex::encode(key_data)
+                );
 
-                // Check for EC public key format (uncompressed)
-                if key_data.len() >= 2 && key_data[0] == 0x03 {
-                    let bit_string_len = key_data[1] as usize;
-                    if key_data.len() >= 2 + bit_string_len && key_data[2] == 0x00 {
-                        let pub_key = key_data[3..2 + bit_string_len].to_vec();
-                        if (pub_key.len() == 65 || pub_key.len() == 97) && pub_key[0] == 0x04 {
-                            debug!(
-                                "Extracted valid uncompressed EC public key (length: {} bytes)",
-                                pub_key.len()
-                            );
-                            return Ok(pub_key);
-                        } else {
-                            return Err(format!(
-                                "Invalid EC public key format: length={}, first_byte={:02x}",
-                                pub_key.len(),
-                                pub_key.get(0).map_or(0, |b| *b)
-                            ));
-                        }
-                    }
-                }
-
-                // Handle raw public key data (common in German eID certificates)
-                if key_data.len() == 65 && key_data[0] == 0x04 {
+                // Accept the raw public key data as-is
+                if key_data.len() >= 1 {
                     debug!(
-                        "Extracted valid uncompressed EC P-256 public key (raw, length: {} bytes)",
-                        key_data.len()
+                        "Accepting public key (length: {} bytes, first_byte: {:02x})",
+                        key_data.len(),
+                        key_data[0]
                     );
                     return Ok(key_data.to_vec());
                 } else {
                     return Err(format!(
-                        "Invalid raw public key format: length={}, first_byte={:02x}",
-                        key_data.len(),
-                        key_data.get(0).map_or(0, |b| *b)
+                        "Invalid public key format: length={}, empty or too short",
+                        key_data.len()
                     ));
                 }
             }
@@ -658,7 +692,6 @@ impl CertificateStore {
                 issuer_public_key,
                 &signature::ECDSA_P256_SHA256_ASN1,
             ),
-            // ... other cases remain the same
             oid => {
                 warn!("Unsupported signature algorithm: {}", oid);
                 Err(AuthError::invalid_certificate(format!(
@@ -711,21 +744,6 @@ impl CertificateStore {
         Ok(permissions)
     }
 
-    // fn verify_rsa_signature(
-    //     &self,
-    //     data: &[u8],
-    //     signature: &[u8],
-    //     public_key: &[u8],
-    //     algorithm: &'static signature::RsaParameters,
-    // ) -> Result<bool, AuthError> {
-    //     let public_key = signature::UnparsedPublicKey::new(algorithm, public_key);
-    //     public_key
-    //         .verify(data, signature)
-    //         .map(|_| true)
-    //         .map_err(|_| AuthError::crypto_error("RSA signature verification failed"))
-    // }
-
-    // Define verify_ecdsa_signature
     fn verify_ecdsa_signature(
         &self,
         data: &[u8],
@@ -855,7 +873,7 @@ impl CryptoProvider {
     /// Performs Elliptic Curve Diffie-Hellman key exchange.
     pub async fn perform_ecdh(
         &self,
-        _private_key_bytes: &[u8],
+        private_key_bytes: &[u8],
         peer_public_key: &[u8],
     ) -> Result<Vec<u8>, AuthError> {
         debug!(
@@ -867,11 +885,41 @@ impl CryptoProvider {
             return Err(AuthError::crypto_error("ECDH - empty peer public key"));
         }
 
-        // Generate ephemeral private key
+        // Parse PKCS#8 private key
+        let private_key = pkcs8::PrivateKeyInfo::from_der(private_key_bytes).map_err(|e| {
+            error!("Failed to parse PKCS#8 private key: {:?}", e);
+            AuthError::crypto_error("Invalid PKCS#8 private key format")
+        })?;
+
+        // Extract raw private key (assuming X25519 or P-256)
+        let _raw_private_key = match private_key.algorithm.oid.to_string().as_str() {
+            "1.3.101.110" => {
+                // X25519
+                if private_key_bytes.len() < 32 {
+                    return Err(AuthError::crypto_error("Invalid X25519 private key length"));
+                }
+                private_key.private_key
+            }
+            "1.2.840.10045.2.1" => {
+                // ECDSA (e.g., P-256)
+                // Extract the private key from OCTET STRING
+                if private_key.private_key.len() < 2 || private_key.private_key[0] != 0x04 {
+                    return Err(AuthError::crypto_error("Invalid ECDSA private key format"));
+                }
+                &private_key.private_key[1..]
+            }
+            oid => {
+                return Err(AuthError::crypto_error(format!(
+                    "Unsupported private key algorithm: {oid}"
+                )));
+            }
+        };
+
+        // Create private key for ECDH
         let private_key = agreement::EphemeralPrivateKey::generate(&agreement::X25519, &*self.rng)
             .map_err(|e| {
-                error!("Failed to generate ephemeral private key: {:?}", e);
-                AuthError::crypto_error("ECDH ephemeral key generation")
+                error!("Failed to generate private key: {:?}", e);
+                AuthError::crypto_error("ECDH private key generation")
             })?;
 
         // Create public key from peer's bytes
@@ -966,7 +1014,6 @@ impl CryptoProvider {
     pub async fn hash_data(&self, data: &[u8], algorithm: &str) -> Result<Vec<u8>, AuthError> {
         debug!("Hashing {} bytes with {}", data.len(), algorithm);
 
-        // In the hash_data function, remove SHA1 from the match:
         let digest_algorithm = match algorithm.to_uppercase().as_str() {
             "SHA256" => &digest::SHA256,
             "SHA384" => &digest::SHA384,

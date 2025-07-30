@@ -178,7 +178,7 @@ impl TlsConfig {
             }
         }
 
-        // Add intermediate certs if needed
+        // Add intermediate certs_ecdh if needed
         if let Some(intermediate_certs) = &self.inner.intermediate_certs {
             debug!("Adding intermediate certificates to chain");
             let intermediate_certs = X509::stack_from_pem(intermediate_certs)?;

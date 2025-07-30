@@ -8,7 +8,6 @@ use crate::{
     server::AppState,
 };
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
-use base64::Engine;
 use tracing::{debug, error, warn};
 
 pub const EAC_REQUIRED_CHAT: &str = "7f4c12060904007f00070301020253050000000004";
@@ -157,50 +156,66 @@ where
         }
     };
 
-    let certificates_b64: Vec<String> = certs
-        .into_iter()
+    // Convert raw DER bytes to hex strings for XML (NO base64 encoding!)
+    let certificates_hex: Vec<String> = certs
+        .iter()
         .map(|cert| {
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&cert);
-            debug!("Base64-encoded certificate: {}", b64);
-            b64
+            let hex = hex::encode(cert);
+            debug!("Raw DER certificate as hex ({} bytes): {}", cert.len(), hex);
+            hex
         })
         .collect();
 
-    // Create certificate description (simplified, adjust as needed)
-    let certificate_description = r#"308202e9060a04007f00070301030101a1160c14476f7665726e696b757320546573742044564341a21a1318687474703a2f2f7777772e676f7665726e696b75732e6465a31a0c18476f7665726e696b757320476d6248202620436f2e204b47a418131668747470733a2f2f6c6f63616c686f73743a38343433a58201e10c8201dd4e616d652c20416e7363687269667420756e6420452d4d61696c2d4164726573736520646573204469656e737465616e626965746572733a0d0a476f7665726e696b757320476d6248202620436f2e204b470d0a486f6368736368756c72696e6720340d0a3238333539204272656d656e0d0a6b6f6e74616b7440676f7665726e696b75732e64650d0a0d0a48696e7765697320617566206469652066c3bc722064656e204469656e737465616e62696574657273207a757374c3a46e646967656e205374656c6c656e2c20646965206469652045696e68616c74756e672064657220566f7273636872696674656e207a756d20446174656e73636875747a206b6f6e74726f6c6c696572656e3a0d0a446965204c616e64657362656175667472616774652066c3bc7220446174656e73636875747a20756e6420496e666f726d6174696f6e736672656968656974206465722046726569656e2048616e73657374616474204272656d656e0d0a41726e647473747261c39f6520310d0a3237353730204272656d6572686176656e0d0a303432312f3539362d323031300d0a6f666669636540646174656e73636875747a2e6272656d656e2e64650d0a687474703a2f2f7777772e646174656e73636875747a2e6272656d656e2e6465a7818b31818804202a97cf32df5962486b3fb2fc21c70774908add9d699c9a9b491ce302c8ae849e04202d29c23103995d203fba7dc5271da2872ca0bf110d99455f53614b6d7236b83204202f2fcaa87ec0fc2487ceee9718ec272def0f310041c16b2ad8718bc51c3c7d1204206dec4dd3f51fdcac550188e3a91526ba8b693cac0e38562a03993cc877b54a21"#;
+    let certificate_description = match temp_service
+        .certificate_store
+        .generate_certificate_description(&certs)
+    {
+        Ok(desc) => {
+            debug!("Generated certificate description: {}", desc);
+            desc
+        }
+        Err(err) => {
+            error!("Failed to generate certificate description: {}", err);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to generate certificate description".to_string(),
+            )
+                .into_response();
+        }
+    };
 
-    // Construct PAOS response with DIDAuthenticate SOAP message for PACE
-    let certificates_xml: String = certificates_b64
+    // Create certificate XML elements using hex-encoded DER data
+    let certificates_xml: String = certificates_hex
         .into_iter()
-        .map(|cert| format!("<iso:Certificate>{}</iso:Certificate>", cert))
+        .map(|cert| format!("<ns4:Certificate>{}</ns4:Certificate>", cert))
         .collect::<Vec<String>>()
         .join("");
 
     let paos_response = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">
-    <SOAP-ENV:Header>
-        <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
-        <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
-    </SOAP-ENV:Header>
-    <SOAP-ENV:Body>
-        <iso:DIDAuthenticate xmlns:iso="urn:iso:std:iso-iec:24727:tech:schema">
-            <iso:ConnectionHandle>
-                <iso:CardApplication>{}</iso:CardApplication>
-                <iso:SlotHandle>00</iso:SlotHandle>
-            </iso:ConnectionHandle>
-            <iso:DIDName>PIN</iso:DIDName>
-            <iso:AuthenticationProtocolData xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Protocol="urn:oid:1.3.162.15480.3.0.14.2" xsi:type="iso:EAC1InputType">
-                {}
-                <iso:CertificateDescription>{}</iso:CertificateDescription>
-                <iso:RequiredCHAT>{}</iso:RequiredCHAT>
-                <iso:OptionalCHAT>{}</iso:OptionalCHAT>
-                <iso:AuthenticatedAuxiliaryData>67177315060904007f00070301040253083230323530373238</iso:AuthenticatedAuxiliaryData>
-                <iso:AcceptedEIDType>CardCertified</iso:AcceptedEIDType>
-            </iso:AuthenticationProtocolData>
-        </iso:DIDAuthenticate>
-    </SOAP-ENV:Body>
-</SOAP-ENV:Envelope>"#,
+            <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
+                <SOAP-ENV:Header>
+                    <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
+                    <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
+                </SOAP-ENV:Header>
+                <SOAP-ENV:Body>
+                    <ns4:DIDAuthenticate>
+                        <ns4:ConnectionHandle>
+                            <ns4:CardApplication>{}</ns4:CardApplication>
+                            <ns4:SlotHandle>00</ns4:SlotHandle>
+                        </ns4:ConnectionHandle>
+                        <ns4:DIDName>PIN</ns4:DIDName>
+                        <ns4:AuthenticationProtocolData xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Protocol="urn:oid:1.3.162.15480.3.0.14.2" xsi:type="ns4:EAC1InputType">
+                            {}
+                            <ns4:CertificateDescription xmlns="urn:iso:std:iso-iec:24727:tech:schema">{}</ns4:CertificateDescription>
+                            <ns4:RequiredCHAT>{}</ns4:RequiredCHAT>
+                            <ns4:OptionalCHAT>{}</ns4:OptionalCHAT>
+                            <ns4:AuthenticatedAuxiliaryData>67177315060904007f00070301040253083230323530373238</ns4:AuthenticatedAuxiliaryData>
+                            <ns4:AcceptedEIDType>CardCertified</ns4:AcceptedEIDType>
+                        </ns4:AuthenticationProtocolData>
+                    </ns4:DIDAuthenticate>
+                </SOAP-ENV:Body>
+            </SOAP-ENV:Envelope>"#,
         message_id,
         uuid::Uuid::new_v4(),
         card_application,

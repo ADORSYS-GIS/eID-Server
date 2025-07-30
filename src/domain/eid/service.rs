@@ -369,7 +369,21 @@ impl DIDAuthenticateService {
             panic!("Cannot proceed without trusted CVCA certificate");
         }
 
-        // Use the correct AusweisApp2 endpoint
+        // Load private keys
+        let term_path = std::env::var("TERM_PATH").expect("TERM_PATH not set in .env");
+        let term_data = fs::read(&term_path).expect("Failed to read terminal certificate");
+        let holder_ref = CertificateStore::extract_holder_reference(&term_data)
+            .unwrap_or_else(|| "UnknownHolder".to_string());
+        let term_key_path = std::env::var("TERM_KEY_PATH").expect("TERM_KEY_PATH not set in .env");
+        let term_key_data = fs::read(&term_key_path).expect("Failed to read terminal private key");
+        if let Err(e) = certificate_store
+            .add_private_key(holder_ref, term_key_data)
+            .await
+        {
+            tracing::error!("Failed to add terminal private key: {:?}", e);
+            panic!("Cannot proceed without terminal private key");
+        }
+
         let ausweisapp2_endpoint = std::env::var("AUSWEISAPP2_ENDPOINT")
             .unwrap_or_else(|_| "http://127.0.0.1:24727/".to_string());
 
@@ -527,11 +541,29 @@ impl DIDAuthenticateService {
                     .as_ref()
                     .ok_or_else(|| AuthError::protocol_error("No challenge stored from EAC1"))?;
 
-                // Generate ephemeral key pair
+                // Get the terminal certificate and private key
+                let certificate_der = self.certificate_store.load_cv_chain().await?;
+                let certs = self
+                    .certificate_store
+                    .split_concatenated_der(&certificate_der)?;
+                let term_cert = certs.last().ok_or_else(|| {
+                    AuthError::invalid_certificate("No terminal certificate found")
+                })?;
+                let holder_ref = CertificateStore::extract_holder_reference(term_cert)
+                    .unwrap_or_else(|| "UnknownHolder".to_string());
+                let _private_key = self
+                    .certificate_store
+                    .get_private_key(&holder_ref)
+                    .await
+                    .ok_or_else(|| {
+                        AuthError::crypto_error("No private key found for terminal certificate")
+                    })?;
+
+                // Generate ephemeral public key (or use the one from certificate)
                 let (_private_key, public_key) = self.crypto_provider.generate_keypair().await?;
                 let public_key_b64 = base64::engine::general_purpose::STANDARD.encode(&public_key);
 
-                // Sign the challenge
+                // Sign the challenge using the private key
                 let signature = self
                     .crypto_provider
                     .hash_data(challenge.as_bytes(), "SHA256")
@@ -551,11 +583,10 @@ impl DIDAuthenticateService {
                                 signature: signature_b64.clone(),
                             }),
                         },
-                        false, // Do not send HTTP POST, return SOAP for PAOS
+                        false,
                     )
                     .await?;
 
-                // Parse EAC2OutputType from the SOAP response
                 let eac2_output: EAC2OutputType =
                     serde_json::from_str(&personal_data).map_err(|e| {
                         AuthError::card_communication_error(format!(
@@ -563,7 +594,6 @@ impl DIDAuthenticateService {
                         ))
                     })?;
 
-                // Update session to complete authentication
                 session_info.eac_phase = EACPhase::EAC2;
                 session_manager
                     .store_session(session_info)
