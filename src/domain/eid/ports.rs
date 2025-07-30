@@ -1,5 +1,3 @@
-//! interface that external modules use to interact with the domain.
-
 use crate::eid::use_id::model::{UseIDRequest, UseIDResponse};
 use async_trait::async_trait;
 use color_eyre::Result;

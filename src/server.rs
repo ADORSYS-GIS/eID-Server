@@ -7,8 +7,9 @@ use std::net::TcpListener;
 use std::sync::Arc;
 
 use crate::config::Config;
+use crate::domain::eid::session_manager::SessionManager;
 use crate::eid::get_server_info::handler::get_server_info;
-use crate::server::handlers::refresh::refresh_handler;
+use crate::server::handlers::paos::paos_handler;
 use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
 use axum_server::tls_openssl::{OpenSSLAcceptor, OpenSSLConfig};
@@ -39,7 +40,7 @@ pub struct Server {
 impl Server {
     /// Creates a new HTTPS server.
     pub async fn new(
-        eid_service: impl EIDService + EidService + DIDAuthenticate,
+        eid_service: impl EIDService + EidService + DIDAuthenticate + SessionManager,
         config: &Config,
         tls_config: TlsConfig,
     ) -> Result<Self> {
@@ -68,11 +69,15 @@ impl Server {
 
         let router = Router::new()
             .route("/health", get(health_check))
-            .route("/eIDService/useID", post(use_id_handler))
-            .route("/eIDService/useID", get(use_id_handler))
-            .route("/eIDService/getServerInfo", get(get_server_info))
+            .route("/", post(paos_handler))
             .route("/did-authenticate", post(did_authenticate))
-            .route("/refresh", get(refresh_handler))
+            .nest(
+                "/eIDService",
+                Router::new()
+                    .route("/useID", post(use_id_handler))
+                    .route("/useID", get(use_id_handler))
+                    .route("/getServerInfo", get(get_server_info)),
+            )
             .layer(cors_layer)
             .layer(trace_layer)
             .with_state(state);
