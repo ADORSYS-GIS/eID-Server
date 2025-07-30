@@ -39,10 +39,11 @@ const BSI_INTERNAL_ERROR_CODE: &str =
 
 // SOAP fault response structs for serialization
 #[derive(Debug, Serialize)]
-#[serde(rename = "Envelope")]
+#[serde(rename = "soap:Envelope")]
 struct SoapFaultEnvelope {
-    #[serde(rename = "xmlns:soap")]
+    #[serde(rename = "@xmlns:soap")]
     soap: &'static str,
+    #[serde(rename = "soap:Body")]
     body: SoapFaultBody,
 }
 
@@ -792,22 +793,8 @@ fn create_internal_error_response() -> String {
         },
     };
 
-    let xml = to_string(&soap_fault_envelope).unwrap_or_else(|e| {
-        error!("Failed to serialize SOAP fault response: {e}");
-        // Fallback to hardcoded response if serialization fails
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-    <soap:Body>
-        <soap:Fault>
-            <faultcode>soap:Server</faultcode>
-            <faultstring>Internal Error</faultstring>
-            <detail>
-                <ErrorCode>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error/common#internalError</ErrorCode>
-            </detail>
-        </soap:Fault>
-    </soap:Body>
-</soap:Envelope>"#.to_string()
-    });
+    let xml = to_string(&soap_fault_envelope)
+        .expect("SOAP fault serialization should never fail with valid structs");
 
     // Prepend XML declaration since serde_xml_rs doesn't include it
     format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{xml}")
@@ -1201,6 +1188,35 @@ mod tests {
         let result = build_tc_token(&response);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "No ecard_server_address");
+    }
+
+    #[test]
+    fn test_create_internal_error_response() {
+        let response = create_internal_error_response();
+
+        // Verify the response contains the expected XML structure
+        assert!(response.contains("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+        assert!(response.contains("xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\""));
+        assert!(response.contains("soap:Server"));
+        assert!(response.contains("Internal Error"));
+        assert!(response.contains(
+            "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error/common#internalError"
+        ));
+
+        // Verify it's valid XML by attempting to parse it
+        let mut reader = quick_xml::Reader::from_str(&response);
+        reader.config_mut().trim_text(true);
+        let mut buf = Vec::new();
+
+        // Should be able to parse without errors
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Eof) => break,
+                Ok(_) => {}
+                Err(e) => panic!("XML parsing failed: {e}"),
+            }
+            buf.clear();
+        }
     }
 
     #[tokio::test]
