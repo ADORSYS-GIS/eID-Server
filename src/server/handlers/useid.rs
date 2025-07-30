@@ -30,7 +30,59 @@ use crate::{
     server::AppState,
 };
 
+// Constants for SOAP fault responses
+const SOAP_NAMESPACE: &str = "http://schemas.xmlsoap.org/soap/envelope/";
+const SOAP_SERVER_FAULT_CODE: &str = "soap:Server";
+const INTERNAL_ERROR_FAULT_STRING: &str = "Internal Error";
+const BSI_INTERNAL_ERROR_CODE: &str = "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error/common#internalError";
+
+// SOAP fault response structs for serialization
+#[derive(Debug, Serialize)]
+#[serde(rename = "Envelope")]
+struct SoapFaultEnvelope {
+    #[serde(rename = "xmlns:soap")]
+    soap: &'static str,
+    body: SoapFaultBody,
+}
+
+#[derive(Debug, Serialize)]
+struct SoapFaultBody {
+    #[serde(rename = "soap:Fault")]
+    fault: SoapFault,
+}
+
+#[derive(Debug, Serialize)]
+struct SoapFault {
+    faultcode: &'static str,
+    faultstring: &'static str,
+    detail: SoapFaultDetail,
+}
+
+#[derive(Debug, Serialize)]
+struct SoapFaultDetail {
+    #[serde(rename = "ErrorCode")]
+    error_code: &'static str,
+}
+
 // Centralized XML signature configuration
+
+/// Configuration for XML signature certificate and key file paths
+#[derive(Debug, Clone)]
+pub struct XmlSignatureConfig {
+    pub cert_path: String,
+    pub key_path: String,
+}
+
+impl Default for XmlSignatureConfig {
+    fn default() -> Self {
+        Self {
+            cert_path: get_xml_signature_cert_path(),
+            key_path: get_xml_signature_key_path(),
+        }
+    }
+}
+
+// Backward compatibility functions
 fn get_xml_signature_cert_path() -> String {
     std::env::var("XML_SIGNATURE_CERT_PATH").unwrap_or_else(|_| "Config/cert.pem".to_string())
 }
@@ -290,7 +342,10 @@ pub async fn use_id_handler<S: EIDService + EidService>(
 
         match validator.validate_soap_signature(&body) {
             ValidationResult::Valid => {
-                info!("XML signature validation successful");
+                info!(
+                    "XML signature validation successful - message_size: {} bytes, contains_signature: true", 
+                    body.len()
+                );
             }
             ValidationResult::Invalid(reason) => {
                 error!("XML signature validation failed: {}", reason);
@@ -335,13 +390,17 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                     Ok(signer) => {
                         match signer.sign_soap_response(&soap_response) {
                             Ok(signed) => {
-                                info!("SOAP response signed successfully");
+                                info!(
+                                    "SOAP response signed successfully - original_size: {} bytes, signed_size: {} bytes",
+                                    soap_response.len(),
+                                    signed.len()
+                                );
                                 signed
                             }
                             Err(e) => {
                                 error!("Failed to sign SOAP response: {}", e);
                                 // BSI compliance: Return internalError instead of unsigned response
-                                return (StatusCode::BAD_REQUEST, create_internal_error_response())
+                                return (StatusCode::INTERNAL_SERVER_ERROR, create_internal_error_response())
                                     .into_response();
                             }
                         }
@@ -349,7 +408,7 @@ pub async fn use_id_handler<S: EIDService + EidService>(
                     Err(e) => {
                         error!("Failed to create XML signature signer: {}", e);
                         // BSI compliance: Return internalError instead of unsigned response
-                        return (StatusCode::BAD_REQUEST, create_internal_error_response())
+                        return (StatusCode::INTERNAL_SERVER_ERROR, create_internal_error_response())
                             .into_response();
                     }
                 };
@@ -685,29 +744,51 @@ fn create_soap_response_headers() -> HeaderMap {
     headers
 }
 
-/// Creates an XML signature validator with trusted certificates
-fn create_xml_signature_validator() -> Result<XmlSignatureValidator, String> {
+/// Creates an XML signature validator with trusted certificates using configuration
+fn create_xml_signature_validator_with_config(
+    config: &XmlSignatureConfig,
+) -> Result<XmlSignatureValidator, String> {
     let mut validator = XmlSignatureValidator::new()?;
 
     // Add trusted certificates from configuration
-    let cert_path = get_xml_signature_cert_path();
-
-    if std::path::Path::new(&cert_path).exists() {
-        validator.add_trusted_cert_from_file(&cert_path)?;
+    if std::path::Path::new(&config.cert_path).exists() {
+        validator.add_trusted_cert_from_file(&config.cert_path)?;
     } else {
         // For development/testing, we can continue without trusted certificates
         // In production, this should be a hard error
-        warn!("Trusted certificate file not found: {}", cert_path);
+        warn!("Trusted certificate file not found: {}", config.cert_path);
     }
 
     Ok(validator)
+}
+
+/// Creates an XML signature validator with trusted certificates (backward compatibility)
+fn create_xml_signature_validator() -> Result<XmlSignatureValidator, String> {
+    let config = XmlSignatureConfig::default();
+    create_xml_signature_validator_with_config(&config)
 }
 
 /// Creates an internal error response as per requirements
 /// Returns a proper SOAP fault with the error code .../common#internalError
 fn create_internal_error_response() -> String {
     // As per BSI requirements, respond with error code .../common#internalError
-    let soap_fault = r#"<?xml version="1.0" encoding="UTF-8"?>
+    let soap_fault_envelope = SoapFaultEnvelope {
+        soap: SOAP_NAMESPACE,
+        body: SoapFaultBody {
+            fault: SoapFault {
+                faultcode: SOAP_SERVER_FAULT_CODE,
+                faultstring: INTERNAL_ERROR_FAULT_STRING,
+                detail: SoapFaultDetail {
+                    error_code: BSI_INTERNAL_ERROR_CODE,
+                },
+            },
+        },
+    };
+
+    let xml = to_string(&soap_fault_envelope).unwrap_or_else(|e| {
+        error!("Failed to serialize SOAP fault response: {e}");
+        // Fallback to hardcoded response if serialization fails
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
     <soap:Body>
         <soap:Fault>
@@ -718,17 +799,24 @@ fn create_internal_error_response() -> String {
             </detail>
         </soap:Fault>
     </soap:Body>
-</soap:Envelope>"#;
+</soap:Envelope>"#.to_string()
+    });
 
-    soap_fault.to_string()
+    // Prepend XML declaration since serde_xml_rs doesn't include it
+    format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{xml}")
 }
 
-/// Creates an XML signature signer with eID-Server certificate
-fn create_xml_signature_signer() -> Result<XmlSignatureSigner, String> {
-    let key_path = get_xml_signature_key_path();
-    let cert_path = get_xml_signature_cert_path();
+/// Creates an XML signature signer with eID-Server certificate using configuration
+fn create_xml_signature_signer_with_config(
+    config: &XmlSignatureConfig,
+) -> Result<XmlSignatureSigner, String> {
+    XmlSignatureSigner::new_from_files(&config.key_path, &config.cert_path)
+}
 
-    XmlSignatureSigner::new_from_files(&key_path, &cert_path)
+/// Creates an XML signature signer with eID-Server certificate (backward compatibility)
+fn create_xml_signature_signer() -> Result<XmlSignatureSigner, String> {
+    let config = XmlSignatureConfig::default();
+    create_xml_signature_signer_with_config(&config)
 }
 
 /// Builds a SOAP response from a UseIDResponse struct using serde
