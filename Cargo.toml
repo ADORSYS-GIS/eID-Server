@@ -51,7 +51,6 @@ sha2 = "0.10"
 pem = "3.0"
 openssl = { version = "0.10", features = ["vendored"] }
 # XML canonicalization and processing
-xmltree = "0.10"
 xml_c14n = "0.3.0"
 
 [dev-dependencies]
