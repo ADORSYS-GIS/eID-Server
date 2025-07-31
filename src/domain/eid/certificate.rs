@@ -208,82 +208,142 @@ impl CertificateStore {
         })?;
         let tls_hash = self.hash_tls_cert(&tls_cert)?;
 
-        let mut writer = vec![];
+        // Create ASN.1 structure for CertificateDescription
+        let mut writer = Vec::new();
 
-        // Outer SEQUENCE (0x30)
+        // Outer SEQUENCE (0x30) with definite length
         writer.push(0x30);
-        let content_start = writer.len();
-        writer.push(0); // Placeholder for length
+        let length_pos = writer.len();
+        writer.push(0x00); // Placeholder for length
 
-        // DescriptionType OID (0.4.0.127.0.7.3.1.3.1)
+        // OID for CertificateDescription (0.4.0.127.0.7.3.1.3.1)
         writer.extend_from_slice(&[
-            0x06, 0x0A, 0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03, 0x01, 0x01,
+            0x06, 0x09, 0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03, 0x01,
         ]);
 
-        // DescriptionType ([1] { OCTET STRING })
-        writer.extend_from_slice(&[0xA1, 0x16, 0x0C, 0x14]);
-        writer.extend_from_slice(b"Governikus Test DVCA");
+        // DescriptionType ([1] UTF8String)
+        let description_type = b"Governikus Test DVCA";
+        writer.push(0xA1); // [1]
+        writer.push(0x16); // Length (22 bytes)
+        writer.push(0x0C); // UTF8String
+        writer.push(0x14); // Length (20 bytes)
+        writer.extend_from_slice(description_type);
 
-        // IssuerURL ([2] { OCTET STRING })
-        writer.extend_from_slice(&[0xA2, 0x1A, 0x0C, 0x18]);
-        writer.extend_from_slice(b"http://www.governikus.de");
+        // IssuerURL ([2] IA5String)
+        let issuer_url = b"http://www.governikus.de";
+        writer.push(0xA2); // [2]
+        writer.push(0x13); // Length (19 bytes)
+        writer.push(0x16); // IA5String
+        writer.push(0x11); // Length (17 bytes)
+        writer.extend_from_slice(issuer_url);
 
-        // SubjectName ([3] { OCTET STRING })
-        writer.extend_from_slice(&[0xA3, 0x1A, 0x0C, 0x18]);
-        writer.extend_from_slice(b"Governikus GmbH & Co. KG");
+        // SubjectName ([3] UTF8String)
+        let subject_name = b"Governikus GmbH & Co. KG";
+        writer.push(0xA3); // [3]
+        writer.push(0x1A); // Length (26 bytes)
+        writer.push(0x0C); // UTF8String
+        writer.push(0x18); // Length (24 bytes)
+        writer.extend_from_slice(subject_name);
 
-        // SubjectURL ([4] { OCTET STRING })
-        writer.extend_from_slice(&[0xA4, 0x18, 0x0C, 0x16]);
-        writer.extend_from_slice(b"https://localhost:8443");
+        // SubjectURL ([4] IA5String)
+        let subject_url = b"https://localhost:8443";
+        writer.push(0xA4); // [4]
+        writer.push(0x18); // Length (24 bytes)
+        writer.push(0x16); // IA5String
+        writer.push(0x16); // Length (22 bytes)
+        writer.extend_from_slice(subject_url);
 
-        // TermsOfUsage ([5] { UTF8String })
+        // TermsOfUsage ([5] UTF8String)
         let terms = "Name, Anschrift und E-Mail-Adresse des Diensteanbieters:\r\n\
-        Governikus GmbH & Co. KG\r\n\
-        Hochschulring 4\r\n\
-        28359 Bremen\r\n\
-        kontakt@governikus.de\r\n\r\n\
-        Hinweis auf die fuer den Diensteanbieter zustaendigen Stellen, die die Einhaltung der Vorschriften zum Datenschutz kontrollieren:\r\n\
-        Die Landesbeauftragte fuer Datenschutz und Informationsfreiheit der Freien Hansestadt Bremen\r\n\
-        Arndtstrasse 1\r\n\
-        27570 Bremerhaven\r\n\
-        0421/596-2010\r\n\
-        office@datenschutz.bremen.de\r\n\
-        http://www.datenschutz.bremen.de";
+    Governikus GmbH & Co. KG\r\n\
+    Hochschulring 4\r\n\
+    28359 Bremen\r\n\
+    kontakt@governikus.de\r\n\r\n\
+    Hinweis auf die für den Diensteanbieter zuständigen Stellen, die die Einhaltung der Vorschriften zum Datenschutz kontrollieren:\r\n\
+    Die Landesbeauftragte für Datenschutz und Informationsfreiheit der Freien Hansestadt Bremen\r\n\
+    Arndtstraße 1\r\n\
+    27570 Bremerhaven\r\n\
+    0421/596-2010\r\n\
+    office@datenschutz.bremen.de\r\n\
+    http://www.datenschutz.bremen.de";
+
         let terms_bytes = terms.as_bytes();
-        writer.push(0xA5);
-        Self::write_der_length(&mut writer, terms_bytes.len() + 4);
-        writer.push(0x0C);
+        writer.push(0xA5); // [5]
+        Self::write_der_length(&mut writer, 2 + terms_bytes.len());
+        writer.push(0x0C); // UTF8String
         Self::write_der_length(&mut writer, terms_bytes.len());
         writer.extend_from_slice(terms_bytes);
 
-        // Certificate Hashes ([7] { SEQUENCE { OID, SEQUENCE of OCTET STRING } })
-        let mut hashes = vec![];
-        for cert in certs.iter() {
+        // CertificateExtensions ([7] SEQUENCE OF CertificateExtension)
+        let mut extensions = Vec::new();
+        let hash_oid = &[0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x04, 0x01]; // 0.4.0.127.0.7.3.1.4.1 (SHA-256)
+
+        // Add hashes for each certificate
+        for cert in certs {
             let hash = digest(&SHA256, cert);
-            debug!("Certificate hash: {}", hex::encode(hash.as_ref()));
-            hashes.extend_from_slice(&[0x04, 0x20]);
-            hashes.extend_from_slice(hash.as_ref());
+            let hash_bytes = hash.as_ref();
+
+            // CertificateExtension SEQUENCE
+            extensions.push(0x30); // SEQUENCE
+            let ext_length_pos = extensions.len();
+            extensions.push(0x00); // Placeholder for length
+
+            // OID for hash algorithm (SHA-256)
+            extensions.push(0x06); // OBJECT IDENTIFIER
+            extensions.push(hash_oid.len() as u8);
+            extensions.extend_from_slice(hash_oid);
+
+            // Hash value (OCTET STRING)
+            extensions.push(0x04); // OCTET STRING
+            extensions.push(hash_bytes.len() as u8);
+            extensions.extend_from_slice(hash_bytes);
+
+            // Update length for CertificateExtension
+            let ext_length = extensions.len() - ext_length_pos - 1;
+            extensions[ext_length_pos] = ext_length as u8; // Assuming length < 128 for simplicity
         }
-        debug!("TLS certificate hash: {}", hex::encode(&tls_hash));
-        hashes.extend_from_slice(&[0x04, 0x20]);
-        hashes.extend_from_slice(&tls_hash);
 
-        writer.push(0xA7); // Use [7] instead of [5]
-        Self::write_der_length(&mut writer, hashes.len() + 13);
-        writer.push(0x30);
-        Self::write_der_length(&mut writer, hashes.len() + 11);
-        writer.extend_from_slice(&[
-            0x06, 0x09, 0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03,
-            0x02, // OID 0.4.0.127.0.7.3.1.3.2
-            0x30,
-        ]);
-        Self::write_der_length(&mut writer, hashes.len());
-        writer.extend_from_slice(&hashes);
+        // Add TLS certificate hash
+        let hash = digest(&SHA256, &tls_cert);
+        let hash_bytes = hash.as_ref();
 
-        // Calculate and write the outer SEQUENCE length
-        let content_len = writer.len() - content_start - 1;
-        writer.splice(content_start..content_start + 1, vec![]); // Remove placeholder
-        Self::write_der_length(&mut writer, content_len);
+        // CertificateExtension SEQUENCE for TLS cert
+        extensions.push(0x30); // SEQUENCE
+        let ext_length_pos = extensions.len();
+        extensions.push(0x00); // Placeholder for length
+
+        // OID for hash algorithm (SHA-256)
+        extensions.push(0x06); // OBJECT IDENTIFIER
+        extensions.push(hash_oid.len() as u8);
+        extensions.extend_from_slice(hash_oid);
+
+        // Hash value (OCTET STRING)
+        extensions.push(0x04); // OCTET STRING
+        extensions.push(hash_bytes.len() as u8);
+        extensions.extend_from_slice(hash_bytes);
+
+        // Update length for TLS CertificateExtension
+        let ext_length = extensions.len() - ext_length_pos - 1;
+        extensions[ext_length_pos] = ext_length as u8; // Assuming length < 128
+
+        // Write extensions to main writer
+        writer.push(0xA7); // [7]
+        Self::write_der_length(&mut writer, extensions.len());
+        writer.extend_from_slice(&extensions);
+
+        // Update total length
+        let total_length = writer.len() - length_pos - 1;
+        if total_length <= 127 {
+            writer[length_pos] = total_length as u8;
+        } else {
+            let len_bytes = total_length.to_be_bytes();
+            let significant_bytes = len_bytes.iter().skip_while(|&&b| b == 0).count();
+            writer[length_pos] = 0x80 | significant_bytes as u8;
+            writer.splice(
+                length_pos + 1..length_pos + 1,
+                len_bytes[8 - significant_bytes..].iter().cloned(),
+            );
+        }
 
         let hex_description = hex::encode(&writer);
         debug!(

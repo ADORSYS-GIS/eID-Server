@@ -50,6 +50,7 @@ lru = "0.16"
 hex = "0.4"
 openssl = { version = "0.10", features = ["vendored"] }
 pkcs8 = "0.10"
+yasna = "0.5"
 
 [dev-dependencies]
 http-body-util = "0.1"
