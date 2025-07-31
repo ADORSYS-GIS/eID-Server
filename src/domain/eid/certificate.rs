@@ -16,7 +16,7 @@ use serde::Serialize;
 use std::{collections::HashMap, fs, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
-use x509_parser::prelude::X509Certificate;
+use x509_parser::prelude::{FromDer, X509Certificate};
 
 // Define ParsedCvc struct at module level
 #[derive(Debug)]
@@ -192,14 +192,13 @@ impl CertificateStore {
         None
     }
 
-    fn hash_tls_cert(&self, cert: &[u8]) -> Result<Vec<u8>, AuthError> {
-        let hash = digest(&SHA256, cert);
-        Ok(hash.as_ref().to_vec())
-    }
-
-    pub fn generate_certificate_description(&self, certs: &[Vec<u8>]) -> Result<String, AuthError> {
+    pub fn generate_certificate_description(
+        &self,
+        _certs: &[Vec<u8>],
+    ) -> Result<String, AuthError> {
         let tls_cert_path = std::env::var("TLS_CERT_PATH")
             .map_err(|e| AuthError::invalid_certificate(format!("TLS_CERT_PATH not set: {e}")))?;
+
         let tls_cert = fs::read(&tls_cert_path).map_err(|e| {
             AuthError::invalid_certificate(format!(
                 "Failed to read TLS certificate at {}: {e}",
@@ -208,160 +207,277 @@ impl CertificateStore {
         })?;
         let tls_hash = self.hash_tls_cert(&tls_cert)?;
 
-        // Create ASN.1 structure for CertificateDescription
-        let mut writer = Vec::new();
+        // Build the certificate description step by step
+        let mut content = Vec::new();
 
-        // Outer SEQUENCE (0x30) with definite length
-        writer.push(0x30);
-        let length_pos = writer.len();
-        writer.push(0x00); // Placeholder for length
+        // 1. OID for CertificateDescription (0.4.0.127.0.7.3.1.3.1)
+        content.push(0x06); // OBJECT IDENTIFIER
+        content.push(0x0A); // Length: 10 bytes
+        content.extend_from_slice(&[0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03, 0x01]);
 
-        // OID for CertificateDescription (0.4.0.127.0.7.3.1.3.1)
-        writer.extend_from_slice(&[
-            0x06, 0x09, 0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03, 0x01,
-        ]);
-
-        // DescriptionType ([1] UTF8String)
+        // 2. DescriptionType ([1] IMPLICIT UTF8String)
         let description_type = b"Governikus Test DVCA";
-        writer.push(0xA1); // [1]
-        writer.push(0x16); // Length (22 bytes)
-        writer.push(0x0C); // UTF8String
-        writer.push(0x14); // Length (20 bytes)
-        writer.extend_from_slice(description_type);
+        content.push(0xA1); // [1] EXPLICIT UTF8String
+        Self::write_der_length(&mut content, description_type.len() + 2);
+        content.push(0x0C); // UTF8String
+        Self::write_der_length(&mut content, description_type.len());
+        content.extend_from_slice(description_type);
 
-        // IssuerURL ([2] IA5String)
+        // 3. IssuerURL ([2] IMPLICIT IA5String)
         let issuer_url = b"http://www.governikus.de";
-        writer.push(0xA2); // [2]
-        writer.push(0x13); // Length (19 bytes)
-        writer.push(0x16); // IA5String
-        writer.push(0x11); // Length (17 bytes)
-        writer.extend_from_slice(issuer_url);
+        content.push(0xA2); // [2] EXPLICIT IA5String
+        Self::write_der_length(&mut content, issuer_url.len() + 2);
+        content.push(0x16); // IA5String
+        Self::write_der_length(&mut content, issuer_url.len());
+        content.extend_from_slice(issuer_url);
 
-        // SubjectName ([3] UTF8String)
+        // 4. SubjectName ([3] IMPLICIT UTF8String)
         let subject_name = b"Governikus GmbH & Co. KG";
-        writer.push(0xA3); // [3]
-        writer.push(0x1A); // Length (26 bytes)
-        writer.push(0x0C); // UTF8String
-        writer.push(0x18); // Length (24 bytes)
-        writer.extend_from_slice(subject_name);
+        content.push(0xA3); // [3] EXPLICIT UTF8String
+        Self::write_der_length(&mut content, subject_name.len() + 2);
+        content.push(0x0C); // UTF8String
+        Self::write_der_length(&mut content, subject_name.len());
+        content.extend_from_slice(subject_name);
 
-        // SubjectURL ([4] IA5String)
+        // 5. SubjectURL ([4] IMPLICIT IA5String)
         let subject_url = b"https://localhost:8443";
-        writer.push(0xA4); // [4]
-        writer.push(0x18); // Length (24 bytes)
-        writer.push(0x16); // IA5String
-        writer.push(0x16); // Length (22 bytes)
-        writer.extend_from_slice(subject_url);
+        content.push(0xA4); // [4] EXPLICIT IA5String
+        Self::write_der_length(&mut content, subject_url.len() + 2);
+        content.push(0x16); // IA5String
+        Self::write_der_length(&mut content, subject_url.len());
+        content.extend_from_slice(subject_url);
 
-        // TermsOfUsage ([5] UTF8String)
-        let terms = "Name, Anschrift und E-Mail-Adresse des Diensteanbieters:\r\n\
-    Governikus GmbH & Co. KG\r\n\
-    Hochschulring 4\r\n\
-    28359 Bremen\r\n\
-    kontakt@governikus.de\r\n\r\n\
-    Hinweis auf die für den Diensteanbieter zuständigen Stellen, die die Einhaltung der Vorschriften zum Datenschutz kontrollieren:\r\n\
-    Die Landesbeauftragte für Datenschutz und Informationsfreiheit der Freien Hansestadt Bremen\r\n\
-    Arndtstraße 1\r\n\
-    27570 Bremerhaven\r\n\
-    0421/596-2010\r\n\
-    office@datenschutz.bremen.de\r\n\
-    http://www.datenschutz.bremen.de";
-
+        // 6. TermsOfUsage ([5] IMPLICIT UTF8String)
+        let terms = "Name, Anschrift und E-Mail-Adresse des Diensteanbieters:\r\nGovernikus GmbH & Co. KG\r\nHochschulring 4\r\n28359 Bremen\r\nkontakt@governikus.de\r\n\r\nHinweis auf die für den Diensteanbieter zuständigen Stellen, die die Einhaltung der Vorschriften zum Datenschutz kontrollieren:\r\nDie Landesbeauftragte für Datenschutz und Informationsfreiheit der Freien Hansestadt Bremen\r\nArndtstraße 1\r\n27570 Bremerhaven\r\n0421/596-2010\r\noffice@datenschutz.bremen.de\r\nhttp://www.datenschutz.bremen.de";
         let terms_bytes = terms.as_bytes();
-        writer.push(0xA5); // [5]
-        Self::write_der_length(&mut writer, 2 + terms_bytes.len());
-        writer.push(0x0C); // UTF8String
-        Self::write_der_length(&mut writer, terms_bytes.len());
-        writer.extend_from_slice(terms_bytes);
+        content.push(0xA5); // [5] EXPLICIT UTF8String
+        Self::write_der_length(&mut content, terms_bytes.len() + 2);
+        content.push(0x0C); // UTF8String
+        Self::write_der_length(&mut content, terms_bytes.len());
+        content.extend_from_slice(terms_bytes);
 
-        // CertificateExtensions ([7] SEQUENCE OF CertificateExtension)
-        let mut extensions = Vec::new();
-        let hash_oid = &[0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x04, 0x01]; // 0.4.0.127.0.7.3.1.4.1 (SHA-256)
+        // 7. CertificateExtensions ([7] EXPLICIT SET OF CertificateExtension)
+        let mut cert_ext = Vec::new();
 
-        // Add hashes for each certificate
-        for cert in certs {
-            let hash = digest(&SHA256, cert);
-            let hash_bytes = hash.as_ref();
+        // Extension 1: TLS certificate hash
+        cert_ext.push(0x30); // SEQUENCE
+        let mut ext_content = Vec::new();
+        ext_content.push(0x06); // OBJECT IDENTIFIER
+        ext_content.push(0x0A); // Length: 10 bytes
+        ext_content.extend_from_slice(&[0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x04, 0x01]);
+        ext_content.push(0x04); // OCTET STRING
+        Self::write_der_length(&mut ext_content, tls_hash.len());
+        ext_content.extend_from_slice(&tls_hash);
+        Self::write_der_length(&mut cert_ext, ext_content.len());
+        cert_ext.extend_from_slice(&ext_content);
 
-            // CertificateExtension SEQUENCE
-            extensions.push(0x30); // SEQUENCE
-            let ext_length_pos = extensions.len();
-            extensions.push(0x00); // Placeholder for length
+        // Wrap extensions in SET
+        let mut set_content = Vec::new();
+        set_content.push(0x31); // SET
+        Self::write_der_length(&mut set_content, cert_ext.len());
+        set_content.extend_from_slice(&cert_ext);
 
-            // OID for hash algorithm (SHA-256)
-            extensions.push(0x06); // OBJECT IDENTIFIER
-            extensions.push(hash_oid.len() as u8);
-            extensions.extend_from_slice(hash_oid);
+        // Wrap SET in [7] EXPLICIT
+        content.push(0xA7); // [7] EXPLICIT SET
+        Self::write_der_length(&mut content, set_content.len());
+        content.extend_from_slice(&set_content);
 
-            // Hash value (OCTET STRING)
-            extensions.push(0x04); // OCTET STRING
-            extensions.push(hash_bytes.len() as u8);
-            extensions.extend_from_slice(hash_bytes);
+        // 8. Wrap everything in outer SEQUENCE
+        let mut result = Vec::new();
+        result.push(0x30); // SEQUENCE
+        Self::write_der_length(&mut result, content.len());
+        result.extend_from_slice(&content);
 
-            // Update length for CertificateExtension
-            let ext_length = extensions.len() - ext_length_pos - 1;
-            extensions[ext_length_pos] = ext_length as u8; // Assuming length < 128 for simplicity
-        }
-
-        // Add TLS certificate hash
-        let hash = digest(&SHA256, &tls_cert);
-        let hash_bytes = hash.as_ref();
-
-        // CertificateExtension SEQUENCE for TLS cert
-        extensions.push(0x30); // SEQUENCE
-        let ext_length_pos = extensions.len();
-        extensions.push(0x00); // Placeholder for length
-
-        // OID for hash algorithm (SHA-256)
-        extensions.push(0x06); // OBJECT IDENTIFIER
-        extensions.push(hash_oid.len() as u8);
-        extensions.extend_from_slice(hash_oid);
-
-        // Hash value (OCTET STRING)
-        extensions.push(0x04); // OCTET STRING
-        extensions.push(hash_bytes.len() as u8);
-        extensions.extend_from_slice(hash_bytes);
-
-        // Update length for TLS CertificateExtension
-        let ext_length = extensions.len() - ext_length_pos - 1;
-        extensions[ext_length_pos] = ext_length as u8; // Assuming length < 128
-
-        // Write extensions to main writer
-        writer.push(0xA7); // [7]
-        Self::write_der_length(&mut writer, extensions.len());
-        writer.extend_from_slice(&extensions);
-
-        // Update total length
-        let total_length = writer.len() - length_pos - 1;
-        if total_length <= 127 {
-            writer[length_pos] = total_length as u8;
-        } else {
-            let len_bytes = total_length.to_be_bytes();
-            let significant_bytes = len_bytes.iter().skip_while(|&&b| b == 0).count();
-            writer[length_pos] = 0x80 | significant_bytes as u8;
-            writer.splice(
-                length_pos + 1..length_pos + 1,
-                len_bytes[8 - significant_bytes..].iter().cloned(),
-            );
-        }
-
-        let hex_description = hex::encode(&writer);
+        let hex_description = hex::encode(&result);
         debug!(
             "Generated CertificateDescription ({} bytes): {}",
-            writer.len(),
+            result.len(),
             hex_description
         );
+
+        // Validate the generated structure
+        Self::validate_certificate_description(&result)?;
+
         Ok(hex_description)
     }
 
+    // Helper method to parse DER length (needed for validation)
+    fn parse_der_length(data: &[u8]) -> Result<(usize, usize), String> {
+        if data.is_empty() {
+            return Err("Empty data".to_string());
+        }
+
+        let first_byte = data[0];
+
+        if first_byte & 0x80 == 0 {
+            // Short form: length is in the first byte
+            Ok((first_byte as usize, 1))
+        } else {
+            // Long form: first byte indicates how many bytes follow
+            let length_bytes = (first_byte & 0x7F) as usize;
+
+            if length_bytes == 0 {
+                return Err("Indefinite length not allowed in DER".to_string());
+            }
+
+            if length_bytes > 4 {
+                return Err("Length too large".to_string());
+            }
+
+            if data.len() < 1 + length_bytes {
+                return Err("Insufficient data for length".to_string());
+            }
+
+            let mut length = 0usize;
+            for i in 0..length_bytes {
+                length = (length << 8) | (data[1 + i] as usize);
+            }
+
+            Ok((length, 1 + length_bytes))
+        }
+    }
+
+    // Fixed write_der_length method
     fn write_der_length(writer: &mut Vec<u8>, length: usize) {
-        if length <= 127 {
+        if length < 128 {
+            // Short form: length fits in 7 bits
+            writer.push(length as u8);
+        } else if length < 256 {
+            // Long form: 1 byte for length
+            writer.push(0x81); // 0x80 | 1 (1 byte follows)
+            writer.push(length as u8);
+        } else if length < 65536 {
+            // Long form: 2 bytes for length
+            writer.push(0x82); // 0x80 | 2 (2 bytes follow)
+            writer.push((length >> 8) as u8);
+            writer.push(length as u8);
+        } else if length < 16777216 {
+            // Long form: 3 bytes for length
+            writer.push(0x83); // 0x80 | 3 (3 bytes follow)
+            writer.push((length >> 16) as u8);
+            writer.push((length >> 8) as u8);
             writer.push(length as u8);
         } else {
-            let len_bytes = length.to_be_bytes();
-            let significant_bytes = len_bytes.iter().skip_while(|&&b| b == 0).count();
-            writer.push(0x80 | significant_bytes as u8);
-            writer.extend_from_slice(&len_bytes[8 - significant_bytes..]);
+            // Long form: 4 bytes for length (should be sufficient for most cases)
+            writer.push(0x84); // 0x80 | 4 (4 bytes follow)
+            writer.push((length >> 24) as u8);
+            writer.push((length >> 16) as u8);
+            writer.push((length >> 8) as u8);
+            writer.push(length as u8);
+        }
+    }
+
+    // Fixed validation method
+    fn validate_certificate_description(data: &[u8]) -> Result<(), AuthError> {
+        // First, check if the input is hex encoded
+        let decoded_data = if data.iter().all(|b| b.is_ascii_hexdigit()) {
+            hex::decode(data).map_err(|e| {
+                AuthError::invalid_certificate(format!(
+                    "Failed to hex decode CertificateDescription: {}",
+                    e
+                ))
+            })?
+        } else {
+            data.to_vec()
+        };
+
+        if decoded_data.len() < 12 {
+            return Err(AuthError::invalid_certificate(
+                "CertificateDescription too short",
+            ));
+        }
+
+        if decoded_data[0] != 0x30 {
+            return Err(AuthError::invalid_certificate(
+                "CertificateDescription must start with SEQUENCE tag (0x30)",
+            ));
+        }
+
+        // Parse the length to validate structure
+        let (length, len_bytes) = Self::parse_der_length(&decoded_data[1..]).map_err(|e| {
+            AuthError::invalid_certificate(format!("Invalid length encoding: {}", e))
+        })?;
+
+        let expected_total = 1 + len_bytes + length;
+        if expected_total != decoded_data.len() {
+            return Err(AuthError::invalid_certificate(format!(
+                "Length mismatch: header indicates {}, actual {}",
+                expected_total,
+                decoded_data.len()
+            )));
+        }
+
+        // Additional validation: check for required OID at start of content
+        let content_start = 1 + len_bytes;
+        if content_start + 12 > decoded_data.len() {
+            return Err(AuthError::invalid_certificate(
+                "CertificateDescription too short for required OID",
+            ));
+        }
+
+        // Check for CertificateDescription OID (0.4.0.127.0.7.3.1.3.1)
+        if decoded_data[content_start] != 0x06 || decoded_data[content_start + 1] != 0x0A {
+            return Err(AuthError::invalid_certificate(
+                "CertificateDescription missing required OID (expected 0x06 0x0A)",
+            ));
+        }
+
+        let expected_oid = [0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03, 0x01];
+        if &decoded_data[content_start + 2..content_start + 11] != expected_oid {
+            return Err(AuthError::invalid_certificate(
+                "CertificateDescription has incorrect OID",
+            ));
+        }
+
+        debug!(
+            "CertificateDescription validation passed: {} bytes",
+            decoded_data.len()
+        );
+        Ok(())
+    }
+
+    // Hash TLS certificate method
+    fn hash_tls_cert(&self, cert: &[u8]) -> Result<Vec<u8>, AuthError> {
+        debug!("Attempting to parse TLS certificate ({} bytes)", cert.len());
+
+        // First try parsing as DER directly
+        match X509Certificate::from_der(cert) {
+            Ok((_, parsed_cert)) => {
+                debug!("Successfully parsed as DER certificate");
+                let hash = digest(&SHA256, parsed_cert.tbs_certificate.as_ref());
+                Ok(hash.as_ref().to_vec())
+            }
+            Err(der_err) => {
+                debug!("Failed to parse as DER: {}, trying PEM...", der_err);
+
+                // Try parsing as PEM
+                match x509_parser::pem::parse_x509_pem(cert) {
+                    Ok((remaining, pem)) => {
+                        debug!("Successfully parsed PEM envelope");
+                        match X509Certificate::from_der(&pem.contents) {
+                            Ok((_, parsed_cert)) => {
+                                debug!("Successfully parsed PEM-contained DER certificate");
+                                let hash = digest(&SHA256, parsed_cert.tbs_certificate.as_ref());
+                                Ok(hash.as_ref().to_vec())
+                            }
+                            Err(pem_der_err) => {
+                                warn!("Failed to parse PEM-contained DER: {}", pem_der_err);
+                                Err(AuthError::invalid_certificate(format!(
+                                    "Failed to parse PEM-contained DER: {}",
+                                    pem_der_err
+                                )))
+                            }
+                        }
+                    }
+                    Err(pem_err) => {
+                        warn!("Failed to parse PEM: {}", pem_err);
+                        Err(AuthError::invalid_certificate(format!(
+                            "Failed to parse PEM: {}",
+                            pem_err
+                        )))
+                    }
+                }
+            }
         }
     }
 
@@ -605,49 +721,6 @@ impl CertificateStore {
             pos += 1;
         }
         Err("Public key (0x86 tag) not found in body".to_string())
-    }
-
-    fn parse_der_length(data: &[u8]) -> Result<(usize, usize), String> {
-        if data.is_empty() {
-            return Err("Empty length field".to_string());
-        }
-
-        let first_byte = data[0];
-        if first_byte & 0x80 == 0 {
-            // Short form - single byte length
-            Ok((first_byte as usize, 1))
-        } else {
-            // Long form - multiple byte length
-            let len_bytes = (first_byte & 0x7F) as usize;
-            if len_bytes == 0 {
-                return Err("Indefinite length not supported".to_string());
-            }
-            if len_bytes > 4 {
-                return Err(format!(
-                    "Length too large ({} bytes, max 4 supported)",
-                    len_bytes
-                ));
-            }
-            if data.len() < 1 + len_bytes {
-                return Err(format!(
-                    "Insufficient data for length (need {} bytes, got {})",
-                    1 + len_bytes,
-                    data.len()
-                ));
-            }
-
-            let mut length = 0usize;
-            for i in 0..len_bytes {
-                length = (length << 8) | data[1 + i] as usize;
-            }
-
-            // Basic sanity check
-            if length > 10 * 1024 * 1024 {
-                return Err(format!("Implausible large length: {} bytes", length));
-            }
-
-            Ok((length, 1 + len_bytes))
-        }
     }
 
     pub fn split_concatenated_der(&self, data: &[u8]) -> Result<Vec<Vec<u8>>, AuthError> {
