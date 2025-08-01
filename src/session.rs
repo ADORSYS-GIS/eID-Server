@@ -20,12 +20,6 @@ pub(crate) const TIMESTAMP_BYTES: usize = 16;
 
 type Result<T> = result::Result<T, SessionError>;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct SessionEntry {
-    pub data: Vec<u8>,
-    pub expiry_date: UtcDateTime,
-}
-
 /// A session manager
 #[derive(Debug, Clone)]
 pub struct SessionManager<Store: SessionStore> {
