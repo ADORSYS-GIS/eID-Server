@@ -60,6 +60,7 @@ features = ["tokio-native-tls-comp", "connection-manager", "safe_iterators"]
 
 [dev-dependencies]
 http-body-util = "0.1"
+pollster = "0.4"
 
 [profile.dev.package.backtrace]
 opt-level = 3
