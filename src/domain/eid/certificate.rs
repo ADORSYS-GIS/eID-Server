@@ -210,79 +210,78 @@ impl CertificateStore {
         // Build the certificate description step by step
         let mut content = Vec::new();
 
-        // 1. OID for CertificateDescription (0.4.0.127.0.7.3.1.3.1)
+        // 1. OID for CertificateDescription (0.4.0.127.0.7.3.1.3.1.1)
         content.push(0x06); // OBJECT IDENTIFIER
         content.push(0x0A); // Length: 10 bytes
-        content.extend_from_slice(&[0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03, 0x01]);
+        content.extend_from_slice(&[0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03, 0x01, 0x01]);
 
-        // 2. DescriptionType ([1] IMPLICIT UTF8String)
-        let description_type = b"Governikus Test DVCA";
+        // 2. IssuerName ([1] EXPLICIT UTF8String)
+        let issuer_name = b"Governikus Test DVCA";
         content.push(0xA1); // [1] EXPLICIT UTF8String
-        Self::write_der_length(&mut content, description_type.len() + 2);
+        Self::write_der_length(&mut content, issuer_name.len() + 2); // +2 for inner tag and length
         content.push(0x0C); // UTF8String
-        Self::write_der_length(&mut content, description_type.len());
-        content.extend_from_slice(description_type);
+        Self::write_der_length(&mut content, issuer_name.len());
+        content.extend_from_slice(issuer_name);
 
-        // 3. IssuerURL ([2] IMPLICIT IA5String)
+        // 3. IssuerURL ([2] EXPLICIT PrintableString)
         let issuer_url = b"http://www.governikus.de";
-        content.push(0xA2); // [2] EXPLICIT IA5String
-        Self::write_der_length(&mut content, issuer_url.len() + 2);
-        content.push(0x16); // IA5String
+        content.push(0xA2); // [2] EXPLICIT PrintableString
+        Self::write_der_length(&mut content, issuer_url.len() + 2); // +2 for inner tag and length
+        content.push(0x13); // PrintableString (0x13, not 0x16)
         Self::write_der_length(&mut content, issuer_url.len());
         content.extend_from_slice(issuer_url);
 
-        // 4. SubjectName ([3] IMPLICIT UTF8String)
+        // 4. SubjectName ([3] EXPLICIT UTF8String)
         let subject_name = b"Governikus GmbH & Co. KG";
         content.push(0xA3); // [3] EXPLICIT UTF8String
-        Self::write_der_length(&mut content, subject_name.len() + 2);
+        Self::write_der_length(&mut content, subject_name.len() + 2); // +2 for inner tag and length
         content.push(0x0C); // UTF8String
         Self::write_der_length(&mut content, subject_name.len());
         content.extend_from_slice(subject_name);
 
-        // 5. SubjectURL ([4] IMPLICIT IA5String)
-        let subject_url = b"https://localhost:8443";
-        content.push(0xA4); // [4] EXPLICIT IA5String
-        Self::write_der_length(&mut content, subject_url.len() + 2);
-        content.push(0x16); // IA5String
+        // 5. SubjectURL ([4] EXPLICIT PrintableString)
+        let subject_url = b"https://test.governikus-eid.de";
+        content.push(0xA4); // [4] EXPLICIT PrintableString
+        Self::write_der_length(&mut content, subject_url.len() + 2); // +2 for inner tag and length
+        content.push(0x13); // PrintableString (0x13, not 0x16)
         Self::write_der_length(&mut content, subject_url.len());
         content.extend_from_slice(subject_url);
 
-        // 6. TermsOfUsage ([5] IMPLICIT UTF8String)
+        // 6. TermsOfUsage ([5] EXPLICIT ANY)
         let terms = "Name, Anschrift und E-Mail-Adresse des Diensteanbieters:\r\nGovernikus GmbH & Co. KG\r\nHochschulring 4\r\n28359 Bremen\r\nkontakt@governikus.de\r\n\r\nHinweis auf die für den Diensteanbieter zuständigen Stellen, die die Einhaltung der Vorschriften zum Datenschutz kontrollieren:\r\nDie Landesbeauftragte für Datenschutz und Informationsfreiheit der Freien Hansestadt Bremen\r\nArndtstraße 1\r\n27570 Bremerhaven\r\n0421/596-2010\r\noffice@datenschutz.bremen.de\r\nhttp://www.datenschutz.bremen.de";
         let terms_bytes = terms.as_bytes();
-        content.push(0xA5); // [5] EXPLICIT UTF8String
-        Self::write_der_length(&mut content, terms_bytes.len() + 2);
+        
+        // Calculate the proper length for EXPLICIT wrapper
+        let utf8_length_encoding_size = Self::calculate_der_length_size(terms_bytes.len());
+        let inner_utf8_total_size = 1 + utf8_length_encoding_size + terms_bytes.len(); // tag + length + content
+        
+        content.push(0xA5); // [5] EXPLICIT ANY (contains UTF8String)
+        Self::write_der_length(&mut content, inner_utf8_total_size);
         content.push(0x0C); // UTF8String
         Self::write_der_length(&mut content, terms_bytes.len());
         content.extend_from_slice(terms_bytes);
 
-        // 7. CertificateExtensions ([7] EXPLICIT SET OF CertificateExtension)
-        let mut cert_ext = Vec::new();
+        // 7. CommCertificates ([7] EXPLICIT SET OF OCTET STRING) - OPTIONAL
+        // For now, we'll include the TLS certificate hash as a single OCTET STRING
+        let mut comm_certs = Vec::new();
+        
+        // Add TLS certificate hash as OCTET STRING
+        comm_certs.push(0x04); // OCTET STRING
+        Self::write_der_length(&mut comm_certs, tls_hash.len());
+        comm_certs.extend_from_slice(&tls_hash);
 
-        // Extension 1: TLS certificate hash
-        cert_ext.push(0x30); // SEQUENCE
-        let mut ext_content = Vec::new();
-        ext_content.push(0x06); // OBJECT IDENTIFIER
-        ext_content.push(0x0A); // Length: 10 bytes
-        ext_content.extend_from_slice(&[0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x04, 0x01]);
-        ext_content.push(0x04); // OCTET STRING
-        Self::write_der_length(&mut ext_content, tls_hash.len());
-        ext_content.extend_from_slice(&tls_hash);
-        Self::write_der_length(&mut cert_ext, ext_content.len());
-        cert_ext.extend_from_slice(&ext_content);
-
-        // Wrap extensions in SET
+        // Wrap in SET structure for EXPLICIT tagging
         let mut set_content = Vec::new();
         set_content.push(0x31); // SET
-        Self::write_der_length(&mut set_content, cert_ext.len());
-        set_content.extend_from_slice(&cert_ext);
+        Self::write_der_length(&mut set_content, comm_certs.len());
+        set_content.extend_from_slice(&comm_certs);
 
-        // Wrap SET in [7] EXPLICIT
-        content.push(0xA7); // [7] EXPLICIT SET
+        // Wrap in EXPLICIT tag
+        content.push(0xA7); // [7] EXPLICIT SET OF OCTET STRING
         Self::write_der_length(&mut content, set_content.len());
         content.extend_from_slice(&set_content);
 
-        // 8. Wrap everything in outer SEQUENCE
+        // 6. Wrap everything in outer SEQUENCE
         let mut result = Vec::new();
         result.push(0x30); // SEQUENCE
         Self::write_der_length(&mut result, content.len());
@@ -334,6 +333,26 @@ impl CertificateStore {
             }
 
             Ok((length, 1 + length_bytes))
+        }
+    }
+
+    // Helper method to calculate how many bytes are needed to encode a length in DER format
+    fn calculate_der_length_size(length: usize) -> usize {
+        if length < 128 {
+            // Short form: 1 byte
+            1
+        } else if length < 256 {
+            // Long form: 1 byte for 0x81 + 1 byte for length = 2 bytes total
+            2
+        } else if length < 65536 {
+            // Long form: 1 byte for 0x82 + 2 bytes for length = 3 bytes total
+            3
+        } else if length < 16777216 {
+            // Long form: 1 byte for 0x83 + 3 bytes for length = 4 bytes total
+            4
+        } else {
+            // Long form: 1 byte for 0x84 + 4 bytes for length = 5 bytes total
+            5
         }
     }
 
@@ -415,15 +434,15 @@ impl CertificateStore {
             ));
         }
 
-        // Check for CertificateDescription OID (0.4.0.127.0.7.3.1.3.1)
+        // Check for CertificateDescription OID (0.4.0.127.0.7.3.1.3.1.1)
         if decoded_data[content_start] != 0x06 || decoded_data[content_start + 1] != 0x0A {
             return Err(AuthError::invalid_certificate(
                 "CertificateDescription missing required OID (expected 0x06 0x0A)",
             ));
         }
 
-        let expected_oid = [0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03, 0x01];
-        if &decoded_data[content_start + 2..content_start + 11] != expected_oid {
+        let expected_oid = [0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03, 0x01, 0x01];
+        if &decoded_data[content_start + 2..content_start + 12] != expected_oid {
             return Err(AuthError::invalid_certificate(
                 "CertificateDescription has incorrect OID",
             ));

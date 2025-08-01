@@ -207,10 +207,10 @@ where
                         <ns4:DIDName>PIN</ns4:DIDName>
                         <ns4:AuthenticationProtocolData xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Protocol="urn:oid:1.3.162.15480.3.0.14.2" xsi:type="ns4:EAC1InputType">
                             {}
-                            <ns4:CertificateDescription xmlns="urn:iso:std:iso-iec:24727:tech:schema">{}</ns4:CertificateDescription>
+                            <ns4:CertificateDescription>{}</ns4:CertificateDescription>
                             <ns4:RequiredCHAT>{}</ns4:RequiredCHAT>
                             <ns4:OptionalCHAT>{}</ns4:OptionalCHAT>
-                            <ns4:AuthenticatedAuxiliaryData>67177315060904007f00070301040253083230323530373238</ns4:AuthenticatedAuxiliaryData>
+                            <ns4:AuthenticatedAuxiliaryData>67177315060904007f00070301040253083230323530373330</ns4:AuthenticatedAuxiliaryData>
                             <ns4:AcceptedEIDType>CardCertified</ns4:AcceptedEIDType>
                         </ns4:AuthenticationProtocolData>
                     </ns4:DIDAuthenticate>
