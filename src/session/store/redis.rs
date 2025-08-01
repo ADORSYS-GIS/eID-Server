@@ -1,18 +1,14 @@
 use std::{
     sync::{
         Arc,
-        atomic::{self, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
 
-use crate::session::{
-    Session,
-    store::{Result, SessionStore},
-};
+use crate::session::store::{Result, SessionStore};
 use async_trait::async_trait;
 use redis::{AsyncCommands, AsyncIter, aio::ConnectionManager};
-use time::UtcDateTime;
 use tokio::sync::RwLock;
 
 const DEFAULT_PREFIX: &str = "session";
@@ -23,7 +19,7 @@ const RESYNC_INTERVAL: Duration = Duration::from_secs(60);
 pub struct RedisStore {
     conn: ConnectionManager,
     prefix: String,
-    duration: Arc<RwLock<Option<Instant>>>,
+    last_sync: Arc<RwLock<Option<Instant>>>,
     counter: Arc<AtomicUsize>,
 }
 
@@ -33,24 +29,27 @@ impl RedisStore {
         Self {
             conn,
             prefix: DEFAULT_PREFIX.to_string(),
-            duration: Arc::new(RwLock::new(None)),
+            last_sync: Arc::new(RwLock::new(None)),
             counter: Arc::new(AtomicUsize::new(0)),
         }
     }
 
     /// Configures the prefix for all session keys.
     ///
-    /// The default prefix is "session".
+    /// The default prefix is `"session"`.
     pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.prefix = prefix.into();
         self
     }
 
     fn key(&self, session_id: &[u8]) -> Vec<u8> {
-        [self.prefix.as_bytes(), session_id].concat()
+        let mut key = Vec::with_capacity(self.prefix.as_bytes().len() + session_id.len());
+        key.extend_from_slice(self.prefix.as_bytes());
+        key.extend_from_slice(session_id);
+        key
     }
 
-    async fn get_count(&self) -> Result<usize> {
+    async fn active_sessions_count(&self) -> Result<usize> {
         let mut conn = self.conn.clone();
         let mut count = 0;
         let pattern = format!("{}*", self.prefix);
@@ -58,19 +57,32 @@ impl RedisStore {
         while iter.next_item().await.is_some() {
             count += 1;
         }
-        self.counter.store(count, atomic::Ordering::Release);
-        Ok(self.counter.load(atomic::Ordering::Acquire))
+        Ok(count)
+    }
+
+    fn needs_resync(&self, last_sync: &Option<Instant>) -> bool {
+        match last_sync {
+            Some(instant) => instant.elapsed() > RESYNC_INTERVAL,
+            None => true,
+        }
     }
 }
 
 #[async_trait]
 impl SessionStore for RedisStore {
-    async fn save(&self, session_id: &[u8], data: &[u8]) -> Result<()> {
+    async fn save(&self, session_id: &[u8], data: &[u8], ttl: Option<u64>) -> Result<()> {
         let mut conn = self.conn.clone();
-        let session: Session = serde_json::from_slice(data)?;
-        let ttl = (session.expiry_date - UtcDateTime::now()).whole_seconds();
         let key = self.key(session_id);
-        let _: () = conn.set_ex(key, data, ttl.max(0) as u64).await?;
+
+        if let Some(ttl) = ttl {
+            let _: () = conn.set_ex(key, data, ttl).await?;
+        } else {
+            let _: () = conn.set(key, data).await?;
+        }
+
+        if ttl.is_some() {
+            self.counter.fetch_add(1, Ordering::Relaxed);
+        }
         Ok(())
     }
 
@@ -84,29 +96,31 @@ impl SessionStore for RedisStore {
     async fn delete(&self, session_id: &[u8]) -> Result<()> {
         let mut conn = self.conn.clone();
         let key = self.key(session_id);
-
-        let _: () = conn.del(key).await?;
-
+        let deleted: usize = conn.del(key).await?;
+        if deleted > 0 {
+            self.counter.fetch_sub(1, Ordering::Relaxed);
+        }
         Ok(())
     }
 
     async fn count(&self) -> Result<usize> {
-        // Fast path check
-        if let Some(instant) = &*self.duration.read().await {
-            if instant.elapsed() <= RESYNC_INTERVAL {
-                return Ok(self.counter.load(Ordering::Relaxed));
+        // Fast path: check if we can use cached value
+        {
+            let guard = self.last_sync.read().await;
+            if !self.needs_resync(&*guard) {
+                return Ok(self.counter.load(Ordering::Acquire));
             }
         }
 
-        let mut guard = self.duration.write().await;
-        // We double check after acquiring write lock
-        if let Some(instant) = &*guard {
-            if instant.elapsed() <= RESYNC_INTERVAL {
-                return Ok(self.counter.load(Ordering::Relaxed));
-            }
+        let mut guard = self.last_sync.write().await;
+        // Double-check after acquiring write lock
+        if !self.needs_resync(&*guard) {
+            return Ok(self.counter.load(Ordering::Acquire));
         }
 
-        let count = self.get_count().await?;
+        // We need to update the counter
+        let count = self.active_sessions_count().await?;
+        self.counter.store(count, Ordering::Release);
         *guard = Some(Instant::now());
         Ok(count)
     }
