@@ -1,20 +1,21 @@
 use crate::session::store::SessionStoreError;
+use color_eyre::Report;
 
 /// Session errors.
 #[derive(thiserror::Error, Debug)]
 pub enum SessionError {
     #[error(transparent)]
-    SerdeJson(#[from] serde_json::Error),
-
-    #[error(transparent)]
     Store(#[from] SessionStoreError),
 
     #[error(transparent)]
-    Bincode(#[from] bincode::error::EncodeError),
+    Encode(#[from] bincode::error::EncodeError),
 
     #[error(transparent)]
-    BincodeDecode(#[from] bincode::error::DecodeError),
+    Decode(#[from] bincode::error::DecodeError),
 
     #[error("Maximum number of sessions reached")]
     MaxSessions,
+
+    #[error(transparent)]
+    Other(#[from] Report),
 }

@@ -4,10 +4,11 @@ mod tests;
 
 pub mod store;
 
+use color_eyre::eyre::eyre;
 pub use errors::SessionError;
 pub use store::{ExpiredDeletion, SessionStore, SessionStoreError};
 
-use std::{result, sync::Arc};
+use std::{array::TryFromSliceError, result, sync::Arc};
 
 use bincode::config::standard;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -15,6 +16,7 @@ use time::{Duration, UtcDateTime};
 
 pub(crate) const DEFAULT_DURATION: Duration = Duration::minutes(15);
 pub(crate) const DEFAULT_MAX_SESSIONS: usize = 100_000;
+pub(crate) const TIMESTAMP_BYTES: usize = 16;
 
 type Result<T> = result::Result<T, SessionError>;
 
@@ -82,20 +84,16 @@ impl<Store: SessionStore> SessionManager<Store> {
             return Err(SessionError::MaxSessions);
         }
 
-        let now = UtcDateTime::now();
-        let expiry_date = now.saturating_add(self.expiry);
+        let expiry_date = UtcDateTime::now().saturating_add(self.expiry);
+        let expiry_bytes = expiry_date.unix_timestamp_nanos().to_le_bytes();
+        let data_bytes = bincode::serde::encode_to_vec(value, standard())?;
         let ttl = self.expiry.whole_seconds().max(0) as u64;
 
-        let session = SessionEntry {
-            data: bincode::serde::encode_to_vec(value, standard())?,
-            expiry_date,
-        };
+        let mut payload = Vec::with_capacity(TIMESTAMP_BYTES + data_bytes.len());
+        payload.extend_from_slice(&expiry_bytes);
+        payload.extend_from_slice(&data_bytes);
 
-        let session_bytes = bincode::serde::encode_to_vec(&session, standard())?;
-
-        self.store
-            .save(key.as_ref(), &session_bytes, Some(ttl))
-            .await?;
+        self.store.save(key.as_ref(), &payload, Some(ttl)).await?;
         Ok(())
     }
 
@@ -105,10 +103,9 @@ impl<Store: SessionStore> SessionManager<Store> {
             return Ok(None);
         };
 
-        let (session, _): (SessionEntry, _) =
-            bincode::serde::decode_from_slice(&session_data, standard())?;
-        let (data, _): (T, _) = bincode::serde::decode_from_slice(&session.data, standard())?;
-
+        validate_session_data(&session_data)?;
+        let (data, _) =
+            bincode::serde::decode_from_slice(&session_data[TIMESTAMP_BYTES..], standard())?;
         Ok(Some(data))
     }
 
@@ -120,23 +117,19 @@ impl<Store: SessionStore> SessionManager<Store> {
 
     /// Sets the expiry for a specific session if it exists.
     pub async fn set_expiry(&self, key: Id, duration: Duration) -> Result<()> {
-        let Some(session_data) = self.store.load(key.as_ref()).await? else {
+        let Some(mut session_data) = self.store.load(key.as_ref()).await? else {
             return Ok(());
         };
 
-        let (mut session, _): (SessionEntry, _) =
-            bincode::serde::decode_from_slice(&session_data, standard())?;
-
-        let now = UtcDateTime::now();
-        session.expiry_date = now.saturating_add(duration);
+        validate_session_data(&session_data)?;
+        let new_expiry_date = UtcDateTime::now().saturating_add(duration);
+        let new_expiry_bytes = new_expiry_date.unix_timestamp_nanos().to_le_bytes();
         let ttl = duration.whole_seconds().max(0) as u64;
-
-        let updated_session_bytes = bincode::serde::encode_to_vec(&session, standard())?;
+        session_data[..TIMESTAMP_BYTES].copy_from_slice(&new_expiry_bytes);
 
         self.store
-            .save(key.as_ref(), &updated_session_bytes, Some(ttl))
+            .save(key.as_ref(), &session_data, Some(ttl))
             .await?;
-
         Ok(())
     }
 
@@ -146,10 +139,28 @@ impl<Store: SessionStore> SessionManager<Store> {
             return Ok(None);
         };
 
-        let (session, _): (SessionEntry, _) =
-            bincode::serde::decode_from_slice(&session_data, standard())?;
-        Ok(Some(session.expiry_date))
+        validate_session_data(&session_data)?;
+        let expiry_bytes: [u8; TIMESTAMP_BYTES] = session_data[..TIMESTAMP_BYTES]
+            .try_into()
+            .map_err(|e: TryFromSliceError| SessionError::Other(e.into()))?;
+        let timestamp = i128::from_le_bytes(expiry_bytes);
+
+        let expiry_date = UtcDateTime::from_unix_timestamp_nanos(timestamp)
+            .map_err(|e| SessionError::Other(e.into()))?;
+
+        Ok(Some(expiry_date))
     }
+}
+
+fn validate_session_data(session_data: &[u8]) -> Result<()> {
+    if session_data.len() < TIMESTAMP_BYTES {
+        return Err(SessionError::Other(eyre!(
+            "Invalid session data. Expected at least {} bytes, found {}",
+            TIMESTAMP_BYTES,
+            session_data.len()
+        )));
+    }
+    Ok(())
 }
 
 /// ID type for sessions
@@ -207,28 +218,3 @@ impl AsRef<[u8]> for Id {
         &self.0
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use crate::session::store::MemoryStore;
-
-//     use super::*;
-
-//     #[tokio::test]
-//     async fn test_session_manager_flow() {
-//         let store = MemoryStore::default();
-//         let session_id = "session_id";
-//         let data = "data";
-//         let manager = SessionManager::new(store);
-//         manager.insert(Id::from(session_id), data).await.unwrap();
-//         assert_eq!(
-//             manager.get::<String>(Id::from(session_id)).await.unwrap(),
-//             Some(data.to_string())
-//         );
-//         manager.remove(Id::from(session_id)).await.unwrap();
-//         assert_eq!(
-//             manager.get::<String>(Id::from(session_id)).await.unwrap(),
-//             None
-//         );
-//     }
-// }
