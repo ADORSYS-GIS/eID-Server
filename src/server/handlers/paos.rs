@@ -546,6 +546,7 @@ mod tests {
         AppState {
             use_id: Arc::clone(&use_id_service_arc),
             eid_service: Arc::clone(&use_id_service_arc),
+            transmit_channel: todo!(),
         }
     }
 

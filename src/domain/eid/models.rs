@@ -438,3 +438,35 @@ pub enum EAC2OutputType {
         challenge: String,
     },
 }
+
+/// XML structures for eID-Client communication
+/// These models represent the XML request/response structures used for APDU transmission
+/// according to TR-03130 and ISO 24727-3 specifications
+
+/// XML request structure for transmitting APDUs to the eID-Client
+#[derive(Debug, Serialize)]
+#[serde(rename = "Transmit", rename_all = "PascalCase")]
+pub struct TransmitRequest {
+    #[serde(rename = "@xmlns")]
+    pub xmlns: String,
+    pub slot_handle: String,
+    #[serde(rename = "InputAPDUInfo")]
+    pub input_apdu_info: InputAPDUInfoRequest,
+}
+
+/// APDU information structure for transmit requests
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct InputAPDUInfoRequest {
+    #[serde(rename = "InputAPDU")]
+    pub input_apdu: String,
+    pub acceptable_status_code: String,
+}
+
+/// XML response structure from the eID-Client
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct ClientResponse {
+    #[serde(rename = "OutputAPDU")]
+    pub output_apdu: String,
+}

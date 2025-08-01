@@ -2,19 +2,22 @@
 
 mod handlers;
 mod responses;
+pub mod session;
 
 use std::net::TcpListener;
 use std::sync::Arc;
+use std::time::Duration;
 
-use crate::config::Config;
+use crate::config::TransmitConfig;
 use crate::domain::eid::session_manager::SessionManager;
 use crate::eid::get_server_info::handler::get_server_info;
 use crate::server::handlers::paos::paos_handler;
 use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
 use axum_server::tls_openssl::{OpenSSLAcceptor, OpenSSLConfig};
-use color_eyre::eyre::{Context, Result};
+use color_eyre::eyre::{Context, Result, eyre};
 use handlers::health::health_check;
+use handlers::transmit::transmit_handler;
 use handlers::useid::use_id_handler;
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -22,12 +25,25 @@ use tower_http::{
 };
 
 use crate::domain::eid::ports::{DIDAuthenticate, EIDService, EidService};
+use crate::domain::eid::service::HttpTransmitService;
+use crate::domain::eid::transmit::{channel::TransmitChannel, protocol::ProtocolHandler};
+use crate::server::session::SessionManager as ServerSessionManager;
 use crate::tls::TlsConfig;
+
+#[derive(Debug, Clone)]
+pub struct AppServerConfig {
+    pub host: String,
+    pub port: u16,
+    pub tls_cert_path: String,
+    pub tls_key_path: String,
+    pub transmit: TransmitConfig,
+}
 
 #[derive(Debug, Clone)]
 pub struct AppState<S: EIDService + EidService> {
     pub use_id: Arc<S>,
     pub eid_service: Arc<S>,
+    pub transmit_channel: Arc<TransmitChannel>,
 }
 
 pub struct Server {
@@ -39,8 +55,8 @@ pub struct Server {
 impl Server {
     /// Creates a new HTTPS server.
     pub async fn new(
-        eid_service: impl EIDService + EidService + DIDAuthenticate + SessionManager,
-        config: &Config,
+        eid_service: impl EIDService + EidService + DIDAuthenticate + SessionManager + 'static,
+        config: AppServerConfig,
         tls_config: TlsConfig,
     ) -> Result<Self> {
         let trace_layer =
@@ -60,10 +76,31 @@ impl Server {
                 Method::OPTIONS,
             ]);
 
-        let eid_service = Arc::new(eid_service);
+        // This will encapsulate dependencies needed to execute the business logic
+        let eid_service_arc = Arc::new(eid_service);
+
+        // Initialize the TransmitChannel components
+        let protocol_handler = ProtocolHandler::new();
+        let session_manager =
+            ServerSessionManager::new(Duration::from_secs(config.transmit.session_timeout_secs));
+        let transmit_service = Arc::new(
+            HttpTransmitService::new(config.transmit.clone())
+                .map_err(|e| eyre!("Failed to create transmit service: {}", e))?,
+        );
+        let transmit_channel = Arc::new(
+            TransmitChannel::new(
+                protocol_handler,
+                session_manager,
+                transmit_service,
+                config.transmit.clone(),
+            )
+            .map_err(|e| eyre!("Failed to create transmit channel: {}", e))?,
+        );
+
         let state = AppState {
-            use_id: eid_service.clone(),
-            eid_service,
+            use_id: eid_service_arc.clone(),
+            eid_service: eid_service_arc,
+            transmit_channel,
         };
 
         let router = Router::new()
@@ -74,14 +111,15 @@ impl Server {
                 Router::new()
                     .route("/useID", post(use_id_handler))
                     .route("/useID", get(use_id_handler))
-                    .route("/getServerInfo", get(get_server_info)),
+                    .route("/getServerInfo", get(get_server_info))
+                    .route("/transmit", post(transmit_handler)),
             )
             .layer(cors_layer)
             .layer(trace_layer)
             .with_state(state);
 
-        let listener = TcpListener::bind(format!("{}:{}", config.server.host, config.server.port))
-            .wrap_err_with(|| format!("Failed to bind to port {}", config.server.port))?;
+        let listener = TcpListener::bind(format!("{}:{}", config.host, config.port))
+            .wrap_err_with(|| format!("Failed to bind to port {}", config.port))?;
 
         Ok(Self {
             router,
@@ -109,5 +147,69 @@ impl Server {
             .serve(self.router.into_make_service())
             .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::eid::service::{EIDServiceConfig, UseidService};
+
+    #[tokio::test]
+    async fn test_server_creation() {
+        let config = AppServerConfig {
+            host: "127.0.0.1".to_string(),
+            port: 0, // Use port 0 to get a random available port
+            tls_cert_path: "test_cert.pem".to_string(),
+            tls_key_path: "test_key.pem".to_string(),
+            transmit: TransmitConfig {
+                client_url: "http://127.0.0.1:24727/eID-Client".to_string(),
+                max_apdu_size: 4096,
+                session_timeout_secs: 30,
+                max_retries: 3,
+                allowed_cipher_suites: vec![
+                    "TLS_AES_128_GCM_SHA256".to_string(),
+                    "TLS_AES_256_GCM_SHA384".to_string(),
+                    "TLS_CHACHA20_POLY1305_SHA256".to_string(),
+                ],
+                max_requests_per_minute: 60,
+                require_client_certificate: true,
+                min_tls_version: "TLSv1.2".to_string(),
+            },
+        };
+
+        let eid_service = UseidService::new(EIDServiceConfig::default());
+        let tls_config = TlsConfig::default(); // Assuming a default implementation exists
+        let _server = Server::new(eid_service, config, tls_config)
+            .await
+            .expect("Failed to create server");
+    }
+
+    #[tokio::test]
+    async fn test_server_with_custom_transmit_config() {
+        let transmit_config = TransmitConfig {
+            max_apdu_size: 8192,
+            session_timeout_secs: 600,
+            max_retries: 3,
+            allowed_cipher_suites: vec!["TLS_AES_128_GCM_SHA256".to_string()],
+            client_url: "http://localhost:24727/eID-Client".to_string(),
+            max_requests_per_minute: 60,
+            require_client_certificate: true,
+            min_tls_version: "TLSv1.2".to_string(),
+        };
+
+        let config = AppServerConfig {
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            tls_cert_path: "test_cert.pem".to_string(),
+            tls_key_path: "test_key.pem".to_string(),
+            transmit: transmit_config,
+        };
+
+        let eid_service = UseidService::new(EIDServiceConfig::default());
+        let tls_config = TlsConfig::default(); // Assuming a default implementation exists
+        let _server = Server::new(eid_service, config, tls_config)
+            .await
+            .expect("Failed to create server");
     }
 }

@@ -687,6 +687,7 @@ mod tests {
         http::{self, HeaderValue, Request, StatusCode},
     };
     use http_body_util::BodyExt;
+    use std::time::Duration;
     use std::{io::Write, sync::Arc};
 
     fn create_test_state() -> AppState<UseidService> {
@@ -697,9 +698,21 @@ mod tests {
             redis_url: None,
         });
         let service_arc = Arc::new(service);
+
+        let transmit_channel = Arc::new(
+            crate::domain::eid::transmit::channel::TransmitChannel::new(
+                crate::domain::eid::transmit::protocol::ProtocolHandler::new(),
+                crate::server::session::SessionManager::new(Duration::from_secs(60)),
+                Arc::new(crate::domain::eid::transmit::test_service::TestTransmitService),
+                crate::config::TransmitConfig::default(),
+            )
+            .expect("TransmitChannel creation should succeed in tests"),
+        );
+
         AppState {
             use_id: service_arc.clone(),
             eid_service: service_arc,
+            transmit_channel,
         }
     }
 
