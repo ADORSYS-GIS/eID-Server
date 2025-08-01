@@ -12,7 +12,7 @@ use redis::{AsyncCommands, AsyncIter, aio::ConnectionManager};
 use tokio::sync::RwLock;
 
 const DEFAULT_PREFIX: &str = "session";
-const RESYNC_INTERVAL: Duration = Duration::from_secs(60);
+const RESYNC_INTERVAL: Duration = Duration::from_secs(20);
 
 /// A Redis session store.
 #[derive(Clone)]
@@ -42,6 +42,19 @@ impl RedisStore {
         self
     }
 
+    /// Force a counter resync
+    pub async fn force_resync(&self) -> Result<usize> {
+        let count = self.active_sessions_count().await?;
+        self.counter.store(count, Ordering::Release);
+        *self.last_sync.write().await = Some(Instant::now());
+        Ok(count)
+    }
+
+    /// Get approximate count
+    pub fn cached_count(&self) -> usize {
+        self.counter.load(Ordering::Acquire)
+    }
+
     fn key(&self, session_id: &[u8]) -> Vec<u8> {
         let mut key = Vec::with_capacity(self.prefix.as_bytes().len() + session_id.len());
         key.extend_from_slice(self.prefix.as_bytes());
@@ -60,6 +73,7 @@ impl RedisStore {
         Ok(count)
     }
 
+    #[inline]
     fn needs_resync(&self, last_sync: &Option<Instant>) -> bool {
         match last_sync {
             Some(instant) => instant.elapsed() > RESYNC_INTERVAL,
@@ -74,13 +88,15 @@ impl SessionStore for RedisStore {
         let mut conn = self.conn.clone();
         let key = self.key(session_id);
 
+        let existed_before: bool = conn.exists(&key).await?;
+
         if let Some(ttl) = ttl {
-            let _: () = conn.set_ex(key, data, ttl).await?;
+            let _: () = conn.set_ex(&key, data, ttl).await?;
         } else {
-            let _: () = conn.set(key, data).await?;
+            let _: () = conn.set(&key, data).await?;
         }
 
-        if ttl.is_some() {
+        if !existed_before {
             self.counter.fetch_add(1, Ordering::Relaxed);
         }
         Ok(())
