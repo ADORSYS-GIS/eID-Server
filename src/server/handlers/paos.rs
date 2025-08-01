@@ -212,7 +212,7 @@ where
                     );
                     return (
                         StatusCode::BAD_REQUEST,
-                        format!("Failed to parse PAOS request: {}", did_err),
+                        format!("Failed to parse PAOS request: {did_err}"),
                     )
                         .into_response();
                 }
@@ -319,8 +319,7 @@ where
                 }
             };
 
-            let certificates_hex: Vec<String> =
-                certs.iter().map(|cert| hex::encode(cert)).collect();
+            let certificates_hex: Vec<String> = certs.iter().map(hex::encode).collect();
 
             let certificate_description = match temp_service
                 .certificate_store
@@ -339,7 +338,7 @@ where
 
             let certificates_xml: String = certificates_hex
                 .into_iter()
-                .map(|cert| format!("<ns4:Certificate>{}</ns4:Certificate>", cert))
+                .map(|cert| format!("<ns4:Certificate>{cert}</ns4:Certificate>"))
                 .collect::<Vec<String>>()
                 .join("");
 
@@ -568,7 +567,7 @@ mod tests {
                 </SOAP-ENV:Header>
                 <SOAP-ENV:Body>
                     <ns4:StartPAOS>
-                        <ns4:SessionIdentifier>{}</ns4:SessionIdentifier>
+                        <ns4:SessionIdentifier>{session_id}</ns4:SessionIdentifier>
                         <ns4:ConnectionHandle>
                             <ns4:CardApplication>01</ns4:CardApplication>
                         </ns4:ConnectionHandle>
@@ -576,7 +575,6 @@ mod tests {
                 </SOAP-ENV:Body>
             </SOAP-ENV:Envelope>
             "#,
-            session_id
         );
 
         let request = Request::builder()
@@ -680,7 +678,7 @@ mod tests {
                 </SOAP-ENV:Header>
                 <SOAP-ENV:Body>
                     <ns4:DIDAuthenticateResponse>
-                        <ns4:SessionIdentifier>{}</ns4:SessionIdentifier>
+                        <ns4:SessionIdentifier>{session_id}</ns4:SessionIdentifier>
                         <ns2:Result>
                             <ns2:ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ns2:ResultMajor>
                             <ns2:ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/common#success</ns2:ResultMinor>
@@ -690,7 +688,6 @@ mod tests {
                 </SOAP-ENV:Body>
             </SOAP-ENV:Envelope>
             "#,
-            session_id
         );
 
         let request = Request::builder()
