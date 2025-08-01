@@ -54,9 +54,6 @@ pub struct SessionInfo {
     pub expiry: DateTime<Utc>,
     pub psk: String,
     pub operations: Vec<String>,
-    pub request_counter: u8,
-    pub authentication_completed: bool,
-    pub authentication_data: Option<String>,
     pub connection_handles: Vec<ConnectionHandle>,
 }
 
@@ -72,9 +69,6 @@ impl SessionInfo {
             expiry: Utc::now() + chrono::Duration::minutes(timeout_minutes),
             psk,
             operations,
-            request_counter: 0,
-            authentication_completed: false,
-            authentication_data: None,
             connection_handles: Vec::new(),
         }
     }
@@ -291,6 +285,43 @@ impl EIDService for UseidService {
     }
 }
 
+#[async_trait]
+impl SessionManager for UseidService {
+    async fn generate_session_id(&self) -> color_eyre::Result<String> {
+        self.session_manager.generate_session_id().await
+    }
+
+    async fn store_session(&self, session: SessionInfo) -> color_eyre::Result<()> {
+        self.session_manager.store_session(session).await
+    }
+
+    async fn get_session(&self, session_id: &str) -> color_eyre::Result<Option<SessionInfo>> {
+        self.session_manager.get_session(session_id).await
+    }
+
+    async fn remove_expired_sessions(&self) -> color_eyre::Result<()> {
+        self.session_manager.remove_expired_sessions().await
+    }
+
+    async fn session_count(&self) -> color_eyre::Result<usize> {
+        self.session_manager.session_count().await
+    }
+
+    async fn is_session_valid(&self, session_id: &str) -> color_eyre::Result<bool> {
+        self.session_manager.is_session_valid(session_id).await
+    }
+
+    async fn update_session_connection_handles(
+        &self,
+        session_id: &str,
+        connection_handles: Vec<String>,
+    ) -> color_eyre::Result<()> {
+        self.session_manager
+            .update_session_connection_handles(session_id, connection_handles)
+            .await
+    }
+}
+
 // Implement the EidService trait for UseidService
 impl EidService for UseidService {
     fn get_server_info(&self) -> ServerInfo {
@@ -419,21 +450,6 @@ impl DIDAuthenticateService {
                 &request.authentication_protocol_data,
             )
             .await?;
-
-        // Store the authentication data in the session
-        if let Some(mut session_info) = session_manager
-            .get_session(session_id)
-            .await
-            .map_err(|e| AuthError::internal_error(format!("Failed to get session: {e}")))?
-        {
-            session_info.authentication_completed = true;
-            session_info.authentication_data = Some(personal_data.clone());
-            session_manager
-                .store_session(session_info)
-                .await
-                .map_err(|e| AuthError::internal_error(format!("Failed to update session: {e}")))?;
-            info!("Stored authentication data for session: {}", session_id);
-        }
 
         // Generate authentication token
         let auth_token = self

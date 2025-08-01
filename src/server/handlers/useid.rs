@@ -307,6 +307,11 @@ pub async fn use_id_handler<S: EIDService + EidService>(
 
 /// Builds TCTokenType XML from UseIDResponse using serde
 pub fn build_tc_token(response: &UseIDResponse) -> Result<String, String> {
+    // Validate PSK format
+    if response.psk.key.len() != 64 || hex::decode(&response.psk.key).is_err() {
+        return Err("Invalid PSK format in response".to_string());
+    }
+
     let server_address = response
         .ecard_server_address
         .as_ref()

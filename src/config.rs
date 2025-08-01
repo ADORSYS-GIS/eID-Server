@@ -48,7 +48,7 @@ impl Config {
     ) -> Result<Self, ConfigError> {
         let mut builder = ConfigLib::builder()
             .set_default("server.host", "localhost")?
-            .set_default("server.port", 8443)?
+            .set_default("server.port", 3000)?
             .set_default("redis.uri", "redis://127.0.0.1:6379")?
             .add_source(File::with_name("config/settings").required(false));
 
@@ -82,7 +82,7 @@ mod tests {
         let config = Config::load().expect("Failed to load config");
 
         assert_eq!(config.server.host, "localhost");
-        assert_eq!(config.server.port, 8443);
+        assert_eq!(config.server.port, 3000);
         assert_eq!(config.redis.uri.expose_secret(), "redis://127.0.0.1:6379");
     }
 
@@ -113,7 +113,7 @@ mod tests {
 
         assert_eq!(config.server.host, "192.168.1.1");
         // The other values should use default
-        assert_eq!(config.server.port, 8443);
+        assert_eq!(config.server.port, 3000);
         assert_eq!(config.redis.uri.expose_secret(), "redis://127.0.0.1:6379");
     }
 }
