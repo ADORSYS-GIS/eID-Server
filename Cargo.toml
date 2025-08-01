@@ -51,6 +51,7 @@ hex = "0.4"
 openssl = { version = "0.10", features = ["vendored"] }
 pkcs8 = "0.10"
 yasna = "0.5"
+hyper = "0.14"
 
 [dev-dependencies]
 http-body-util = "0.1"

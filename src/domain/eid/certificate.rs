@@ -108,7 +108,7 @@ impl CertificateStore {
     }
 
     pub async fn load_cv_chain(&self) -> Result<Vec<u8>, AuthError> {
-        let cert_paths = vec![
+        let cert_paths = [
             std::env::var("CVCA_PATH")
                 .map_err(|_| AuthError::invalid_certificate("CVCA_PATH not set in .env"))?,
             std::env::var("DV_PATH")
@@ -119,7 +119,7 @@ impl CertificateStore {
 
         let mut chain = Vec::new();
         for (i, path) in cert_paths.iter().enumerate() {
-            let cert_data = fs::read(&path).map_err(|e| {
+            let cert_data = fs::read(path).map_err(|e| {
                 AuthError::invalid_certificate(format!("Failed to read certificate at {path}: {e}"))
             })?;
 
@@ -201,8 +201,7 @@ impl CertificateStore {
 
         let tls_cert = fs::read(&tls_cert_path).map_err(|e| {
             AuthError::invalid_certificate(format!(
-                "Failed to read TLS certificate at {}: {e}",
-                tls_cert_path
+                "Failed to read TLS certificate at {tls_cert_path}: {e}"
             ))
         })?;
         let tls_hash = self.hash_tls_cert(&tls_cert)?;
@@ -250,11 +249,11 @@ impl CertificateStore {
         // 6. TermsOfUsage ([5] EXPLICIT ANY)
         let terms = "Name, Anschrift und E-Mail-Adresse des Diensteanbieters:\r\nGovernikus GmbH & Co. KG\r\nHochschulring 4\r\n28359 Bremen\r\nkontakt@governikus.de\r\n\r\nHinweis auf die für den Diensteanbieter zuständigen Stellen, die die Einhaltung der Vorschriften zum Datenschutz kontrollieren:\r\nDie Landesbeauftragte für Datenschutz und Informationsfreiheit der Freien Hansestadt Bremen\r\nArndtstraße 1\r\n27570 Bremerhaven\r\n0421/596-2010\r\noffice@datenschutz.bremen.de\r\nhttp://www.datenschutz.bremen.de";
         let terms_bytes = terms.as_bytes();
-        
+
         // Calculate the proper length for EXPLICIT wrapper
         let utf8_length_encoding_size = Self::calculate_der_length_size(terms_bytes.len());
         let inner_utf8_total_size = 1 + utf8_length_encoding_size + terms_bytes.len(); // tag + length + content
-        
+
         content.push(0xA5); // [5] EXPLICIT ANY (contains UTF8String)
         Self::write_der_length(&mut content, inner_utf8_total_size);
         content.push(0x0C); // UTF8String
@@ -264,7 +263,7 @@ impl CertificateStore {
         // 7. CommCertificates ([7] EXPLICIT SET OF OCTET STRING) - OPTIONAL
         // For now, we'll include the TLS certificate hash as a single OCTET STRING
         let mut comm_certs = Vec::new();
-        
+
         // Add TLS certificate hash as OCTET STRING
         comm_certs.push(0x04); // OCTET STRING
         Self::write_der_length(&mut comm_certs, tls_hash.len());
@@ -392,8 +391,7 @@ impl CertificateStore {
         let decoded_data = if data.iter().all(|b| b.is_ascii_hexdigit()) {
             hex::decode(data).map_err(|e| {
                 AuthError::invalid_certificate(format!(
-                    "Failed to hex decode CertificateDescription: {}",
-                    e
+                    "Failed to hex decode CertificateDescription: {e}"
                 ))
             })?
         } else {
@@ -413,9 +411,8 @@ impl CertificateStore {
         }
 
         // Parse the length to validate structure
-        let (length, len_bytes) = Self::parse_der_length(&decoded_data[1..]).map_err(|e| {
-            AuthError::invalid_certificate(format!("Invalid length encoding: {}", e))
-        })?;
+        let (length, len_bytes) = Self::parse_der_length(&decoded_data[1..])
+            .map_err(|e| AuthError::invalid_certificate(format!("Invalid length encoding: {e}")))?;
 
         let expected_total = 1 + len_bytes + length;
         if expected_total != decoded_data.len() {
@@ -442,7 +439,7 @@ impl CertificateStore {
         }
 
         let expected_oid = [0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03, 0x01, 0x01];
-        if &decoded_data[content_start + 2..content_start + 12] != expected_oid {
+        if decoded_data[content_start + 2..content_start + 12] != expected_oid {
             return Err(AuthError::invalid_certificate(
                 "CertificateDescription has incorrect OID",
             ));
@@ -471,7 +468,7 @@ impl CertificateStore {
 
                 // Try parsing as PEM
                 match x509_parser::pem::parse_x509_pem(cert) {
-                    Ok((remaining, pem)) => {
+                    Ok((_remaining, pem)) => {
                         debug!("Successfully parsed PEM envelope");
                         match X509Certificate::from_der(&pem.contents) {
                             Ok((_, parsed_cert)) => {
@@ -482,8 +479,7 @@ impl CertificateStore {
                             Err(pem_der_err) => {
                                 warn!("Failed to parse PEM-contained DER: {}", pem_der_err);
                                 Err(AuthError::invalid_certificate(format!(
-                                    "Failed to parse PEM-contained DER: {}",
-                                    pem_der_err
+                                    "Failed to parse PEM-contained DER: {pem_der_err}"
                                 )))
                             }
                         }
@@ -491,8 +487,7 @@ impl CertificateStore {
                     Err(pem_err) => {
                         warn!("Failed to parse PEM: {}", pem_err);
                         Err(AuthError::invalid_certificate(format!(
-                            "Failed to parse PEM: {}",
-                            pem_err
+                            "Failed to parse PEM: {pem_err}"
                         )))
                     }
                 }
@@ -523,8 +518,7 @@ impl CertificateStore {
             };
             parsed_certs.push(Self::parse_cvc(cert).map_err(|e| {
                 AuthError::invalid_certificate(format!(
-                    "Failed to parse {} certificate: {}",
-                    cert_type, e
+                    "Failed to parse {cert_type} certificate: {e}"
                 ))
             })?);
         }
@@ -689,8 +683,7 @@ impl CertificateStore {
             if body[pos] == 0x06
                 && body[pos + 1] == 0x09
                 && pos + 11 <= body.len()
-                && &body[pos + 2..pos + 11]
-                    == [0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03, 0x01]
+                && body[pos + 2..pos + 11] == [0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03, 0x01]
             {
                 pos += 11;
                 if pos + 1 >= body.len() {
@@ -723,7 +716,7 @@ impl CertificateStore {
                 );
 
                 // Accept the raw public key data as-is
-                if key_data.len() >= 1 {
+                if !key_data.is_empty() {
                     debug!(
                         "Accepting public key (length: {} bytes, first_byte: {:02x})",
                         key_data.len(),
@@ -756,8 +749,7 @@ impl CertificateStore {
             if data.len() > pos + 1 && data[pos] == 0x7F && data[pos + 1] == 0x21 {
                 let parse_result = Self::parse_der_length(&data[pos + 2..]).map_err(|e| {
                     AuthError::invalid_certificate(format!(
-                        "Failed to parse DER length at position {}: {}",
-                        pos, e
+                        "Failed to parse DER length at position {pos}: {e}"
                     ))
                 })?;
                 let (body_len, header_len) = parse_result;
@@ -1318,16 +1310,14 @@ impl CardCommunicator {
 
         if !status.is_success() {
             return Err(AuthError::card_communication_error(format!(
-                "AusweisApp2 returned non-success status: {}. Response: {}",
-                status, response_text
+                "AusweisApp2 returned non-success status: {status}. Response: {response_text}"
             )));
         }
 
         // Check if response contains HTML
         if response_text.contains("<html") || response_text.contains("</head>") {
             return Err(AuthError::card_communication_error(format!(
-                "Received unexpected HTML response from AusweisApp2: {}",
-                response_text
+                "Received unexpected HTML response from AusweisApp2: {response_text}"
             )));
         }
 
@@ -1348,61 +1338,55 @@ impl CardCommunicator {
             EACPhase::EAC2 => "urn:iso:std:iso-iec:24727:tech:schema:EAC2InputType",
         };
 
+        // Build the AuthenticationProtocolDataXml based on the phase
         let auth_protocol_data = match auth_data.phase {
             EACPhase::EAC1 => {
                 let eac1_input = auth_data
                     .eac1_input
                     .as_ref()
                     .ok_or_else(|| AuthError::protocol_error("Missing EAC1 input data"))?;
-                format!(
-                    r#"<iso:AuthenticationProtocolData>
-                        <iso:Protocol>{}</iso:Protocol>
-                        <iso:Certificate>{}</iso:Certificate>
-                        <iso:CertificateDescription>{}</iso:CertificateDescription>
-                        <iso:RequiredCHAT>{}</iso:RequiredCHAT>
-                        <iso:OptionalCHAT>{}</iso:OptionalCHAT>
-                    </iso:AuthenticationProtocolData>"#,
+                AuthenticationProtocolDataXml::EAC1(EAC1InputXml {
                     protocol,
-                    eac1_input.certificate,
-                    eac1_input.certificate_description,
-                    eac1_input.required_chat,
-                    eac1_input.optional_chat.as_deref().unwrap_or("")
-                )
+                    certificate: eac1_input.certificate.clone(),
+                    certificate_description: eac1_input.certificate_description.clone(),
+                    required_chat: eac1_input.required_chat.clone(),
+                    optional_chat: eac1_input.optional_chat.clone(),
+                })
             }
             EACPhase::EAC2 => {
                 let eac2_input = auth_data
                     .eac2_input
                     .as_ref()
                     .ok_or_else(|| AuthError::protocol_error("Missing EAC2 input data"))?;
-                format!(
-                    r#"<iso:AuthenticationProtocolData>
-                        <iso:Protocol>{}</iso:Protocol>
-                        <iso:EphemeralPublicKey>{}</iso:EphemeralPublicKey>
-                        <iso:Signature>{}</iso:Signature>
-                    </iso:AuthenticationProtocolData>"#,
-                    protocol, eac2_input.ephemeral_public_key, eac2_input.signature
-                )
+                AuthenticationProtocolDataXml::EAC2(EAC2InputXml {
+                    protocol,
+                    ephemeral_public_key: eac2_input.ephemeral_public_key.clone(),
+                    signature: eac2_input.signature.clone(),
+                })
             }
         };
 
-        let soap = format!(
-            r#"<ecard:DIDAuthenticate xmlns:ecard="http://www.bsi.bund.de/ecard/api/1.1" xmlns:iso="urn:iso:std:iso-iec:24727:tech:schema">
-                <iso:ConnectionHandle>
-                    <iso:ChannelHandle>{}</iso:ChannelHandle>
-                    <iso:IFDName>{}</iso:IFDName>
-                    <iso:SlotIndex>{}</iso:SlotIndex>
-                </iso:ConnectionHandle>
-                <iso:DIDName>{}</iso:DIDName>
-                {}
-            </ecard:DIDAuthenticate>"#,
-            connection.channel_handle.as_deref().unwrap_or(""),
-            connection.ifd_name.as_deref().unwrap_or(""),
-            connection.slot_index.unwrap_or(0),
-            did_name,
-            auth_protocol_data
-        );
+        // Build the DIDAuthenticate struct
+        let did_authenticate = DidAuthenticate {
+            xmlns_ecard: "http://www.bsi.bund.de/ecard/api/1.1",
+            xmlns_iso: "urn:iso:std:iso-iec:24727:tech:schema",
+            connection_handle: ConnectionHandleXml {
+                channel_handle: connection.channel_handle.clone(),
+                ifd_name: connection.ifd_name.clone(),
+                slot_index: connection.slot_index,
+            },
+            did_name: did_name.to_string(),
+            authentication_protocol_data: auth_protocol_data,
+        };
 
-        Ok(soap)
+        // Serialize to XML using String as the writer
+        let mut buffer = String::new();
+        let serializer = quick_xml::se::Serializer::new(&mut buffer);
+        did_authenticate.serialize(serializer).map_err(|e| {
+            AuthError::protocol_error(format!("Failed to serialize DIDAuthenticate XML: {e}"))
+        })?;
+
+        Ok(buffer)
     }
 
     fn parse_eac1_response(&self, response: &str) -> Result<String, AuthError> {
@@ -1531,8 +1515,10 @@ impl CardCommunicator {
             buf.clear();
         }
 
-        if let Some(major) = result_major {
-            if major.contains("error") {
+        if let Some(major) = result_major
+            && major.contains("error")
+        {
+            {
                 return Err(AuthError::card_communication_error(format!(
                     "SOAP response indicates error: major={major}, minor={result_minor:?}"
                 )));
@@ -1680,12 +1666,12 @@ impl CardCommunicator {
             buf.clear();
         }
 
-        if let Some(major) = result_major {
-            if major.contains("error") {
-                return Err(AuthError::card_communication_error(format!(
-                    "SOAP response indicates error: major={major}, minor={result_minor:?}"
-                )));
-            }
+        if let Some(major) = result_major
+            && major.contains("error")
+        {
+            return Err(AuthError::card_communication_error(format!(
+                "SOAP response indicates error: major={major}, minor={result_minor:?}"
+            )));
         }
 
         let output = if is_type_a {

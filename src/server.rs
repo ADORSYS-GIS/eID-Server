@@ -14,7 +14,6 @@ use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
 use axum_server::tls_openssl::{OpenSSLAcceptor, OpenSSLConfig};
 use color_eyre::eyre::{Context, Result};
-use handlers::did_auth::did_authenticate;
 use handlers::health::health_check;
 use handlers::useid::use_id_handler;
 use tower_http::{
@@ -70,7 +69,6 @@ impl Server {
         let router = Router::new()
             .route("/health", get(health_check))
             .route("/", post(paos_handler))
-            .route("/did-authenticate", post(did_authenticate))
             .nest(
                 "/eIDService",
                 Router::new()
