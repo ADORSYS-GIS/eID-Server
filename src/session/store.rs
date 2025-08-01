@@ -4,8 +4,11 @@ use color_eyre::Report;
 use std::error::Error as StdError;
 use std::fmt;
 
-pub mod memory;
-pub mod redis;
+mod memory;
+mod redis;
+
+pub use memory::MemoryStore;
+pub use redis::RedisStore;
 
 type Result<T> = std::result::Result<T, SessionStoreError>;
 
@@ -67,7 +70,9 @@ impl From<serde_json::Error> for SessionStoreError {
 #[async_trait]
 pub trait SessionStore: Clone + Send + Sync {
     /// Saves the provided session data to the store.
-    async fn save(&self, session_id: &[u8], data: &[u8]) -> Result<()>;
+    ///
+    /// An optional TTL can be provided to specify the time-to-live for the session.
+    async fn save(&self, session_id: &[u8], data: &[u8], ttl: Option<u64>) -> Result<()>;
 
     /// Loads an existing session data from the store using the provided ID.
     async fn load(&self, session_id: &[u8]) -> Result<Option<Vec<u8>>>;
@@ -75,7 +80,7 @@ pub trait SessionStore: Clone + Send + Sync {
     /// Deletes a session record from the store using the provided ID.
     async fn delete(&self, session_id: &[u8]) -> Result<()>;
 
-    /// Returns the number of sessions stored in the store.
+    /// Returns the number of active sessions in the store.
     async fn count(&self) -> Result<usize>;
 }
 
