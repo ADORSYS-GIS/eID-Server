@@ -38,9 +38,9 @@ pub struct ConnectionHandle {
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub struct UserAgent {
-    pub name: Option<String>,
-    pub version_major: Option<u32>,
-    pub version_minor: Option<u32>,
+    pub name: String,
+    pub version_major: u32,
+    pub version_minor: u32,
     pub version_subminor: Option<u32>,
 }
 

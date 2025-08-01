@@ -31,9 +31,9 @@ mod tests {
         assert_eq!(
             parsed.user_agent,
             Some(UserAgent {
-                name: Some("Client eID Exemple".to_string()),
-                version_major: Some(2),
-                version_minor: Some(0),
+                name: "Client eID Exemple".to_string(),
+                version_major: 2,
+                version_minor: 0,
                 version_subminor: Some(0),
             })
         );

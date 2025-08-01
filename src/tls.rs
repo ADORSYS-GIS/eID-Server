@@ -1,19 +1,23 @@
 mod cert_utils;
 mod errors;
 mod psk;
+mod session;
 
 pub use cert_utils::*;
 pub use errors::TlsError;
 pub use psk::{PskStore, PskStoreError};
+pub use session::{InMemorySessionStore, RedisSessionStore, SessionStore, SessionStoreError};
 
 use openssl::error::ErrorStack;
 use openssl::pkey::PKey;
 use openssl::ssl::{
-    ClientHelloResponse, SslAcceptor, SslAcceptorBuilder, SslContext, SslMethod,
+    ClientHelloResponse, SslAcceptor, SslAcceptorBuilder, SslContext, SslMethod, SslSession,
     SslSessionCacheMode, SslVerifyMode, SslVersion,
 };
 use openssl::x509::X509;
 use std::sync::Arc;
+use tokio::runtime::Handle;
+use tokio::task;
 use tracing::{debug, error, instrument, trace, warn};
 
 // RSA PSK Cipher suites
@@ -30,7 +34,7 @@ const PSK_CIPHER_SUITES: &[&str] = &[
 ];
 const SESSION_ID: &[u8] = b"eid-server-tls-session-id";
 
-struct PskTlsConfig {
+struct TlsPskConfig {
     psk_store: Arc<dyn PskStore>,
     cipher_suites: Vec<String>,
 }
@@ -40,8 +44,9 @@ struct Inner {
     private_key: Vec<u8>,
     intermediate_certs: Option<Vec<u8>>,
     ca_certs: Option<Vec<Vec<u8>>>,
-    psk_config: Option<PskTlsConfig>,
+    psk_config: Option<TlsPskConfig>,
     is_mtls: bool,
+    session_store: Option<Arc<dyn SessionStore>>,
 }
 
 /// Configuration for the TLS server.
@@ -65,6 +70,7 @@ impl TlsConfig {
                 intermediate_certs: None,
                 ca_certs: None,
                 is_mtls: false,
+                session_store: None,
             },
         }
     }
@@ -86,10 +92,17 @@ impl TlsConfig {
     /// Add PSK support to the TLS configuration by providing a PSK store.
     pub fn with_psk(mut self, psk_store: impl PskStore + 'static) -> Self {
         debug!("Adding PSK support to TLS configuration");
-        self.inner.psk_config = Some(PskTlsConfig {
+        self.inner.psk_config = Some(TlsPskConfig {
             psk_store: Arc::new(psk_store),
             cipher_suites: PSK_CIPHER_SUITES.iter().map(|s| s.to_string()).collect(),
         });
+        self
+    }
+
+    /// Add session store support for centralized session caching.
+    pub fn with_session_store(mut self, session_store: impl SessionStore + 'static) -> Self {
+        debug!("Adding session store support to TLS configuration");
+        self.inner.session_store = Some(Arc::new(session_store));
         self
     }
 
@@ -106,6 +119,11 @@ impl TlsConfig {
             .as_ref()
             .map(|_| self.create_psk_ssl_context())
             .transpose()?;
+
+        // Configure session callbacks if session store is available
+        if let Some(session_store) = &self.inner.session_store {
+            self.setup_session_callbacks(&mut builder, session_store)?;
+        }
 
         // Check if client authentication is required
         let mtls_required = self.inner.is_mtls;
@@ -187,12 +205,11 @@ impl TlsConfig {
             }
         }
 
-        // Enable session resumption
-        builder.set_session_cache_mode(
-            SslSessionCacheMode::SERVER | SslSessionCacheMode::NO_INTERNAL_LOOKUP,
-        );
-        builder.set_session_id_context(SESSION_ID)?;
-        debug!("Enabled session resumption with server-side caching");
+        if self.inner.session_store.is_none() {
+            // Enable default session resumption only if no external store is configured
+            builder.set_session_cache_mode(SslSessionCacheMode::SERVER);
+            debug!("Enabled default session resumption with server-side caching");
+        }
 
         if let Some(psk_config) = &self.inner.psk_config {
             // Set PSK server callback
@@ -203,7 +220,11 @@ impl TlsConfig {
                     let psk_identity_str = String::from_utf8_lossy(psk_identity);
                     debug!(identity = %psk_identity_str, "PSK identity provided");
 
-                    match psk_store.get_psk(psk_identity) {
+                    let result = task::block_in_place(|| {
+                        Handle::current().block_on(psk_store.get_psk(psk_identity))
+                    });
+
+                    match result {
                         Ok(Some(psk)) => {
                             if psk_buf.len() >= psk.len() {
                                 debug!("PSK found for identity, proceeding with PSK handshake");
@@ -256,5 +277,94 @@ impl TlsConfig {
         }
 
         Err(ErrorStack::get())
+    }
+
+    #[instrument(skip(self, builder, session_store))]
+    fn setup_session_callbacks(
+        &self,
+        builder: &mut SslAcceptorBuilder,
+        session_store: &Arc<dyn SessionStore>,
+    ) -> Result<(), TlsError> {
+        debug!("Setting up session store callbacks");
+
+        // Configure session caching mode for external storage
+        builder
+            .set_session_cache_mode(SslSessionCacheMode::SERVER | SslSessionCacheMode::NO_INTERNAL);
+        builder.set_session_id_context(SESSION_ID)?;
+
+        // Clone store for callbacks
+        let store_new = session_store.clone();
+        let store_get = session_store.clone();
+        let store_remove = session_store.clone();
+
+        // Set new session callback that is called when a new session is created
+        builder.set_new_session_callback(move |_ssl, session| {
+            let store = store_new.clone();
+            Handle::current().spawn(async move {
+                let session_id = session.id();
+                let session_str = hex::encode(session_id);
+                let session_data = match session.to_der() {
+                    Ok(data) => data,
+                    Err(e) => {
+                        error!("Failed to serialize session data for session {session_str}: {e}");
+                        return;
+                    }
+                };
+
+                match store.store_session(session_id, &session_data).await {
+                    Ok(_) => debug!("Session {session_str} stored successfully"),
+                    Err(e) => error!("Failed to store session {session_str}: {e}"),
+                }
+            });
+        });
+
+        // Set get session callback that is called when a client tries to resume a session
+        unsafe {
+            builder.set_get_session_callback(move |_ssl, session_id| {
+                let store = store_get.clone();
+                let session_str = hex::encode(session_id);
+
+                let result = task::block_in_place(|| {
+                    Handle::current().block_on(async move { store.get_session(session_id).await })
+                });
+
+                match result {
+                    Ok(Some(session_data)) => match SslSession::from_der(&session_data) {
+                        Ok(session) => {
+                            debug!("Session {session_str} retrieved successfully");
+                            Some(session)
+                        }
+                        Err(e) => {
+                            error!("Failed to deserialize session {session_str}: {e}");
+                            None
+                        }
+                    },
+                    Ok(None) => {
+                        debug!("Session {session_str} not found in store");
+                        None
+                    }
+                    Err(e) => {
+                        error!("Failed to retrieve session {session_str}: {e}");
+                        None
+                    }
+                }
+            });
+        }
+
+        // Set remove session callback that is called when a session is invalidated
+        builder.set_remove_session_callback(move |_ctx, session| {
+            let store = store_remove.clone();
+            let session_id = session.id().to_vec();
+            let session_str = hex::encode(&session_id);
+
+            Handle::current().spawn(async move {
+                match store.remove_session(&session_id).await {
+                    Ok(_) => debug!("Session {session_str} removed successfully"),
+                    Err(e) => error!("Failed to remove session {session_str}: {e}"),
+                }
+            });
+        });
+
+        Ok(())
     }
 }
