@@ -1,22 +1,24 @@
-//! Service layer that provides the business logic of the domain.
-
-use std::fs;
-use std::sync::Arc;
-
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use color_eyre::Result;
-use color_eyre::eyre::eyre;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use std::default::Default;
+use std::fs;
+use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 use super::certificate::{CardCommunicator, CertificateStore, CryptoProvider};
 use super::models::{
     AuthError, DIDAuthenticateRequest, DIDAuthenticateResponse, ResponseProtocolData, ServerInfo,
 };
-use super::ports::{DIDAuthenticate, EIDService, EidService};
+use super::ports::{EIDService, EidService};
 use super::session_manager::{InMemorySessionManager, RedisSessionManager, SessionManager};
+use crate::domain::eid::models::{
+    AuthenticationProtocolData, EAC1InputType, EAC1OutputType, EAC2InputType, EAC2OutputType,
+    EACPhase,
+};
+use crate::domain::eid::ports::DIDAuthenticate;
 use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
 };
@@ -55,6 +57,8 @@ pub struct SessionInfo {
     pub psk: String,
     pub operations: Vec<String>,
     pub connection_handles: Vec<ConnectionHandle>,
+    pub eac_phase: EACPhase,            // New field to track phase
+    pub eac1_challenge: Option<String>, // Store challenge for EAC2
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -70,6 +74,8 @@ impl SessionInfo {
             psk,
             operations,
             connection_handles: Vec::new(),
+            eac_phase: EACPhase::EAC1,
+            eac1_challenge: None,
         }
     }
 }
@@ -102,7 +108,7 @@ impl UseidService {
     pub fn generate_psk(&self) -> String {
         let mut bytes = [0u8; 32];
         rand::rng().fill_bytes(&mut bytes);
-        hex::encode(bytes)
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
     /// Helper function to extract required operations from OperationsRequester
@@ -200,10 +206,9 @@ impl EIDService for UseidService {
             }
             None => self.generate_psk(),
         };
-
         if psk.is_empty() {
             error!("Generated empty PSK");
-            return Err(eyre!("Failed to generate PSK"));
+            return Err(color_eyre::eyre::eyre!("Failed to generate PSK"));
         }
 
         debug!("Generated PSK: {}", psk);
@@ -331,9 +336,9 @@ impl EidService for UseidService {
 
 #[derive(Debug, Clone)]
 pub struct DIDAuthenticateService {
-    certificate_store: CertificateStore,
-    crypto_provider: CryptoProvider,
-    card_communicator: CardCommunicator,
+    pub(crate) certificate_store: CertificateStore,
+    pub(crate) crypto_provider: CryptoProvider,
+    pub(crate) card_communicator: CardCommunicator,
     session_manager: Arc<dyn SessionManager>,
 }
 
@@ -364,8 +369,23 @@ impl DIDAuthenticateService {
             panic!("Cannot proceed without trusted CVCA certificate");
         }
 
-        let ausweisapp2_endpoint =
-            std::env::var("AUSWEISAPP2_ENDPOINT").expect("AUSWEISAPP2_ENDPOINT not set in .env");
+        // Load private keys
+        let term_path = std::env::var("TERM_PATH").expect("TERM_PATH not set in .env");
+        let term_data = fs::read(&term_path).expect("Failed to read terminal certificate");
+        let holder_ref = CertificateStore::extract_holder_reference(&term_data)
+            .unwrap_or_else(|| "UnknownHolder".to_string());
+        let term_key_path = std::env::var("TERM_KEY_PATH").expect("TERM_KEY_PATH not set in .env");
+        let term_key_data = fs::read(&term_key_path).expect("Failed to read terminal private key");
+        if let Err(e) = certificate_store
+            .add_private_key(holder_ref, term_key_data)
+            .await
+        {
+            tracing::error!("Failed to add terminal private key: {:?}", e);
+            panic!("Cannot proceed without terminal private key");
+        }
+
+        let ausweisapp2_endpoint = std::env::var("AUSWEISAPP2_ENDPOINT")
+            .unwrap_or_else(|_| "http://127.0.0.1:24727/".to_string());
 
         Self {
             certificate_store: certificate_store.clone(),
@@ -411,66 +431,190 @@ impl DIDAuthenticateService {
             .as_ref()
             .ok_or_else(|| AuthError::invalid_connection("Missing channel handle"))?;
 
-        let session_info = session_manager
+        let mut session_info = session_manager
             .get_session(session_id)
             .await
-            .map_err(|e| AuthError::internal_error(format!("Failed to acquire session: {e}")))?;
-
-        let session_info = session_info.ok_or_else(|| {
-            error!("Session {} not found", session_id);
-            AuthError::invalid_connection("Invalid or expired session")
-        })?;
+            .map_err(|e| AuthError::internal_error(format!("Failed to acquire session: {e}")))?
+            .ok_or_else(|| {
+                error!("Session {} not found", session_id);
+                AuthError::invalid_connection("Invalid or expired session")
+            })?;
 
         if session_info.expiry < Utc::now() {
             error!("Session {} expired at {}", session_id, session_info.expiry);
             return Err(AuthError::timeout_error("Session validation"));
         }
 
-        let certificate_der = base64::engine::general_purpose::STANDARD
-            .decode(&request.authentication_protocol_data.certificate_description)
-            .map_err(|e| {
-                AuthError::invalid_certificate(format!("Failed to decode certificate: {e}"))
-            })?;
-
-        let is_valid = self
-            .certificate_store
-            .validate_certificate_chain(certificate_der)
-            .await?;
-        if !is_valid {
-            return Err(AuthError::invalid_certificate(
-                "Certificate chain validation failed",
-            ));
-        }
-
-        let personal_data = self
-            .card_communicator
-            .send_did_authenticate(
-                &request.connection_handle,
-                &request.did_name,
-                &request.authentication_protocol_data,
-            )
-            .await?;
-
-        // Generate authentication token
-        let auth_token = self
-            .crypto_provider
-            .generate_challenge()
-            .await?
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>();
-
-        Ok(ResponseProtocolData {
-            challenge: None,
-            certificate: Some(
-                request
+        match request.authentication_protocol_data.phase {
+            EACPhase::EAC1 => {
+                let eac1_input = request
                     .authentication_protocol_data
-                    .certificate_description
-                    .clone(),
-            ),
-            personal_data: Some(personal_data),
-            authentication_token: Some(auth_token),
-        })
+                    .eac1_input
+                    .as_ref()
+                    .ok_or_else(|| AuthError::protocol_error("Missing EAC1 input data"))?;
+
+                // Load certificate chain if none provided
+                let certificate_der = if eac1_input.certificate.is_empty() {
+                    debug!("No certificate provided, loading default chain");
+                    self.certificate_store.load_cv_chain().await?
+                } else {
+                    base64::engine::general_purpose::STANDARD
+                        .decode(&eac1_input.certificate)
+                        .map_err(|e| {
+                            AuthError::invalid_certificate(format!(
+                                "Failed to decode certificate: {e}"
+                            ))
+                        })?
+                };
+
+                let is_valid = self
+                    .certificate_store
+                    .validate_certificate_chain(certificate_der.clone())
+                    .await?;
+                if !is_valid {
+                    return Err(AuthError::invalid_certificate(
+                        "Certificate chain validation failed",
+                    ));
+                }
+
+                let personal_data = self
+                    .card_communicator
+                    .send_did_authenticate(
+                        &request.connection_handle,
+                        &request.did_name,
+                        &AuthenticationProtocolData {
+                            phase: EACPhase::EAC1,
+                            eac1_input: Some(EAC1InputType {
+                                certificate: base64::engine::general_purpose::STANDARD
+                                    .encode(&certificate_der),
+                                certificate_description: eac1_input.certificate_description.clone(),
+                                required_chat: eac1_input.required_chat.clone(),
+                                optional_chat: eac1_input.optional_chat.clone(),
+                                transaction_info: eac1_input.transaction_info.clone(),
+                            }),
+                            eac2_input: None,
+                        },
+                        false, // Do not send HTTP POST, return SOAP for PAOS
+                    )
+                    .await?;
+
+                // Parse EAC1OutputType from the SOAP response
+                let eac1_output: EAC1OutputType =
+                    serde_json::from_str(&personal_data).map_err(|e| {
+                        AuthError::card_communication_error(format!(
+                            "Failed to parse EAC1 output: {e}"
+                        ))
+                    })?;
+
+                // Update session to EAC2 phase and store challenge
+                session_info.eac_phase = EACPhase::EAC2;
+                session_info.eac1_challenge = Some(eac1_output.challenge.clone());
+                session_manager
+                    .store_session(session_info)
+                    .await
+                    .map_err(|e| {
+                        AuthError::internal_error(format!("Failed to update session: {e}"))
+                    })?;
+
+                Ok(ResponseProtocolData::new_eac1(
+                    eac1_output.certificate_holder_authorization_template,
+                    eac1_output.certification_authority_reference,
+                    eac1_output.ef_card_access,
+                    eac1_output.id_picc,
+                    eac1_output.challenge,
+                ))
+            }
+            EACPhase::EAC2 => {
+                let _eac2_input = request
+                    .authentication_protocol_data
+                    .eac2_input
+                    .as_ref()
+                    .ok_or_else(|| AuthError::protocol_error("Missing EAC2 input data"))?;
+
+                // Verify session is in EAC2 phase
+                if session_info.eac_phase != EACPhase::EAC2 {
+                    return Err(AuthError::protocol_error("Session not in EAC2 phase"));
+                }
+
+                let challenge = session_info
+                    .eac1_challenge
+                    .as_ref()
+                    .ok_or_else(|| AuthError::protocol_error("No challenge stored from EAC1"))?;
+
+                // Get the terminal certificate and private key
+                let certificate_der = self.certificate_store.load_cv_chain().await?;
+                let certs = self
+                    .certificate_store
+                    .split_concatenated_der(&certificate_der)?;
+                let term_cert = certs.last().ok_or_else(|| {
+                    AuthError::invalid_certificate("No terminal certificate found")
+                })?;
+                let holder_ref = CertificateStore::extract_holder_reference(term_cert)
+                    .unwrap_or_else(|| "UnknownHolder".to_string());
+                let _private_key = self
+                    .certificate_store
+                    .get_private_key(&holder_ref)
+                    .await
+                    .ok_or_else(|| {
+                        AuthError::crypto_error("No private key found for terminal certificate")
+                    })?;
+
+                // Generate ephemeral public key (or use the one from certificate)
+                let (_private_key, public_key) = self.crypto_provider.generate_keypair().await?;
+                let public_key_b64 = base64::engine::general_purpose::STANDARD.encode(&public_key);
+
+                // Sign the challenge using the private key
+                let signature = self
+                    .crypto_provider
+                    .hash_data(challenge.as_bytes(), "SHA256")
+                    .await?;
+                let signature_b64 = base64::engine::general_purpose::STANDARD.encode(&signature);
+
+                let personal_data = self
+                    .card_communicator
+                    .send_did_authenticate(
+                        &request.connection_handle,
+                        &request.did_name,
+                        &AuthenticationProtocolData {
+                            phase: EACPhase::EAC2,
+                            eac1_input: None,
+                            eac2_input: Some(EAC2InputType {
+                                ephemeral_public_key: public_key_b64.clone(),
+                                signature: signature_b64.clone(),
+                            }),
+                        },
+                        false,
+                    )
+                    .await?;
+
+                let eac2_output: EAC2OutputType =
+                    serde_json::from_str(&personal_data).map_err(|e| {
+                        AuthError::card_communication_error(format!(
+                            "Failed to parse EAC2 output: {e}"
+                        ))
+                    })?;
+
+                session_info.eac_phase = EACPhase::EAC2;
+                session_manager
+                    .store_session(session_info)
+                    .await
+                    .map_err(|e| {
+                        AuthError::internal_error(format!("Failed to update session: {e}"))
+                    })?;
+
+                let mut response = ResponseProtocolData::new_eac2(eac2_output);
+                response.personal_data = Some(personal_data);
+                response.authentication_token = Some(
+                    self.crypto_provider
+                        .generate_challenge()
+                        .await?
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect(),
+                );
+                Ok(response)
+            }
+        }
     }
 }
 
@@ -488,7 +632,7 @@ impl DIDAuthenticate for UseidService {
                 result_minor: Some(format!(
                     "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/common#parameterError: {e}"
                 )),
-                authentication_protocol_data: ResponseProtocolData::default(),
+                authentication_protocol_data: ResponseProtocolData::new_error(EACPhase::EAC1),
                 timestamp: Utc::now().timestamp() as u64,
             });
         }
