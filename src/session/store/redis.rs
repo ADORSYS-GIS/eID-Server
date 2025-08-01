@@ -56,7 +56,7 @@ impl RedisStore {
     }
 
     fn key(&self, session_id: &[u8]) -> Vec<u8> {
-        let mut key = Vec::with_capacity(self.prefix.as_bytes().len() + session_id.len());
+        let mut key = Vec::with_capacity(self.prefix.len() + session_id.len());
         key.extend_from_slice(self.prefix.as_bytes());
         key.extend_from_slice(session_id);
         key
@@ -123,14 +123,14 @@ impl SessionStore for RedisStore {
         // Fast path: check if we can use cached value
         {
             let guard = self.last_sync.read().await;
-            if !self.needs_resync(&*guard) {
+            if !self.needs_resync(&guard) {
                 return Ok(self.counter.load(Ordering::Acquire));
             }
         }
 
         let mut guard = self.last_sync.write().await;
         // Double-check after acquiring write lock
-        if !self.needs_resync(&*guard) {
+        if !self.needs_resync(&guard) {
             return Ok(self.counter.load(Ordering::Acquire));
         }
 

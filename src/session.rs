@@ -178,11 +178,6 @@ impl Id {
         Self(vec)
     }
 
-    /// Creates an ID from a string slice
-    pub fn from_str(value: &str) -> Self {
-        Self(value.as_bytes().to_vec())
-    }
-
     /// Get the inner bytes without
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
