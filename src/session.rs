@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use time::{Duration, UtcDateTime};
 
 pub(crate) const DEFAULT_DURATION: Duration = Duration::minutes(15);
-pub(crate) const DEFAULT_MAX_SESSIONS: usize = 10_000;
+pub(crate) const DEFAULT_MAX_SESSIONS: usize = 50_000;
 pub(crate) const TIMESTAMP_BYTES: usize = 16;
 
 type Result<T> = result::Result<T, SessionError>;
@@ -27,7 +27,7 @@ type Result<T> = result::Result<T, SessionError>;
 /// automatically.
 ///
 /// # Defaults
-/// By default, sessions expire after **15 minutes** with a maximum of **10,000**
+/// By default, sessions expire after **15 minutes** with a maximum of **50,000**
 /// allowed active sessions. These values can be overridden using the
 /// [`with_expiry`][we] and [`with_max_sessions`][wms] methods.
 ///
@@ -40,13 +40,16 @@ type Result<T> = result::Result<T, SessionError>;
 /// [we]: Self::with_expiry
 /// [wms]: Self::with_max_sessions
 #[derive(Debug, Clone)]
-pub struct SessionManager<Store: SessionStore> {
-    store: Arc<Store>,
+pub struct SessionManager<S>
+where
+    S: SessionStore + Clone,
+{
+    store: Arc<S>,
     expiry: Duration,
     max_sessions: usize,
 }
 
-impl<Store: SessionStore> SessionManager<Store> {
+impl<S: SessionStore + Clone> SessionManager<S> {
     /// Creates a new session manager with the provided store.
     ///
     /// # Examples
@@ -59,7 +62,7 @@ impl<Store: SessionStore> SessionManager<Store> {
     /// let store = MemoryStore::new();
     /// let manager = SessionManager::new(store);
     /// ```
-    pub fn new(store: Store) -> Self {
+    pub fn new(store: S) -> Self {
         Self {
             store: Arc::new(store),
             expiry: DEFAULT_DURATION,
@@ -68,9 +71,9 @@ impl<Store: SessionStore> SessionManager<Store> {
     }
 
     /// Overrides the default expiry duration for all sessions.
-    /// 
+    ///
     /// Default expiry is 15 minutes.
-    /// 
+    ///
     /// # Examples
     ///
     /// ```
@@ -91,7 +94,7 @@ impl<Store: SessionStore> SessionManager<Store> {
     ///
     /// When this limit is reached, the session manager will reject new sessions
     /// until some sessions are deleted.
-    /// 
+    ///
     /// # Examples
     ///
     /// ```
@@ -108,7 +111,7 @@ impl<Store: SessionStore> SessionManager<Store> {
     }
 
     /// Inserts a session value into the store.
-    /// 
+    ///
     /// # Examples
     ///
     /// ```
@@ -124,7 +127,7 @@ impl<Store: SessionStore> SessionManager<Store> {
     /// manager.insert(key.into(), value).await.unwrap();
     /// # })
     /// ```
-    pub async fn insert(&self, key: Id, value: impl Serialize) -> Result<()> {
+    pub async fn insert(&self, key: impl Into<Id>, value: impl Serialize) -> Result<()> {
         if self.store.count().await? >= self.max_sessions {
             return Err(SessionError::MaxSessions);
         }
@@ -138,12 +141,14 @@ impl<Store: SessionStore> SessionManager<Store> {
         session_bytes.extend_from_slice(&expiry_bytes);
         session_bytes.extend_from_slice(&data_bytes);
 
-        self.store.save(key.as_ref(), &session_bytes, Some(ttl)).await?;
+        self.store
+            .save(key.into().as_ref(), &session_bytes, Some(ttl))
+            .await?;
         Ok(())
     }
 
     /// Gets a session value from the store.
-    /// 
+    ///
     /// # Examples
     ///
     /// ```
@@ -162,8 +167,8 @@ impl<Store: SessionStore> SessionManager<Store> {
     /// assert_eq!(value, Some("session_value".to_string()));
     /// # })
     /// ```
-    pub async fn get<T: DeserializeOwned>(&self, key: Id) -> Result<Option<T>> {
-        let Some(session_bytes) = self.store.load(key.as_ref()).await? else {
+    pub async fn get<T: DeserializeOwned>(&self, key: impl Into<Id>) -> Result<Option<T>> {
+        let Some(session_bytes) = self.store.load(key.into().as_ref()).await? else {
             return Ok(None);
         };
 
@@ -173,8 +178,36 @@ impl<Store: SessionStore> SessionManager<Store> {
         Ok(Some(data))
     }
 
+    /// Checks if a session exists in the store.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # pollster::block_on(async {
+    /// # use eid_server::session::SessionManager;
+    /// # use eid_server::session::MemoryStore;
+    ///
+    /// let store = MemoryStore::new();
+    /// let manager = SessionManager::new(store);
+    ///
+    /// let key = "session_id";
+    /// let value = "session_value";
+    /// manager.insert(key.into(), value).await.unwrap();
+    ///
+    /// let exists = manager.exists(key.into()).await.unwrap();
+    /// assert!(exists);
+    /// assert!(!manager.exists("nonexistent_key").await.unwrap());
+    /// # })
+    /// ```
+    pub async fn exists(&self, key: impl Into<Id>) -> Result<bool> {
+        self.store
+            .exists(key.into().as_ref())
+            .await
+            .map_err(Into::into)
+    }
+
     /// Removes a session from the store.
-    /// 
+    ///
     /// # Examples
     ///
     /// ```
@@ -193,13 +226,13 @@ impl<Store: SessionStore> SessionManager<Store> {
     /// assert!(manager.get::<String>(key.into()).await.unwrap().is_none());
     /// # })
     /// ```
-    pub async fn remove(&self, key: Id) -> Result<()> {
-        self.store.delete(key.as_ref()).await?;
+    pub async fn remove(&self, key: impl Into<Id>) -> Result<()> {
+        self.store.delete(key.into().as_ref()).await?;
         Ok(())
     }
 
     /// Sets the expiry for a specific session if it exists.
-    /// 
+    ///
     /// # Examples
     ///
     /// ```
@@ -219,7 +252,8 @@ impl<Store: SessionStore> SessionManager<Store> {
     /// assert!(res.is_ok());
     /// # })
     /// ```
-    pub async fn set_expiry(&self, key: Id, duration: Duration) -> Result<()> {
+    pub async fn set_expiry(&self, key: impl Into<Id>, duration: Duration) -> Result<()> {
+        let key = key.into();
         let Some(mut session_bytes) = self.store.load(key.as_ref()).await? else {
             return Ok(());
         };
@@ -237,7 +271,7 @@ impl<Store: SessionStore> SessionManager<Store> {
     }
 
     /// Gets the expiry as `UtcDateTime` for a specific session if it exists.
-    /// 
+    ///
     /// # Examples
     ///
     /// ```
@@ -260,8 +294,8 @@ impl<Store: SessionStore> SessionManager<Store> {
     /// assert!(expiry_date.is_some());
     /// # })
     /// ```
-    pub async fn get_expiry_date(&self, key: Id) -> Result<Option<UtcDateTime>> {
-        let Some(session_bytes) = self.store.load(key.as_ref()).await? else {
+    pub async fn get_expiry_date(&self, key: impl Into<Id>) -> Result<Option<UtcDateTime>> {
+        let Some(session_bytes) = self.store.load(key.into().as_ref()).await? else {
             return Ok(None);
         };
 
@@ -304,7 +338,7 @@ impl Id {
         Self(vec)
     }
 
-    /// Get the inner bytes without
+    /// Get the inner bytes of the ID
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
@@ -322,6 +356,18 @@ impl From<Vec<u8>> for Id {
     }
 }
 
+impl From<&Vec<u8>> for Id {
+    fn from(value: &Vec<u8>) -> Self {
+        Self(value.clone())
+    }
+}
+
+impl AsRef<[u8]> for Id {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 impl From<&str> for Id {
     fn from(value: &str) -> Self {
         Self(value.as_bytes().to_vec())
@@ -334,8 +380,8 @@ impl From<String> for Id {
     }
 }
 
-impl AsRef<[u8]> for Id {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
+impl From<&String> for Id {
+    fn from(value: &String) -> Self {
+        Self(value.as_bytes().to_vec())
     }
 }
