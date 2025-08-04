@@ -43,46 +43,65 @@ The eID Server enables identity verification using a SOAP-based flow between the
 
 ## Getting Started
 
-### Prerequisites
+Before running the server, ensure you have the following tools installed:
 
-- [Rust & Cargo](https://www.rust-lang.org/tools/install) (latest stable version)
+- [Rust & Cargo](https://www.rust-lang.org/tools/install) (Latest stable version recommended).
+- [Redis](https://redis.io/download): The in-memory data structure store used for caching and session management.
 
-### Setup
+**Clone the Repository:**
 
-1. Clone the repository:
+```bash
+git clone https://github.com/ADORSYS-GIS/eID-Server.git
+cd eID-Server
+```
 
-   ```bash
-   git clone https://github.com/ADORSYS-GIS/eID-Server.git
-   cd eID-Server
-   ```
+### Configuration
 
-2. Create a configuration file:
+The server needs some configuration to run. You can either use a configuration file or environment variables.
 
-   ```bash
-   mkdir -p config
-   touch config/settings.toml
-   ```
+**Configuration file:**
 
-   Add basic configuration:
+```bash
+mkdir -p config
+touch config/settings.toml
+```
 
-   ```toml
-   [server]
-   host = "127.0.0.1"
-   port = 8080
-   ```
+Add basic configuration:
 
-   You can also use environment variables to configure the server:
+```toml
+[server]
+host = "127.0.0.1"
+port = 8080
 
-   ```sh
-   export APP_SERVER_HOST=127.0.0.1
-   export APP_SERVER_PORT=8080
-   ```
+[redis]
+uri = "redis://127.0.0.1:6379"
+```
 
-3. Build and run the project:
+**Environment Variables:**
 
-   ```bash
-   cargo run
-   ```
+Create a `.env` file in the root directory. Take a look at the [.env.example](.env.example) file for an example of the required variables.
+
+### Running with Docker Compose
+
+The simplest way to run the project is with [docker compose](https://docs.docker.com/compose/):
+
+- Execute the command below at the root of the project
+
+```sh
+docker compose up --build -d
+```
+
+This command will pull all required images and start the server.
+
+### Running Manually
+
+Make sure you have Redis running and then execute:
+
+```bash
+cargo run
+```
+
+By default, the server will listen on `http://localhost:3000`. You can modify the host and port in the configuration settings.
 
 ### Running Tests
 
