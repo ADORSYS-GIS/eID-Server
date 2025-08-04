@@ -35,8 +35,7 @@ impl RedisConfig {
     /// Returns an error if the connection cannot be established.
     pub async fn start(&self) -> RedisResult<ConnectionManager> {
         let client = RedisClient::open(self.uri.expose_secret())?;
-        let config = ConnectionManagerConfig::new()
-            .set_connection_timeout(Duration::from_secs(60));
+        let config = ConnectionManagerConfig::new().set_connection_timeout(Duration::from_secs(60));
         client.get_connection_manager_with_config(config).await
     }
 }
