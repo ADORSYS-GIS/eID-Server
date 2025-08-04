@@ -27,6 +27,7 @@ use crate::{
         },
     },
     server::AppState,
+    session::SessionStore,
 };
 
 // TCTokenType structs for serialization
@@ -120,8 +121,8 @@ pub struct SamlQueryParams {
 /// Handles incoming useID requests, supporting both SAML HTTP-Redirect (GET) and SOAP (POST) bindings.
 /// For SAML requests, decodes and parses the SAMLRequest query parameter into a UseIDRequest.
 /// For SOAP requests, parses the request body as SOAP XML.
-pub async fn use_id_handler<S: EIDService + EidService>(
-    State(state): State<AppState<S>>,
+pub async fn use_id_handler<S: EIDService + EidService, STORE: SessionStore + Clone>(
+    State(state): State<AppState<S, STORE>>,
     headers: HeaderMap,
     Query(query): Query<SamlQueryParams>,
     body: String,
@@ -195,7 +196,7 @@ pub async fn use_id_handler<S: EIDService + EidService>(
         };
 
         // Process the request
-        let response = match state.use_id.handle_use_id(use_id_request).await {
+        let response = match state.service.handle_use_id(use_id_request).await {
             Ok(response) => {
                 info!("useID request processed successfully");
                 debug!("Response: {:?}", response);
@@ -264,7 +265,7 @@ pub async fn use_id_handler<S: EIDService + EidService>(
             }
         };
 
-        let response = match state.use_id.handle_use_id(use_id_request).await {
+        let response = match state.service.handle_use_id(use_id_request).await {
             Ok(response) => {
                 info!("useID request processed successfully");
                 debug!("Response: {:?}", response);
@@ -681,6 +682,7 @@ mod tests {
             common::models::{ResultMajor, SessionResponse},
             use_id::model::Psk,
         },
+        session::{MemoryStore, SessionManager},
     };
     use axum::{
         body::Body,
@@ -689,17 +691,21 @@ mod tests {
     use http_body_util::BodyExt;
     use std::{io::Write, sync::Arc};
 
-    fn create_test_state() -> AppState<UseidService> {
-        let service = UseidService::new(EIDServiceConfig {
-            max_sessions: 10,
-            session_timeout_minutes: 5,
-            ecard_server_address: Some("https://test.eid.example.com/ecard".to_string()),
-            redis_url: None,
-        });
-        let service_arc = Arc::new(service);
+    fn create_test_state() -> AppState<UseidService<MemoryStore>, MemoryStore> {
+        let store = MemoryStore::new();
+        let session_manager = SessionManager::new(store);
+        let service = UseidService::new(
+            EIDServiceConfig {
+                max_sessions: 10,
+                session_timeout_minutes: 5,
+                ecard_server_address: Some("https://test.eid.example.com/ecard".to_string()),
+                redis_url: None,
+            },
+            session_manager.clone(),
+        );
         AppState {
-            use_id: service_arc.clone(),
-            eid_service: service_arc,
+            service: Arc::new(service),
+            session_manager: Arc::new(session_manager),
         }
     }
 
@@ -1020,14 +1026,6 @@ mod tests {
         // Generate multiple sessions and collect session IDs
         let mut session_ids = std::collections::HashSet::new();
         for _ in 0..10 {
-            // Clean up expired sessions before each request
-            state
-                .use_id
-                .session_manager
-                .remove_expired_sessions()
-                .await
-                .unwrap();
-
             let request = Request::builder()
                 .method(http::Method::GET)
                 .uri(format!("/eIDService/useID?SAMLRequest={encoded_saml}"))

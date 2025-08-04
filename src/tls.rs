@@ -1,12 +1,10 @@
 mod cert_utils;
 mod errors;
 mod psk;
-mod session;
 
 pub use cert_utils::*;
 pub use errors::TlsError;
 pub use psk::{PskStore, PskStoreError};
-pub use session::{InMemorySessionStore, RedisSessionStore, SessionStore, SessionStoreError};
 
 use openssl::error::ErrorStack;
 use openssl::pkey::PKey;
@@ -19,6 +17,8 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::task;
 use tracing::{debug, error, instrument, trace, warn};
+
+use crate::session::SessionStore;
 
 // RSA PSK Cipher suites
 // TLS_RSA_PSK_WITH_AES_256_CBC_SHA = {0x00,0x95}
@@ -311,7 +311,7 @@ impl TlsConfig {
                     }
                 };
 
-                match store.store_session(session_id, &session_data).await {
+                match store.save(session_id, &session_data, None).await {
                     Ok(_) => debug!("Session {session_str} stored successfully"),
                     Err(e) => error!("Failed to store session {session_str}: {e}"),
                 }
@@ -325,7 +325,7 @@ impl TlsConfig {
                 let session_str = hex::encode(session_id);
 
                 let result = task::block_in_place(|| {
-                    Handle::current().block_on(async move { store.get_session(session_id).await })
+                    Handle::current().block_on(async move { store.load(session_id).await })
                 });
 
                 match result {
@@ -358,7 +358,7 @@ impl TlsConfig {
             let session_str = hex::encode(&session_id);
 
             Handle::current().spawn(async move {
-                match store.remove_session(&session_id).await {
+                match store.delete(&session_id).await {
                     Ok(_) => debug!("Session {session_str} removed successfully"),
                     Err(e) => error!("Failed to remove session {session_str}: {e}"),
                 }

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use color_eyre::eyre::eyre;
 use redis::AsyncCommands;
 use std::sync::Arc;
-use tokio::{runtime::Handle, sync::RwLock};
+use tokio::sync::RwLock;
 use tracing::{debug, error};
 use uuid::Uuid;
 
@@ -39,11 +39,12 @@ impl PskStore for Arc<dyn SessionManager> {
     async fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
         let id = String::from_utf8_lossy(identity).into_owned();
 
-        let task = self.get_session(&id);
-        let session = tokio::task::block_in_place(move || Handle::current().block_on(task))
+        let result = self
+            .get_session(&id)
+            .await
             .map_err(|e| PskStoreError::msg(format!("Session lookup failed: {e}")))?;
 
-        match session {
+        match result {
             Some(s) => hex::decode(&s.psk)
                 .map(Some)
                 .map_err(|e| PskStoreError::msg(format!("Invalid PSK hex format: {e}"))),

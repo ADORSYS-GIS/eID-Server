@@ -8,17 +8,22 @@ use crate::{
     domain::eid::{
         models::{AuthenticationProtocolData, ConnectionHandle, DIDAuthenticateRequest},
         ports::{DIDAuthenticate, EIDService, EidService},
-        session_manager::SessionManager,
+        service::{ConnectionHandle as ConnectionHandleService, SessionInfo},
     },
     eid::paos::parser::parse_start_paos,
     server::{AppState, handlers::did_auth::DIDAuthenticateHandler},
+    session::SessionStore,
 };
 
 pub const EAC_REQUIRED_CHAT: &str = "7f4c12060904007f00070301020253053c0ff3ffff";
 
-pub async fn paos_handler<S>(State(state): State<AppState<S>>, body: String) -> impl IntoResponse
+pub async fn paos_handler<S, STORE>(
+    State(state): State<AppState<S, STORE>>,
+    body: String,
+) -> impl IntoResponse
 where
-    S: EIDService + EidService + DIDAuthenticate + SessionManager + Send + Sync + 'static,
+    S: EIDService + EidService + DIDAuthenticate + Send + Sync + 'static,
+    STORE: SessionStore + Clone,
 {
     // Parse the SOAP request
     let paos_request = match parse_start_paos(&body) {
@@ -45,10 +50,10 @@ where
     let session_id = paos_request.session_identifier;
 
     // Verify session validity
-    let is_valid = match state.use_id.is_session_valid(&session_id).await {
-        Ok(valid) => valid,
+    let session: Option<SessionInfo> = match state.session_manager.get(&session_id).await {
+        Ok(session) => session,
         Err(err) => {
-            error!("Session validation error: {}", err);
+            error!("Session validation error: {err}");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal server error".to_string(),
@@ -57,8 +62,8 @@ where
         }
     };
 
-    if !is_valid {
-        warn!("Invalid session identifier: {}", session_id);
+    if session.is_none() {
+        warn!("Invalid session identifier: {session_id}");
         return (
             StatusCode::UNAUTHORIZED,
             "Invalid session identifier".to_string(),
@@ -67,15 +72,12 @@ where
     }
 
     // Update session with connection handles
-    if let Err(err) = state
-        .use_id
-        .update_session_connection_handles(
-            &session_id,
-            vec![paos_request.connection_handle.card_application],
-        )
-        .await
-    {
-        error!("Failed to update session connection handles: {}", err);
+    let mut session = session.unwrap();
+    session.connection_handles = vec![ConnectionHandleService {
+        connection_handle: paos_request.connection_handle.card_application,
+    }];
+    if let Err(err) = state.session_manager.insert(&session_id, session).await {
+        error!("Failed to update session connection handles: {err}");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Failed to update session with connection handles".to_string(),
@@ -103,7 +105,7 @@ where
 
     // Call DIDAuthenticate handler
     let did_response = match state
-        .eid_service
+        .service
         .handle_did_authenticate(did_authenticate_request)
         .await
     {
@@ -119,7 +121,7 @@ where
     };
 
     // Convert to SOAP response
-    let handler = DIDAuthenticateHandler::new(Arc::clone(&state.eid_service));
+    let handler = DIDAuthenticateHandler::new(Arc::clone(&state.service));
     let soap_response = match handler.to_soap_response(did_response) {
         Ok(response) => response,
         Err(err) => {
@@ -152,15 +154,16 @@ mod tests {
     use chrono::{Duration, Utc};
     use tower::ServiceExt;
 
-    use crate::domain::eid::{
-        service::{EIDServiceConfig, SessionInfo, UseidService},
-        session_manager::{InMemorySessionManager, SessionManager},
+    use crate::{
+        domain::eid::service::{EIDServiceConfig, SessionInfo, UseidService},
+        session::{MemoryStore, SessionManager},
     };
 
     use super::*;
 
-    async fn create_test_state(id: String) -> AppState<UseidService> {
-        let session_manager = Arc::new(InMemorySessionManager::new()) as Arc<dyn SessionManager>;
+    async fn create_test_state(id: String) -> AppState<UseidService<MemoryStore>, MemoryStore> {
+        let store = MemoryStore::new();
+        let session_manager = SessionManager::new(store);
 
         // Use a valid 32-byte hex-encoded PSK (64 characters)
         let valid_psk =
@@ -176,7 +179,7 @@ mod tests {
 
         // Store session asynchronously
         session_manager
-            .store_session(session_info)
+            .insert(&session_info.id, &session_info)
             .await
             .expect("Failed to store session");
 
@@ -187,12 +190,12 @@ mod tests {
                 ecard_server_address: Some("https://test.eid.example.com/ecard".to_string()),
                 redis_url: None,
             },
-            session_manager,
+            session_manager: session_manager.clone(),
         };
 
         AppState {
-            use_id: Arc::new(service.clone()),
-            eid_service: Arc::new(service),
+            service: Arc::new(service.clone()),
+            session_manager: Arc::new(session_manager),
         }
     }
 
@@ -202,7 +205,7 @@ mod tests {
         let app = Router::new()
             .route(
                 "/eIDService/paos",
-                axum::routing::post(paos_handler::<UseidService>),
+                axum::routing::post(paos_handler::<UseidService<MemoryStore>, MemoryStore>),
             )
             .with_state(state.clone());
 
@@ -226,7 +229,7 @@ mod tests {
         let app = Router::new()
             .route(
                 "/eIDService/paos",
-                axum::routing::post(paos_handler::<UseidService>),
+                axum::routing::post(paos_handler::<UseidService<MemoryStore>, MemoryStore>),
             )
             .with_state(state.clone());
 
