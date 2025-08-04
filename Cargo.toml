@@ -58,6 +58,9 @@ openssl = { version = "0.10", features = ["vendored"] }
 version = "0.32"
 features = ["tokio-native-tls-comp", "connection-manager", "safe_iterators"]
 
+[package.metadata.cargo-machete]
+ignored = ["pollster"]
+
 [dev-dependencies]
 http-body-util = "0.1"
 pollster = "0.4"
