@@ -215,7 +215,7 @@ impl CertificateStore {
         content.extend_from_slice(&[0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03, 0x01, 0x01]);
 
         // 2. IssuerName ([1] EXPLICIT UTF8String)
-        let issuer_name = b"Governikus Test DVCA";
+        let issuer_name = b"Serer Test CA";
         content.push(0xA1); // [1] EXPLICIT UTF8String
         Self::write_der_length(&mut content, issuer_name.len() + 2); // +2 for inner tag and length
         content.push(0x0C); // UTF8String
@@ -223,7 +223,7 @@ impl CertificateStore {
         content.extend_from_slice(issuer_name);
 
         // 3. IssuerURL ([2] EXPLICIT PrintableString)
-        let issuer_url = b"http://www.governikus.de";
+        let issuer_url = b"http://www.serer.com";
         content.push(0xA2); // [2] EXPLICIT PrintableString
         Self::write_der_length(&mut content, issuer_url.len() + 2); // +2 for inner tag and length
         content.push(0x13); // PrintableString (0x13, not 0x16)
@@ -231,7 +231,7 @@ impl CertificateStore {
         content.extend_from_slice(issuer_url);
 
         // 4. SubjectName ([3] EXPLICIT UTF8String)
-        let subject_name = b"Governikus GmbH & Co. KG";
+        let subject_name = b"Serer GmbH";
         content.push(0xA3); // [3] EXPLICIT UTF8String
         Self::write_der_length(&mut content, subject_name.len() + 2); // +2 for inner tag and length
         content.push(0x0C); // UTF8String
@@ -239,7 +239,7 @@ impl CertificateStore {
         content.extend_from_slice(subject_name);
 
         // 5. SubjectURL ([4] EXPLICIT PrintableString)
-        let subject_url = b"https://test.governikus-eid.de";
+        let subject_url = b"https://test.serer-eid.com";
         content.push(0xA4); // [4] EXPLICIT PrintableString
         Self::write_der_length(&mut content, subject_url.len() + 2); // +2 for inner tag and length
         content.push(0x13); // PrintableString (0x13, not 0x16)
@@ -247,7 +247,7 @@ impl CertificateStore {
         content.extend_from_slice(subject_url);
 
         // 6. TermsOfUsage ([5] EXPLICIT ANY)
-        let terms = "Name, Anschrift und E-Mail-Adresse des Diensteanbieters:\r\nGovernikus GmbH & Co. KG\r\nHochschulring 4\r\n28359 Bremen\r\nkontakt@governikus.de\r\n\r\nHinweis auf die für den Diensteanbieter zuständigen Stellen, die die Einhaltung der Vorschriften zum Datenschutz kontrollieren:\r\nDie Landesbeauftragte für Datenschutz und Informationsfreiheit der Freien Hansestadt Bremen\r\nArndtstraße 1\r\n27570 Bremerhaven\r\n0421/596-2010\r\noffice@datenschutz.bremen.de\r\nhttp://www.datenschutz.bremen.de";
+        let terms = "Name, Address, and Email of the Service Provider:\r\nSerer GmbH\r\nExample Street 123\r\n12345 Example City\r\ncontact@serer.com\r\n\r\nNote regarding the authorities responsible for data protection compliance:\r\nData Protection Authority\r\nMain Street 456\r\n12345 Example City\r\n0123/456-7890\r\ninfo@dataprotection.example.com\r\nhttp://www.dataprotection.example.com";
         let terms_bytes = terms.as_bytes();
 
         // Calculate the proper length for EXPLICIT wrapper
@@ -280,7 +280,7 @@ impl CertificateStore {
         Self::write_der_length(&mut content, set_content.len());
         content.extend_from_slice(&set_content);
 
-        // 6. Wrap everything in outer SEQUENCE
+        // 8. Wrap everything in outer SEQUENCE
         let mut result = Vec::new();
         result.push(0x30); // SEQUENCE
         Self::write_der_length(&mut result, content.len());
@@ -1518,11 +1518,9 @@ impl CardCommunicator {
         if let Some(major) = result_major
             && major.contains("error")
         {
-            {
-                return Err(AuthError::card_communication_error(format!(
-                    "SOAP response indicates error: major={major}, minor={result_minor:?}"
-                )));
-            }
+            return Err(AuthError::card_communication_error(format!(
+                "SOAP response indicates error: major={major}, minor={result_minor:?}"
+            )));
         }
 
         if chat.is_empty()
