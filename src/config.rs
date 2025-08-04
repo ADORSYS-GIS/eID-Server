@@ -1,15 +1,16 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use config::{Config as ConfigLib, ConfigError, Environment, File};
-use redis::{Client as RedisClient, RedisResult, aio::ConnectionManager};
+use redis::{
+    Client as RedisClient, RedisResult,
+    aio::{ConnectionManager, ConnectionManagerConfig},
+};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub redis_url: Option<String>,
     pub redis: RedisConfig,
 }
 
@@ -34,7 +35,9 @@ impl RedisConfig {
     /// Returns an error if the connection cannot be established.
     pub async fn start(&self) -> RedisResult<ConnectionManager> {
         let client = RedisClient::open(self.uri.expose_secret())?;
-        client.get_connection_manager().await
+        let config = ConnectionManagerConfig::new()
+            .set_connection_timeout(Duration::from_secs(60));
+        client.get_connection_manager_with_config(config).await
     }
 }
 
