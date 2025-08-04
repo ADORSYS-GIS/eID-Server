@@ -47,16 +47,16 @@ async fn test_method_chaining() {
 #[tokio::test]
 async fn test_session_manager_flow() {
     let manager = create_test_manager();
-    let session_id = Id::from("test_id");
+    let session_id = "test_id";
     let data = create_test_data();
 
     // Insert and verify it exists
-    manager.insert(session_id.clone(), &data).await.unwrap();
-    let retrieved: Option<TestData> = manager.get(session_id.clone()).await.unwrap();
+    manager.insert(session_id, &data).await.unwrap();
+    let retrieved: Option<TestData> = manager.get(session_id).await.unwrap();
     assert_eq!(retrieved, Some(data));
 
     // Remove and verify it's gone
-    manager.remove(session_id.clone()).await.unwrap();
+    manager.remove(session_id).await.unwrap();
     let retrieved: Option<TestData> = manager.get(session_id).await.unwrap();
     assert_eq!(retrieved, None);
 }
@@ -65,53 +65,50 @@ async fn test_session_manager_flow() {
 async fn test_multiple_sessions() {
     let manager = create_test_manager();
     let sessions = vec![
-        (Id::from("session1"), "data1"),
-        (Id::from("session2"), "data2"),
-        (Id::from("session3"), "data3"),
+        ("session1", "data1"),
+        ("session2", "data2"),
+        ("session3", "data3"),
     ];
 
     // Insert multiple sessions
     for (id, data) in &sessions {
-        manager.insert(id.clone(), *data).await.unwrap();
+        manager.insert(*id, data).await.unwrap();
     }
 
     // Verify all sessions exist
     for (id, expected_data) in &sessions {
-        let retrieved: Option<String> = manager.get(id.clone()).await.unwrap();
+        let retrieved: Option<String> = manager.get(*id).await.unwrap();
         assert_eq!(retrieved, Some(expected_data.to_string()));
     }
 
     // Remove one session and verify others still exist
-    manager.remove(sessions[1].0.clone()).await.unwrap();
+    manager.remove(sessions[1].0).await.unwrap();
 
-    let retrieved: Option<String> = manager.get(sessions[0].0.clone()).await.unwrap();
+    let retrieved: Option<String> = manager.get(sessions[0].0).await.unwrap();
     assert_eq!(retrieved, Some(sessions[0].1.to_string()));
 
     // Verify the removed session is gone
-    let retrieved: Option<String> = manager.get(sessions[1].0.clone()).await.unwrap();
+    let retrieved: Option<String> = manager.get(sessions[1].0).await.unwrap();
     assert_eq!(retrieved, None);
 
-    let retrieved: Option<String> = manager.get(sessions[2].0.clone()).await.unwrap();
+    let retrieved: Option<String> = manager.get(sessions[2].0).await.unwrap();
     assert_eq!(retrieved, Some(sessions[2].1.to_string()));
 }
 
 #[tokio::test]
 async fn test_set_expiry() {
     let manager = create_test_manager();
-    let session_id = Id::from("expiry_test");
+    let session_id = "expiry_test";
     let data = create_test_data();
     let new_duration = Duration::minutes(16);
 
-    manager.insert(session_id.clone(), &data).await.unwrap();
+    manager.insert(session_id, &data).await.unwrap();
 
     // override the global expiry for this session
-    manager
-        .set_expiry(session_id.clone(), new_duration)
-        .await
-        .unwrap();
+    manager.set_expiry(session_id, new_duration).await.unwrap();
 
     // Verify session still exists
-    let retrieved: Option<TestData> = manager.get(session_id.clone()).await.unwrap();
+    let retrieved: Option<TestData> = manager.get(session_id).await.unwrap();
     assert_eq!(retrieved, Some(data));
 
     // The expire date (now + 16 minutes) should now be greater than the default expiry
@@ -123,11 +120,11 @@ async fn test_set_expiry() {
 #[tokio::test]
 async fn test_get_expiry_date() {
     let manager = create_test_manager();
-    let session_id = Id::from("expiry_date_test");
+    let session_id = "expiry_date_test";
     let data = create_test_data();
 
     let before_insert = UtcDateTime::now();
-    manager.insert(session_id.clone(), data).await.unwrap();
+    manager.insert(session_id, data).await.unwrap();
     let after_insert = UtcDateTime::now();
 
     let expiry_date = manager.get_expiry_date(session_id).await.unwrap();
@@ -147,11 +144,11 @@ async fn test_custom_expiry_duration() {
     let custom_duration = Duration::hours(2);
     let manager = SessionManager::new(store).with_expiry(custom_duration);
 
-    let session_id = Id::from("custom_expiry_test");
+    let session_id = "custom_expiry_test";
     let data = create_test_data();
 
     let before_insert = UtcDateTime::now();
-    manager.insert(session_id.clone(), data).await.unwrap();
+    manager.insert(session_id, data).await.unwrap();
     let after_insert = UtcDateTime::now();
 
     let expiry_date = manager.get_expiry_date(session_id).await.unwrap().unwrap();
@@ -170,19 +167,19 @@ async fn test_max_sessions_limit() {
     let manager = SessionManager::new(store).with_max_sessions(max_sessions);
 
     // Insert sessions up to the limit
-    manager.insert(Id::from("session1"), "data1").await.unwrap();
-    manager.insert(Id::from("session2"), "data2").await.unwrap();
+    manager.insert("session1", "data1").await.unwrap();
+    manager.insert("session2", "data2").await.unwrap();
 
     // Should fail to insert another
-    let result = manager.insert(Id::from("session3"), "data3").await;
+    let result = manager.insert("session3", "data3").await;
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), SessionError::MaxSessions));
 
     // Remove one session
-    manager.remove(Id::from("session1")).await.unwrap();
+    manager.remove("session1").await.unwrap();
 
     // Should now be able to insert a new session
-    let result = manager.insert(Id::from("session3"), "data3").await;
+    let result = manager.insert("session3", "data3").await;
     assert!(result.is_ok());
 }
 
@@ -191,16 +188,16 @@ async fn test_session_expiration() {
     let store = MemoryStore::new();
     let manager = SessionManager::new(store).with_expiry(Duration::seconds(1));
 
-    let id1 = Id::from("expiration_test");
+    let id1 = "expiration_test";
     let data1 = create_test_data();
-    let id2 = Id::from("expiration_test2");
+    let id2 = "expiration_test2";
     let data2 = create_test_data();
 
-    manager.insert(id1.clone(), &data1).await.unwrap();
-    manager.insert(id2.clone(), &data2).await.unwrap();
+    manager.insert(id1, &data1).await.unwrap();
+    manager.insert(id2, &data2).await.unwrap();
     // override the global expiry for the second session
     manager
-        .set_expiry(id2.clone(), Duration::seconds(15))
+        .set_expiry(id2, Duration::seconds(15))
         .await
         .unwrap();
 
