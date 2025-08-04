@@ -109,6 +109,13 @@ impl SessionStore for RedisStore {
         Ok(result)
     }
 
+    async fn exists(&self, session_id: &[u8]) -> Result<bool> {
+        let mut conn = self.conn.clone();
+        let key = self.key(session_id);
+        let result = conn.exists(key).await?;
+        Ok(result)
+    }
+
     async fn delete(&self, session_id: &[u8]) -> Result<()> {
         let mut conn = self.conn.clone();
         let key = self.key(session_id);

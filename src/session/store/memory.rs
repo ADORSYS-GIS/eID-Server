@@ -56,6 +56,10 @@ impl SessionStore for MemoryStore {
         }
     }
 
+    async fn exists(&self, session_id: &[u8]) -> Result<bool> {
+        Ok(self.sessions.contains_key(session_id))
+    }
+
     async fn delete(&self, session_id: &[u8]) -> Result<()> {
         self.sessions.remove(session_id);
         Ok(())

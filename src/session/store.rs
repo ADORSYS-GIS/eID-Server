@@ -68,7 +68,7 @@ impl From<serde_json::Error> for SessionStoreError {
 
 /// Abstract interface for session storage backends.
 #[async_trait]
-pub trait SessionStore: Clone + Send + Sync {
+pub trait SessionStore: Send + Sync {
     /// Saves the provided session data to the store.
     ///
     /// An optional TTL can be provided to specify the time-to-live for the session.
@@ -76,6 +76,9 @@ pub trait SessionStore: Clone + Send + Sync {
 
     /// Loads an existing session data from the store using the provided ID.
     async fn load(&self, session_id: &[u8]) -> Result<Option<Vec<u8>>>;
+
+    /// Checks if the session with the provided ID exists in the store.
+    async fn exists(&self, session_id: &[u8]) -> Result<bool>;
 
     /// Deletes a session record from the store using the provided ID.
     async fn delete(&self, session_id: &[u8]) -> Result<()>;
@@ -93,8 +96,8 @@ where
     /// A method for deleting expired sessions from the store.
     async fn delete_expired(&self) -> Result<()>;
 
-    /// This function will keep running indefinitely, deleting expired sessions and
-    /// then waiting for the specified period before deleting again.
+    /// This function will keep running indefinitely, deleting expired sessions
+    /// and then waiting for the specified period before deleting again.
     async fn delete_expired_sessions(self, period: tokio::time::Duration) -> Result<()> {
         let mut interval = tokio::time::interval(period);
         interval.tick().await;
