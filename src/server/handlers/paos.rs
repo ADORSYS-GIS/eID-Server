@@ -151,7 +151,6 @@ mod tests {
         body::Body,
         http::{self, Request},
     };
-    use chrono::{Duration, Utc};
     use tower::ServiceExt;
 
     use crate::{
@@ -171,7 +170,6 @@ mod tests {
 
         let session_info = SessionInfo {
             id: id.clone(),
-            expiry: Utc::now() + Duration::minutes(5),
             psk: valid_psk,
             operations: vec![],
             connection_handles: vec![],
@@ -185,10 +183,7 @@ mod tests {
 
         let service = UseidService {
             config: EIDServiceConfig {
-                max_sessions: 10,
-                session_timeout_minutes: 5,
                 ecard_server_address: Some("https://test.eid.example.com/ecard".to_string()),
-                redis_url: None,
             },
             session_manager: session_manager.clone(),
         };

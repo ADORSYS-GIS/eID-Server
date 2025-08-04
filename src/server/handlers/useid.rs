@@ -696,10 +696,7 @@ mod tests {
         let session_manager = SessionManager::new(store);
         let service = UseidService::new(
             EIDServiceConfig {
-                max_sessions: 10,
-                session_timeout_minutes: 5,
                 ecard_server_address: Some("https://test.eid.example.com/ecard".to_string()),
-                redis_url: None,
             },
             session_manager.clone(),
         );

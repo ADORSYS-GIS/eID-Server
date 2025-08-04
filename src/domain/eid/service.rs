@@ -3,7 +3,7 @@
 use std::fs;
 
 use base64::Engine;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use color_eyre::Result;
 use color_eyre::eyre::eyre;
 use rand::RngCore;
@@ -21,28 +21,20 @@ use crate::eid::common::models::{
 };
 use crate::eid::use_id::model::{Psk, UseIDRequest, UseIDResponse};
 use crate::session::{SessionManager, SessionStore};
+use crate::tls::{PskStore, PskStoreError};
 use async_trait::async_trait;
 
 // Configuration for the eID Service
 #[derive(Clone, Debug)]
 pub struct EIDServiceConfig {
-    /// Maximum number of concurrent sessions
-    pub max_sessions: usize,
-    /// Session timeout in minutes
-    pub session_timeout_minutes: i64,
     /// Optional eCard server address to return in responses
     pub ecard_server_address: Option<String>,
-    /// Redis connection URL (optional, if using Redis backend)
-    pub redis_url: Option<String>,
 }
 
 impl Default for EIDServiceConfig {
     fn default() -> Self {
         Self {
-            max_sessions: 1000,
-            session_timeout_minutes: 5,
             ecard_server_address: Some("https://localhost:3000".to_string()),
-            redis_url: None,
         }
     }
 }
@@ -51,7 +43,6 @@ impl Default for EIDServiceConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionInfo {
     pub id: String,
-    pub expiry: DateTime<Utc>,
     pub psk: String,
     pub operations: Vec<String>,
     pub connection_handles: Vec<ConnectionHandle>,
@@ -63,10 +54,9 @@ pub struct ConnectionHandle {
 }
 
 impl SessionInfo {
-    pub fn new(id: String, psk: String, operations: Vec<String>, timeout_minutes: i64) -> Self {
+    pub fn new(id: String, psk: String, operations: Vec<String>) -> Self {
         SessionInfo {
             id,
-            expiry: Utc::now() + chrono::Duration::minutes(timeout_minutes),
             psk,
             operations,
             connection_handles: Vec::new(),
@@ -191,24 +181,18 @@ impl<S: SessionStore + Clone + 'static> EIDService for UseidService<S> {
             error!("Generated empty PSK");
             return Err(eyre!("Failed to generate PSK"));
         }
+        debug!("Generated PSK: {psk}");
 
-        debug!("Generated PSK: {}", psk);
+        let session_info =
+            SessionInfo::new(session_id.clone(), psk.clone(), required_operations.clone());
 
         // Store session with PSK
-        let session_info = SessionInfo::new(
-            session_id.clone(),
-            psk.clone(),
-            required_operations.clone(),
-            self.config.session_timeout_minutes,
-        );
-
-        // Store the session
         self.session_manager
             .insert(&session_id, session_info.clone())
             .await?;
         info!(
-            "Created new session: {}, expires: {}, operations: {:?}",
-            session_id, session_info.expiry, session_info.operations
+            "Created new session: {}, operations: {:?}",
+            session_id, session_info.operations
         );
 
         // Construct TcTokenURL
@@ -360,19 +344,14 @@ impl<S: SessionStore + Clone + 'static> DIDAuthenticateService<S> {
             .as_ref()
             .ok_or_else(|| AuthError::invalid_connection("Missing channel handle"))?;
 
-        let session_info: Option<SessionInfo> = session_manager
-            .get(session_id)
+        if !session_manager
+            .exists(session_id)
             .await
-            .map_err(|e| AuthError::internal_error(format!("Failed to acquire session: {e}")))?;
-
-        let session_info = session_info.ok_or_else(|| {
-            error!("Session {} not found", session_id);
-            AuthError::invalid_connection("Invalid or expired session")
-        })?;
-
-        if session_info.expiry < Utc::now() {
-            error!("Session {} expired at {}", session_id, session_info.expiry);
-            return Err(AuthError::timeout_error("Session validation"));
+            .map_err(|e| AuthError::internal_error(format!("Failed to acquire session: {e}")))?
+        {
+            return Err(AuthError::invalid_connection(
+                "Invalid or expired session: {session_id}",
+            ));
         }
 
         let certificate_der = base64::engine::general_purpose::STANDARD
@@ -445,5 +424,32 @@ impl<S: SessionStore + Clone + 'static> DIDAuthenticate for UseidService<S> {
         let did_service =
             DIDAuthenticateService::new_with_defaults(self.session_manager.clone()).await;
         Ok(did_service.authenticate(request).await)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PskStoreAdapter<S: SessionStore + Clone>(SessionManager<S>);
+
+impl<S: SessionStore + Clone> PskStoreAdapter<S> {
+    pub fn new(session_manager: SessionManager<S>) -> Self {
+        Self(session_manager)
+    }
+}
+
+#[async_trait]
+impl<S: SessionStore + Clone + 'static> PskStore for PskStoreAdapter<S> {
+    async fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
+        let result: Option<SessionInfo> = self
+            .0
+            .get(identity)
+            .await
+            .map_err(|e| PskStoreError::msg(format!("Session lookup failed: {e}")))?;
+
+        match result {
+            Some(s) => hex::decode(&s.psk)
+                .map(Some)
+                .map_err(|e| PskStoreError::msg(format!("Invalid PSK hex format: {e}"))),
+            None => Ok(None),
+        }
     }
 }
