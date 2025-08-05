@@ -306,7 +306,9 @@ impl TlsConfig {
                 let session_data = match session.to_der() {
                     Ok(data) => data,
                     Err(e) => {
-                        error!("Failed to serialize session data for session {session_id_hex}: {e}");
+                        error!(
+                            "Failed to serialize session data for session {session_id_hex}: {e}"
+                        );
                         return;
                     }
                 };
