@@ -217,8 +217,8 @@ impl TlsConfig {
             builder.set_psk_server_callback(move |_ssl, identity, psk_buf| {
                 debug!("PSK server callback invoked");
                 if let Some(psk_identity) = identity {
-                    let psk_identity_str = String::from_utf8_lossy(psk_identity);
-                    debug!(identity = %psk_identity_str, "PSK identity provided");
+                    let psk_identity_hex = hex::encode(psk_identity);
+                    debug!(identity = %psk_identity_hex, "PSK identity provided");
 
                     let result = task::block_in_place(|| {
                         Handle::current().block_on(psk_store.get_psk(psk_identity))
@@ -239,7 +239,7 @@ impl TlsConfig {
                             }
                         }
                         Ok(None) => {
-                            warn!(identity = %psk_identity_str, "PSK not found for identity");
+                            warn!(identity = %psk_identity_hex, "PSK not found for identity");
                         }
                         Err(e) => {
                             error!(error = ?e, "Error retrieving PSK for identity");
@@ -302,18 +302,18 @@ impl TlsConfig {
             let store = store_new.clone();
             Handle::current().spawn(async move {
                 let session_id = session.id();
-                let session_str = hex::encode(session_id);
+                let session_id_hex = hex::encode(session_id);
                 let session_data = match session.to_der() {
                     Ok(data) => data,
                     Err(e) => {
-                        error!("Failed to serialize session data for session {session_str}: {e}");
+                        error!("Failed to serialize session data for session {session_id_hex}: {e}");
                         return;
                     }
                 };
 
                 match store.save(session_id, &session_data, None).await {
-                    Ok(_) => debug!("Session {session_str} stored successfully"),
-                    Err(e) => error!("Failed to store session {session_str}: {e}"),
+                    Ok(_) => debug!("Session {session_id_hex} stored successfully"),
+                    Err(e) => error!("Failed to store session {session_id_hex}: {e}"),
                 }
             });
         });
@@ -322,7 +322,7 @@ impl TlsConfig {
         unsafe {
             builder.set_get_session_callback(move |_ssl, session_id| {
                 let store = store_get.clone();
-                let session_str = hex::encode(session_id);
+                let session_id_hex = hex::encode(session_id);
 
                 let result = task::block_in_place(|| {
                     Handle::current().block_on(async move { store.load(session_id).await })
@@ -331,20 +331,20 @@ impl TlsConfig {
                 match result {
                     Ok(Some(session_data)) => match SslSession::from_der(&session_data) {
                         Ok(session) => {
-                            debug!("Session {session_str} retrieved successfully");
+                            debug!("Session {session_id_hex} retrieved successfully");
                             Some(session)
                         }
                         Err(e) => {
-                            error!("Failed to deserialize session {session_str}: {e}");
+                            error!("Failed to deserialize session {session_id_hex}: {e}");
                             None
                         }
                     },
                     Ok(None) => {
-                        debug!("Session {session_str} not found in store");
+                        debug!("Session {session_id_hex} not found in store");
                         None
                     }
                     Err(e) => {
-                        error!("Failed to retrieve session {session_str}: {e}");
+                        error!("Failed to retrieve session {session_id_hex}: {e}");
                         None
                     }
                 }
@@ -355,12 +355,12 @@ impl TlsConfig {
         builder.set_remove_session_callback(move |_ctx, session| {
             let store = store_remove.clone();
             let session_id = session.id().to_vec();
-            let session_str = hex::encode(&session_id);
+            let session_id_hex = hex::encode(&session_id);
 
             Handle::current().spawn(async move {
                 match store.delete(&session_id).await {
-                    Ok(_) => debug!("Session {session_str} removed successfully"),
-                    Err(e) => error!("Failed to remove session {session_str}: {e}"),
+                    Ok(_) => debug!("Session {session_id_hex} removed successfully"),
+                    Err(e) => error!("Failed to remove session {session_id_hex}: {e}"),
                 }
             });
         });

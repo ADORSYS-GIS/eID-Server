@@ -46,7 +46,7 @@ The eID Server enables identity verification using a SOAP-based flow between the
 Before running the server, ensure you have the following tools installed:
 
 - [Rust & Cargo](https://www.rust-lang.org/tools/install) (Latest stable version recommended).
-- [Redis](https://redis.io/download): The in-memory data structure store used for caching and session management.
+- [Redis](https://redis.io/download): The in-memory key-value store used for caching and session management.
 
 **Clone the Repository:**
 
@@ -101,7 +101,7 @@ Make sure you have Redis running and then execute:
 cargo run
 ```
 
-By default, the server will listen on `http://localhost:3000`. You can modify the host and port in the configuration settings.
+By default, the server will listen on `https://localhost:3000`. You can modify the host and port in the configuration settings.
 
 ### Running Tests
 

@@ -9,19 +9,19 @@ services:
       - REDIS_TLS_ENABLED=yes
       - REDIS_TLS_AUTH_CLIENTS=no
       - REDIS_TLS_PORT=6379
-      - REDIS_TLS_CERT_FILE=/opt/bitnami/redis/certs/redis.crt
-      - REDIS_TLS_KEY_FILE=/opt/bitnami/redis/certs/redis.key
-      - REDIS_TLS_CA_FILE=/opt/bitnami/redis/certs/ca.crt
-      - REDIS_TLS_DH_PARAMS_FILE=/opt/bitnami/redis/certs/redis.dh
+      - REDIS_TLS_CERT_FILE=/certs/redis.crt
+      - REDIS_TLS_KEY_FILE=/certs/redis.key
+      - REDIS_TLS_CA_FILE=/certs/ca.crt
+      - REDIS_TLS_DH_PARAMS_FILE=/certs/redis.dh
     volumes:
-      - ./test_data:/opt/bitnami/redis/certs
+      - ./test_data:/certs
     ports:
       - "6379:6379"
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "redis-cli --tls --cert /opt/bitnami/redis/certs/redis.crt --key /opt/bitnami/redis/certs/redis.key --cacert /opt/bitnami/redis/certs/ca.crt -a redispassword ping | grep PONG",
+          "redis-cli --tls --cert /certs/redis.crt --key /certs/redis.key --cacert /certs/ca.crt -a redispassword ping | grep PONG",
         ]
       interval: 10s
       timeout: 5s
@@ -33,7 +33,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: eID-server
+    container_name: eid-server
     env_file: .env
     ports:
       - 3000:3000
