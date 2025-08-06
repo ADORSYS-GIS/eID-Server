@@ -31,7 +31,6 @@ config = "0.15"
 
 # Logging and metrics
 tracing = "0.1"
-dotenvy = "0.15"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Miscellaneous utilities
