@@ -146,7 +146,9 @@ impl CertificateStore {
         let mut chain = Vec::new();
         for (i, (path, cert_type)) in cert_paths.iter().enumerate() {
             let cert_data = fs::read(path).map_err(|e| {
-                AuthError::invalid_certificate(format!("Failed to read {cert_type} certificate at {path}: {e}"))
+                AuthError::invalid_certificate(format!(
+                    "Failed to read {cert_type} certificate at {path}: {e}"
+                ))
             })?;
 
             if cert_data.is_empty() {
@@ -1059,23 +1061,9 @@ impl CryptoProvider {
             AuthError::crypto_error("Invalid PKCS#8 private key format")
         })?;
 
-        // Extract raw private key (assuming X25519 or P-256)
-        let _raw_private_key = match private_key.algorithm.oid.to_string().as_str() {
-            "1.3.101.110" => {
-                // X25519
-                if private_key_bytes.len() < 32 {
-                    return Err(AuthError::crypto_error("Invalid X25519 private key length"));
-                }
-                private_key.private_key
-            }
-            "1.2.840.10045.2.1" => {
-                // ECDSA (e.g., P-256)
-                // Extract the private key from OCTET STRING
-                if private_key.private_key.len() < 2 || private_key.private_key[0] != 0x04 {
-                    return Err(AuthError::crypto_error("Invalid ECDSA private key format"));
-                }
-                &private_key.private_key[1..]
-            }
+        let algorithm = match private_key.algorithm.oid.to_string().as_str() {
+            "1.3.101.110" => &agreement::X25519,
+            "1.2.840.10045.2.1" => &agreement::ECDH_P256, // Use P-256 for brainpoolP256r1
             oid => {
                 return Err(AuthError::crypto_error(format!(
                     "Unsupported private key algorithm: {oid}"
@@ -1083,16 +1071,13 @@ impl CryptoProvider {
             }
         };
 
-        // Create private key for ECDH
-        let private_key = agreement::EphemeralPrivateKey::generate(&agreement::X25519, &*self.rng)
-            .map_err(|e| {
+        let private_key =
+            agreement::EphemeralPrivateKey::generate(algorithm, &*self.rng).map_err(|e| {
                 error!("Failed to generate private key: {:?}", e);
                 AuthError::crypto_error("ECDH private key generation")
             })?;
 
-        // Create public key from peer's bytes
-        let peer_public_key =
-            agreement::UnparsedPublicKey::new(&agreement::X25519, peer_public_key);
+        let peer_public_key = agreement::UnparsedPublicKey::new(algorithm, peer_public_key);
 
         // Perform key agreement
         let shared_secret =

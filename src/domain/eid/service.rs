@@ -362,17 +362,20 @@ impl DIDAuthenticateService {
         let certificate_store = CertificateStore::with_config(certificate_config.clone());
 
         // Load CVCA as trusted root
-        let cvca_data = fs::read(&certificate_config.cvca_path).expect("Failed to read CVCA certificate");
+        let cvca_data =
+            fs::read(&certificate_config.cvca_path).expect("Failed to read CVCA certificate");
         if let Err(e) = certificate_store.add_trusted_root(cvca_data).await {
             tracing::error!("Failed to add trusted root certificate: {:?}", e);
             panic!("Cannot proceed without trusted CVCA certificate");
         }
 
         // Load private keys
-        let term_data = fs::read(&certificate_config.term_path).expect("Failed to read terminal certificate");
+        let term_data =
+            fs::read(&certificate_config.term_path).expect("Failed to read terminal certificate");
         let holder_ref = CertificateStore::extract_holder_reference(&term_data)
             .unwrap_or_else(|| "UnknownHolder".to_string());
-        let term_key_data = fs::read(&certificate_config.term_key_path).expect("Failed to read terminal private key");
+        let term_key_data = fs::read(&certificate_config.term_key_path)
+            .expect("Failed to read terminal private key");
         if let Err(e) = certificate_store
             .add_private_key(holder_ref, term_key_data)
             .await
@@ -490,7 +493,7 @@ impl DIDAuthenticateService {
                             }),
                             eac2_input: None,
                         },
-                        false, // Do not send HTTP POST, return SOAP for PAOS
+                        true, // Send HTTP POST to AusweisApp2
                     )
                     .await?;
 
@@ -502,7 +505,21 @@ impl DIDAuthenticateService {
                         ))
                     })?;
 
-                // Update session to EAC2 phase and store challenge
+                // Validate EAC1 output
+                if eac1_output
+                    .certificate_holder_authorization_template
+                    .is_empty()
+                    || eac1_output.certification_authority_reference.is_empty()
+                    || eac1_output.ef_card_access.is_empty()
+                    || eac1_output.id_picc.is_empty()
+                    || eac1_output.challenge.is_empty()
+                {
+                    return Err(AuthError::card_communication_error(
+                        "Incomplete EAC1 output fields".to_string(),
+                    ));
+                }
+
+                // Update session
                 session_info.eac_phase = EACPhase::EAC2;
                 session_info.eac1_challenge = Some(eac1_output.challenge.clone());
                 session_manager
@@ -521,7 +538,7 @@ impl DIDAuthenticateService {
                 ))
             }
             EACPhase::EAC2 => {
-                let _eac2_input = request
+                let eac2_input = request
                     .authentication_protocol_data
                     .eac2_input
                     .as_ref()
@@ -537,7 +554,31 @@ impl DIDAuthenticateService {
                     .as_ref()
                     .ok_or_else(|| AuthError::protocol_error("No challenge stored from EAC1"))?;
 
-                // Get the terminal certificate and private key
+                // Verify the signature from the client
+                let signature_bytes = base64::engine::general_purpose::STANDARD
+                    .decode(&eac2_input.signature)
+                    .map_err(|e| {
+                        AuthError::crypto_error(format!("Failed to decode signature: {e}"))
+                    })?;
+                let public_key_bytes = base64::engine::general_purpose::STANDARD
+                    .decode(&eac2_input.ephemeral_public_key)
+                    .map_err(|e| {
+                        AuthError::crypto_error(format!("Failed to decode public key: {e}"))
+                    })?;
+                let challenge_bytes = hex::decode(challenge).map_err(|e| {
+                    AuthError::crypto_error(format!("Failed to decode challenge: {e}"))
+                })?;
+
+                let is_valid = self
+                    .crypto_provider
+                    .verify_signature(&challenge_bytes, &signature_bytes, &public_key_bytes)
+                    .await?;
+
+                if !is_valid {
+                    return Err(AuthError::crypto_error("Signature verification failed"));
+                }
+
+                // Perform ECDH key exchange
                 let certificate_der = self.certificate_store.load_cv_chain().await?;
                 let certs = self
                     .certificate_store
@@ -547,7 +588,7 @@ impl DIDAuthenticateService {
                 })?;
                 let holder_ref = CertificateStore::extract_holder_reference(term_cert)
                     .unwrap_or_else(|| "UnknownHolder".to_string());
-                let _private_key = self
+                let private_key = self
                     .certificate_store
                     .get_private_key(&holder_ref)
                     .await
@@ -555,17 +596,16 @@ impl DIDAuthenticateService {
                         AuthError::crypto_error("No private key found for terminal certificate")
                     })?;
 
-                // Generate ephemeral public key (or use the one from certificate)
-                let (_private_key, public_key) = self.crypto_provider.generate_keypair().await?;
-                let public_key_b64 = base64::engine::general_purpose::STANDARD.encode(&public_key);
-
-                // Sign the challenge using the private key
-                let signature = self
+                let shared_secret = self
                     .crypto_provider
-                    .hash_data(challenge.as_bytes(), "SHA256")
+                    .perform_ecdh(&private_key, &public_key_bytes)
                     .await?;
-                let signature_b64 = base64::engine::general_purpose::STANDARD.encode(&signature);
+                let (_enc_key, _mac_key) = self
+                    .crypto_provider
+                    .derive_session_keys(&shared_secret)
+                    .await?;
 
+                // Send EAC2 request to AusweisApp2
                 let personal_data = self
                     .card_communicator
                     .send_did_authenticate(
@@ -575,11 +615,11 @@ impl DIDAuthenticateService {
                             phase: EACPhase::EAC2,
                             eac1_input: None,
                             eac2_input: Some(EAC2InputType {
-                                ephemeral_public_key: public_key_b64.clone(),
-                                signature: signature_b64.clone(),
+                                ephemeral_public_key: eac2_input.ephemeral_public_key.clone(),
+                                signature: eac2_input.signature.clone(),
                             }),
                         },
-                        false,
+                        true,
                     )
                     .await?;
 
@@ -589,6 +629,39 @@ impl DIDAuthenticateService {
                             "Failed to parse EAC2 output: {e}"
                         ))
                     })?;
+
+                // Validate EAC2 output
+                if let EAC2OutputType::A {
+                    ef_card_security,
+                    authentication_token,
+                    nonce,
+                } = &eac2_output
+                {
+                    if ef_card_security.is_empty()
+                        || authentication_token.is_empty()
+                        || nonce.is_empty()
+                    {
+                        return Err(AuthError::card_communication_error(
+                            "Incomplete EAC2 output fields".to_string(),
+                        ));
+                    }
+
+                    // Verify authentication token (simplified, add actual verification)
+                    let auth_token_bytes = base64::engine::general_purpose::STANDARD
+                        .decode(authentication_token)
+                        .map_err(|e| {
+                            AuthError::crypto_error(format!(
+                                "Failed to decode authentication token: {e}"
+                            ))
+                        })?;
+                    if auth_token_bytes.len() < 32 {
+                        return Err(AuthError::crypto_error(
+                            "Invalid authentication token length",
+                        ));
+                    }
+                } else {
+                    return Err(AuthError::protocol_error("Unexpected EAC2 output type"));
+                }
 
                 session_info.eac_phase = EACPhase::EAC2;
                 session_manager

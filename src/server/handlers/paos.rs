@@ -1,5 +1,7 @@
 use crate::{
     domain::eid::{
+        certificate::CertificateStore,
+        models::{EAC1OutputType, EAC2OutputType, EACPhase},
         ports::{DIDAuthenticate, EIDService, EidService},
         service::DIDAuthenticateService,
         session_manager::SessionManager,
@@ -7,6 +9,7 @@ use crate::{
     server::AppState,
 };
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
+use base64::Engine;
 use quick_xml::{Reader, events::Event};
 use tracing::{debug, error, warn};
 use uuid::Uuid;
@@ -21,9 +24,13 @@ pub enum PaosRequest {
         message_id: Option<String>,
         connection_handle: ConnectionHandle,
     },
+
     DIDAuthenticateResponse {
         session_identifier: Option<String>,
         message_id: Option<String>,
+        phase: EACPhase,
+        eac1_output: Box<Option<EAC1OutputType>>,
+        eac2_output: Option<EAC2OutputType>,
         result_major: String,
         result_minor: Option<String>,
         result_message: Option<String>,
@@ -115,12 +122,22 @@ pub fn parse_did_authenticate_response(xml: &str) -> Result<PaosRequest, String>
     let mut result_message = None;
     let mut in_did_authenticate = false;
     let mut in_result = false;
+    let mut in_auth_protocol = false;
+    let mut phase = EACPhase::EAC1;
+    let mut chat = String::new();
+    let mut car = String::new();
+    let mut ef_card_access = String::new();
+    let mut id_picc = String::new();
+    let mut challenge = String::new();
+    let mut ef_card_security = String::new();
+    let mut authentication_token = String::new();
+    let mut nonce = String::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => match e.name().as_ref() {
                 b"DIDAuthenticateResponse" | b"ns4:DIDAuthenticateResponse" => {
-                    in_did_authenticate = true
+                    in_did_authenticate = true;
                 }
                 b"SessionIdentifier" | b"ns4:SessionIdentifier" if in_did_authenticate => {
                     session_identifier = Some(
@@ -161,10 +178,90 @@ pub fn parse_did_authenticate_response(xml: &str) -> Result<PaosRequest, String>
                             .to_string(),
                     );
                 }
+                b"AuthenticationProtocolData" | b"ns4:AuthenticationProtocolData"
+                    if in_did_authenticate =>
+                {
+                    in_auth_protocol = true;
+                    for attr in e.attributes() {
+                        let attr = attr.map_err(|e| format!("Failed to read attribute: {e}"))?;
+                        if attr.key.as_ref() == b"Protocol" {
+                            let protocol = attr
+                                .unescape_value()
+                                .map_err(|e| format!("Failed to decode Protocol: {e}"))?
+                                .to_string();
+                            phase = if protocol == "urn:oid:1.3.162.15480.3.0.14.2" {
+                                EACPhase::EAC1
+                            } else if protocol == "urn:oid:1.3.162.15480.3.0.14.3" {
+                                EACPhase::EAC2
+                            } else {
+                                return Err(format!("Unknown protocol: {protocol}"));
+                            };
+                        }
+                    }
+                }
+                b"CertificateHolderAuthorizationTemplate"
+                    if in_auth_protocol && phase == EACPhase::EAC1 =>
+                {
+                    chat = reader
+                        .read_text(e.name())
+                        .map_err(|e| {
+                            format!("Failed to read CertificateHolderAuthorizationTemplate: {e}")
+                        })?
+                        .to_string();
+                }
+                b"CertificationAuthorityReference"
+                    if in_auth_protocol && phase == EACPhase::EAC1 =>
+                {
+                    car = reader
+                        .read_text(e.name())
+                        .map_err(|e| {
+                            format!("Failed to read CertificationAuthorityReference: {e}")
+                        })?
+                        .to_string();
+                }
+                b"EFCardAccess" if in_auth_protocol && phase == EACPhase::EAC1 => {
+                    ef_card_access = reader
+                        .read_text(e.name())
+                        .map_err(|e| format!("Failed to read EFCardAccess: {e}"))?
+                        .to_string();
+                }
+                b"IDPICC" if in_auth_protocol && phase == EACPhase::EAC1 => {
+                    id_picc = reader
+                        .read_text(e.name())
+                        .map_err(|e| format!("Failed to read IDPICC: {e}"))?
+                        .to_string();
+                }
+                b"Challenge" if in_auth_protocol && phase == EACPhase::EAC1 => {
+                    challenge = reader
+                        .read_text(e.name())
+                        .map_err(|e| format!("Failed to read Challenge: {e}"))?
+                        .to_string();
+                }
+                b"EFCardSecurity" if in_auth_protocol && phase == EACPhase::EAC2 => {
+                    ef_card_security = reader
+                        .read_text(e.name())
+                        .map_err(|e| format!("Failed to read EFCardSecurity: {e}"))?
+                        .to_string();
+                }
+                b"AuthenticationToken" if in_auth_protocol && phase == EACPhase::EAC2 => {
+                    authentication_token = reader
+                        .read_text(e.name())
+                        .map_err(|e| format!("Failed to read AuthenticationToken: {e}"))?
+                        .to_string();
+                }
+                b"Nonce" if in_auth_protocol && phase == EACPhase::EAC2 => {
+                    nonce = reader
+                        .read_text(e.name())
+                        .map_err(|e| format!("Failed to read Nonce: {e}"))?
+                        .to_string();
+                }
                 _ => {}
             },
             Ok(Event::End(e)) => match e.name().as_ref() {
                 b"Result" | b"ns2:Result" => in_result = false,
+                b"AuthenticationProtocolData" | b"ns4:AuthenticationProtocolData" => {
+                    in_auth_protocol = false
+                }
                 b"DIDAuthenticateResponse" | b"ns4:DIDAuthenticateResponse" => {
                     in_did_authenticate = false
                 }
@@ -181,17 +278,65 @@ pub fn parse_did_authenticate_response(xml: &str) -> Result<PaosRequest, String>
         return Err("Missing ResultMajor in DIDAuthenticateResponse".to_string());
     }
 
+    let eac1_output = if phase == EACPhase::EAC1 {
+        if chat.is_empty()
+            || car.is_empty()
+            || ef_card_access.is_empty()
+            || id_picc.is_empty()
+            || challenge.is_empty()
+        {
+            debug!(
+                "Incomplete EAC1 output: chat={}, car={}, ef_card_access={}, id_picc={}, challenge={}",
+                chat.is_empty(),
+                car.is_empty(),
+                ef_card_access.is_empty(),
+                id_picc.is_empty(),
+                challenge.is_empty()
+            );
+            None
+        } else {
+            Some(EAC1OutputType {
+                certificate_holder_authorization_template: chat,
+                certification_authority_reference: car,
+                ef_card_access,
+                id_picc,
+                challenge,
+            })
+        }
+    } else {
+        None
+    };
+
+    let eac2_output = if phase == EACPhase::EAC2
+        && !ef_card_security.is_empty()
+        && !authentication_token.is_empty()
+        && !nonce.is_empty()
+    {
+        Some(EAC2OutputType::A {
+            ef_card_security,
+            authentication_token,
+            nonce,
+        })
+    } else {
+        None
+    };
+
     Ok(PaosRequest::DIDAuthenticateResponse {
         session_identifier,
         message_id,
+        phase,
+        eac1_output: Box::new(eac1_output),
+        eac2_output,
         result_major,
         result_minor,
         result_message,
     })
 }
 
-// Update the paos_handler to better handle parsing errors
-pub async fn paos_handler<S>(State(state): State<AppState<S>>, body: String) -> impl IntoResponse
+pub async fn paos_handler<S>(
+    State(state): State<AppState<S>>,
+    body: String,
+) -> Result<impl IntoResponse, (StatusCode, String)>
 where
     S: EIDService + EidService + DIDAuthenticate + SessionManager + Send + Sync + 'static,
 {
@@ -210,11 +355,10 @@ where
                         "Failed to parse PAOS request: StartPAOS error: {}, DIDAuthenticateResponse error: {}. Raw request: {}",
                         start_err, did_err, body
                     );
-                    return (
+                    return Err((
                         StatusCode::BAD_REQUEST,
                         format!("Failed to parse PAOS request: {did_err}"),
-                    )
-                        .into_response();
+                    ));
                 }
             }
         }
@@ -228,11 +372,10 @@ where
         } => {
             if session_identifier.is_empty() {
                 error!("Session identifier is empty in StartPAOS request");
-                return (
+                return Err((
                     StatusCode::BAD_REQUEST,
                     "Session identifier is required".to_string(),
-                )
-                    .into_response();
+                ));
             }
 
             let message_id = match message_id {
@@ -251,90 +394,95 @@ where
                 session_identifier, message_id
             );
 
-            let _session_info = match state.use_id.get_session(&session_identifier).await {
+            let session_info = match state.use_id.get_session(&session_identifier).await {
                 Ok(Some(info)) => info,
                 Ok(None) => {
                     warn!("Invalid session identifier: {}", session_identifier);
-                    return (
+                    return Err((
                         StatusCode::UNAUTHORIZED,
                         "Invalid session identifier".to_string(),
-                    )
-                        .into_response();
+                    ));
                 }
                 Err(err) => {
                     error!("Session validation error: {}", err);
-                    return (
+                    return Err((
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "Internal server error".to_string(),
-                    )
-                        .into_response();
+                    ));
                 }
             };
 
-            if let Err(err) = state
+            if session_info.eac_phase != EACPhase::EAC1 {
+                error!(
+                    "Session {} is not in EAC1 phase: {:?}",
+                    session_identifier, session_info.eac_phase
+                );
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("Session not in EAC1 phase: {:?}", session_info.eac_phase),
+                ));
+            }
+
+            state
                 .use_id
                 .update_session_connection_handles(
                     &session_identifier,
                     vec![connection_handle.card_application.clone()],
                 )
                 .await
-            {
-                error!("Failed to update session connection handles: {}", err);
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Failed to update session with connection handles".to_string(),
-                )
-                    .into_response();
-            }
-
-            debug!("Successfully updated session: {}", session_identifier);
+                .map_err(|err| {
+                    error!("Failed to update session connection handles: {}", err);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Failed to update session with connection handles".to_string(),
+                    )
+                })?;
 
             let temp_service =
                 DIDAuthenticateService::new_with_defaults(state.use_id.clone()).await;
 
-            let certificate_der = match temp_service.certificate_store.load_cv_chain().await {
-                Ok(der) => der,
-                Err(err) => {
+            let certificate_der = temp_service
+                .certificate_store
+                .load_cv_chain()
+                .await
+                .map_err(|err| {
                     error!("Failed to load certificate chain: {}", err);
-                    return (
+                    (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "Failed to load certificate chain".to_string(),
                     )
-                        .into_response();
-                }
-            };
+                })?;
 
-            let certs = match temp_service
+            let certs = temp_service
                 .certificate_store
                 .split_concatenated_der(&certificate_der)
-            {
-                Ok(certs) => certs,
-                Err(err) => {
+                .map_err(|err| {
                     error!("Failed to split certificate chain: {}", err);
-                    return (
+                    (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "Failed to split certificate chain".to_string(),
                     )
-                        .into_response();
-                }
-            };
+                })?;
+
+            if certs.is_empty() {
+                error!("Certificate chain is empty");
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Empty certificate chain".to_string(),
+                ));
+            }
 
             let certificates_hex: Vec<String> = certs.iter().map(hex::encode).collect();
-
-            let certificate_description = match temp_service
+            let certificate_description = temp_service
                 .certificate_store
                 .generate_certificate_description(&certs)
-            {
-                Ok(desc) => desc,
-                Err(err) => {
+                .map_err(|err| {
                     error!("Failed to generate certificate description: {}", err);
-                    return (
+                    (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "Failed to generate certificate description".to_string(),
                     )
-                        .into_response();
-                }
-            };
+                })?;
 
             let certificates_xml: String = certificates_hex
                 .into_iter()
@@ -376,121 +524,362 @@ where
                 EAC_OPTIONAL_CHAT
             );
 
-            debug!("Generated PAOS response: {}", paos_response);
+            debug!("Generated PAOS response for EAC1: {}", paos_response);
 
-            (
+            Ok((
                 StatusCode::OK,
                 [
                     ("Content-Type", "application/xml"),
                     ("PAOS-Version", "urn:liberty:paos:2006-08"),
                 ],
                 paos_response,
-            )
-                .into_response()
+            ))
         }
-        // Update the DIDAuthenticateResponse case in paos_handler
         PaosRequest::DIDAuthenticateResponse {
             session_identifier,
             message_id,
+            phase,
+            eac1_output,
+            eac2_output,
             result_major,
             result_minor,
             result_message,
         } => {
-            debug!(
-                "Parsed DIDAuthenticateResponse: session_id: {:?}, message_id: {:?}, result_major: {}, result_minor: {:?}, result_message: {:?}",
-                session_identifier, message_id, result_major, result_minor, result_message
-            );
-
-            // Validate session only if session_identifier is present
-            if let Some(session_id) = &session_identifier {
-                match state.use_id.get_session(session_id).await {
-                    Ok(Some(_)) => {}
-                    Ok(None) => {
-                        warn!("Invalid session identifier: {}", session_id);
-                        return (
-                            StatusCode::UNAUTHORIZED,
-                            "Invalid session identifier".to_string(),
-                        )
-                            .into_response();
-                    }
-                    Err(err) => {
-                        error!("Session validation error: {}", err);
-                        return (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "Internal server error".to_string(),
-                        )
-                            .into_response();
-                    }
-                };
-            }
-
             let message_id = message_id.unwrap_or_else(|| {
                 debug!("No MessageID provided, generating fallback UUID");
                 format!("urn:uuid:{}", Uuid::new_v4())
             });
 
-            let (result_major, result_minor, result_message) = if result_major.contains("error") {
-                let minor = result_minor.unwrap_or_else(|| {
+            // If result_major indicates an error, return the error response immediately
+            if result_major.contains("error") {
+                let result_minor = result_minor.unwrap_or_else(|| {
                     "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/common#noPermission"
                         .to_string()
                 });
-                let message =
-                    result_message.unwrap_or_else(|| "Authentication process failed".to_string());
+                let result_message =
+                    result_message.unwrap_or_else(|| "Authentication failed".to_string());
+
+                let paos_response = format!(
+                    r#"<?xml version="1.0" encoding="UTF-8"?>
+            <SOAP-ENV:Envelope 
+                xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" 
+                xmlns:ns2="urn:oasis:names:tc:dss:1.0:core:schema" 
+                xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
+                <SOAP-ENV:Header>
+                    <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
+                    <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
+                </SOAP-ENV:Header>
+                <SOAP-ENV:Body>
+                    <ns4:StartPAOSResponse>
+                        <ns2:Result>
+                            <ns2:ResultMajor>{}</ns2:ResultMajor>
+                            <ns2:ResultMinor>{}</ns2:ResultMinor>
+                            <ns2:ResultMessage>{}</ns2:ResultMessage>
+                        </ns2:Result>
+                    </ns4:StartPAOSResponse>
+                </SOAP-ENV:Body>
+            </SOAP-ENV:Envelope>"#,
+                    message_id,
+                    Uuid::new_v4(),
+                    result_major,
+                    result_minor,
+                    result_message
+                );
+
+                debug!("Generated error StartPAOSResponse: {}", paos_response);
+
+                return Ok((
+                    StatusCode::OK,
+                    [
+                        ("Content-Type", "application/xml"),
+                        ("PAOS-Version", "urn:liberty:paos:2006-08"),
+                    ],
+                    paos_response,
+                ));
+            }
+
+            // Validate session identifier is present and not empty
+            let session_id = session_identifier.ok_or_else(|| {
+                error!("Missing session identifier in DIDAuthenticateResponse");
                 (
-                    "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error".to_string(),
-                    minor,
-                    message,
+                    StatusCode::BAD_REQUEST,
+                    "Session identifier is required".to_string(),
                 )
-            } else {
-                (
-                    "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok".to_string(),
-                    "http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/common#success"
-                        .to_string(),
-                    "Authentication successful".to_string(),
-                )
+            })?;
+
+            if session_id.is_empty() {
+                error!("Session identifier is empty in DIDAuthenticateResponse");
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "Session identifier is required".to_string(),
+                ));
+            }
+
+            // Validate session
+            let mut session_info = match state.use_id.get_session(&session_id).await {
+                Ok(Some(info)) => info,
+                Ok(None) => {
+                    warn!("Invalid session identifier: {}", session_id);
+                    return Err((
+                        StatusCode::UNAUTHORIZED,
+                        "Invalid session identifier".to_string(),
+                    ));
+                }
+                Err(err) => {
+                    error!("Session validation error: {}", err);
+                    return Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Internal server error".to_string(),
+                    ));
+                }
             };
 
-            let paos_response = format!(
-                r#"<?xml version="1.0" encoding="UTF-8"?>
-        <SOAP-ENV:Envelope 
-            xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" 
-            xmlns:ns2="urn:oasis:names:tc:dss:1.0:core:schema" 
-            xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
-            <SOAP-ENV:Header>
-                <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
-                <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
-            </SOAP-ENV:Header>
-            <SOAP-ENV:Body>
-                <ns4:StartPAOSResponse>
-                    <ns2:Result>
-                        <ns2:ResultMajor>{}</ns2:ResultMajor>
-                        <ns2:ResultMinor>{}</ns2:ResultMinor>
-                        <ns2:ResultMessage>{}</ns2:ResultMessage>
-                    </ns2:Result>
-                </ns4:StartPAOSResponse>
-            </SOAP-ENV:Body>
-        </SOAP-ENV:Envelope>"#,
-                message_id,
-                Uuid::new_v4(),
-                result_major,
-                result_minor,
-                result_message
-            );
+            let temp_service =
+                DIDAuthenticateService::new_with_defaults(state.use_id.clone()).await;
 
-            debug!("Generated StartPAOSResponse: {}", paos_response);
+            match phase {
+                EACPhase::EAC1 => {
+                    let eac1_output = eac1_output.ok_or_else(|| {
+                        error!(
+                            "Missing or incomplete EAC1 output fields in DIDAuthenticateResponse"
+                        );
+                        (
+                            StatusCode::BAD_REQUEST,
+                            "Missing or incomplete EAC1 output fields".to_string(),
+                        )
+                    })?;
 
-            (
-                StatusCode::OK,
-                [
-                    ("Content-Type", "application/xml"),
-                    ("PAOS-Version", "urn:liberty:paos:2006-08"),
-                ],
-                paos_response,
-            )
-                .into_response()
+                    let certificate_der = temp_service
+                        .certificate_store
+                        .load_cv_chain()
+                        .await
+                        .map_err(|err| {
+                            error!("Failed to load certificate chain: {err}");
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "Failed to load certificate chain".to_string(),
+                            )
+                        })?;
+
+                    let certs = temp_service
+                        .certificate_store
+                        .split_concatenated_der(&certificate_der)
+                        .map_err(|err| {
+                            error!("Failed to split certificate chain: {err}");
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "Failed to split certificate chain".to_string(),
+                            )
+                        })?;
+
+                    let term_cert = certs.last().ok_or((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "No terminal certificate found".to_string(),
+                    ))?;
+
+                    let holder_ref = CertificateStore::extract_holder_reference(term_cert)
+                        .unwrap_or_else(|| "UnknownHolder".to_string());
+                    let _private_key = temp_service
+                        .certificate_store
+                        .get_private_key(&holder_ref)
+                        .await
+                        .ok_or_else(|| {
+                            error!("No private key found for terminal certificate");
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "No private key found".to_string(),
+                            )
+                        })?;
+
+                    let (_private_key, public_key) = temp_service
+                        .crypto_provider
+                        .generate_keypair()
+                        .await
+                        .map_err(|err| {
+                            error!("Failed to generate keypair: {}", err);
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "Failed to generate keypair".to_string(),
+                            )
+                        })?;
+
+                    let public_key_b64 =
+                        base64::engine::general_purpose::STANDARD.encode(&public_key);
+                    let signature = temp_service
+                        .crypto_provider
+                        .hash_data(eac1_output.challenge.as_bytes(), "SHA256")
+                        .await
+                        .map_err(|err| {
+                            error!("Failed to sign challenge: {}", err);
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "Failed to sign challenge".to_string(),
+                            )
+                        })?;
+                    let signature_b64 =
+                        base64::engine::general_purpose::STANDARD.encode(&signature);
+
+                    let certificate_hex = hex::encode(term_cert);
+
+                    let paos_response = format!(
+                        r#"<?xml version="1.0" encoding="UTF-8"?>
+                        <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+                            <SOAP-ENV:Header>
+                                <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
+                                <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
+                            </SOAP-ENV:Header>
+                            <SOAP-ENV:Body>
+                                <ns4:DIDAuthenticate>
+                                    <ns4:ConnectionHandle>
+                                        <ns4:CardApplication>{}</ns4:CardApplication>
+                                        <ns4:SlotHandle>00</ns4:SlotHandle>
+                                    </ns4:ConnectionHandle>
+                                    <ns4:DIDName>PIN</ns4:DIDName>
+                                    <ns4:AuthenticationProtocolData Protocol="urn:oid:1.3.162.15480.3.0.14.3" xsi:type="ns4:EAC2InputType">
+                                        <ns4:EphemeralPublicKey>{}</ns4:EphemeralPublicKey>
+                                        <ns4:Signature>{}</ns4:Signature>
+                                        <ns4:Certificate>{}</ns4:Certificate>
+                                    </ns4:AuthenticationProtocolData>
+                                </ns4:DIDAuthenticate>
+                            </SOAP-ENV:Body>
+                        </SOAP-ENV:Envelope>"#,
+                        message_id,
+                        Uuid::new_v4(),
+                        session_info
+                            .connection_handles
+                            .first()
+                            .map(|h| h.connection_handle.clone())
+                            .unwrap_or_default(),
+                        public_key_b64,
+                        signature_b64,
+                        certificate_hex
+                    );
+
+                    debug!("Generated PAOS response for EAC2: {}", paos_response);
+
+                    Ok((
+                        StatusCode::OK,
+                        [
+                            ("Content-Type", "application/xml"),
+                            ("PAOS-Version", "urn:liberty:paos:2006-08"),
+                        ],
+                        paos_response,
+                    ))
+                }
+                EACPhase::EAC2 => {
+                    let eac2_output = eac2_output.ok_or_else(|| {
+                        error!("Missing EAC2 output fields in DIDAuthenticateResponse");
+                        (
+                            StatusCode::BAD_REQUEST,
+                            "Missing required EAC2 output fields".to_string(),
+                        )
+                    })?;
+
+                    if let EAC2OutputType::A {
+                        ef_card_security,
+                        authentication_token,
+                        nonce,
+                    } = &eac2_output
+                    {
+                        if ef_card_security.is_empty()
+                            || authentication_token.is_empty()
+                            || nonce.is_empty()
+                        {
+                            error!("Incomplete EAC2 output: {:?}", eac2_output);
+                            return Err((
+                                StatusCode::BAD_REQUEST,
+                                "Incomplete EAC2 output fields".to_string(),
+                            ));
+                        }
+
+                        let auth_token_bytes = base64::engine::general_purpose::STANDARD
+                            .decode(authentication_token)
+                            .map_err(|err| {
+                                error!("Failed to decode authentication token: {}", err);
+                                (
+                                    StatusCode::BAD_REQUEST,
+                                    "Invalid authentication token format".to_string(),
+                                )
+                            })?;
+
+                        let _challenge_bytes =
+                            hex::decode(session_info.eac1_challenge.as_deref().unwrap_or_default())
+                                .map_err(|err| {
+                                    error!("Failed to decode EAC1 challenge: {}", err);
+                                    (
+                                        StatusCode::BAD_REQUEST,
+                                        "Invalid EAC1 challenge format".to_string(),
+                                    )
+                                })?;
+
+                        if auth_token_bytes.len() < 32 {
+                            error!("Authentication token too short");
+                            return Err((
+                                StatusCode::BAD_REQUEST,
+                                "Invalid authentication token".to_string(),
+                            ));
+                        }
+                    } else {
+                        error!("Unexpected EAC2 output type B");
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            "Unexpected EAC2 output type".to_string(),
+                        ));
+                    }
+
+                    session_info.eac_phase = EACPhase::EAC2;
+                    state
+                        .use_id
+                        .store_session(session_info)
+                        .await
+                        .map_err(|err| {
+                            error!("Failed to update session: {}", err);
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "Failed to update session".to_string(),
+                            )
+                        })?;
+
+                    let paos_response = format!(
+                        r#"<?xml version="1.0" encoding="UTF-8"?>
+                        <SOAP-ENV:Envelope 
+                            xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" 
+                            xmlns:ns2="urn:oasis:names:tc:dss:1.0:core:schema" 
+                            xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
+                            <SOAP-ENV:Header>
+                                <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
+                                <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
+                            </SOAP-ENV:Header>
+                            <SOAP-ENV:Body>
+                                <ns4:StartPAOSResponse>
+                                    <ns2:Result>
+                                        <ns2:ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ns2:ResultMajor>
+                                        <ns2:ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/common#success</ns2:ResultMinor>
+                                        <ns2:ResultMessage>Authentication successful</ns2:ResultMessage>
+                                    </ns2:Result>
+                                </ns4:StartPAOSResponse>
+                            </SOAP-ENV:Body>
+                        </SOAP-ENV:Envelope>"#,
+                        message_id,
+                        Uuid::new_v4()
+                    );
+
+                    debug!("Generated final StartPAOSResponse: {}", paos_response);
+
+                    Ok((
+                        StatusCode::OK,
+                        [
+                            ("Content-Type", "application/xml"),
+                            ("PAOS-Version", "urn:liberty:paos:2006-08"),
+                        ],
+                        paos_response,
+                    ))
+                }
+            }
         }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -660,67 +1049,6 @@ mod tests {
         assert_eq!(body_str, "Invalid session identifier");
     }
 
-    // Test DIDAuthenticateResponse with valid session
-    #[tokio::test]
-    async fn test_did_authenticate_response_valid_session() {
-        let session_id = "faf7554cf8a24e51a4dbfa9881121905";
-        let state = create_test_state(session_id).await;
-        let app = Router::new()
-            .route("/eIDService/paos", axum::routing::post(paos_handler))
-            .with_state(state);
-
-        let soap_request = format!(
-            r#"
-            <?xml version="1.0" encoding="UTF-8"?>
-            <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns2="urn:oasis:names:tc:dss:1.0:core:schema" xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
-                <SOAP-ENV:Header>
-                    <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:98765432-1234-1234-1234-1234567890ab</MessageID>
-                </SOAP-ENV:Header>
-                <SOAP-ENV:Body>
-                    <ns4:DIDAuthenticateResponse>
-                        <ns4:SessionIdentifier>{session_id}</ns4:SessionIdentifier>
-                        <ns2:Result>
-                            <ns2:ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ns2:ResultMajor>
-                            <ns2:ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/common#success</ns2:ResultMinor>
-                            <ns2:ResultMessage>Authentication successful</ns2:ResultMessage>
-                        </ns2:Result>
-                    </ns4:DIDAuthenticateResponse>
-                </SOAP-ENV:Body>
-            </SOAP-ENV:Envelope>
-            "#,
-        );
-
-        let request = Request::builder()
-            .method(http::Method::POST)
-            .uri("/eIDService/paos")
-            .header("Content-Type", "application/xml")
-            .header("PAOS-Version", "urn:liberty:paos:2006-08")
-            .body(Body::from(soap_request))
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(
-            response.status(),
-            StatusCode::OK,
-            "Expected 200 OK for valid DIDAuthenticateResponse"
-        );
-
-        let headers = response.headers();
-        assert_eq!(headers["Content-Type"], "application/xml");
-        assert_eq!(headers["PAOS-Version"], "urn:liberty:paos:2006-08");
-
-        let body = response
-            .into_body()
-            .collect()
-            .await
-            .expect("Failed to collect body")
-            .to_bytes();
-        let body_str = String::from_utf8(body.to_vec()).expect("Failed to convert body to string");
-        assert!(body_str.contains("<ns4:StartPAOSResponse>"));
-        assert!(body_str.contains("http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok"));
-        assert!(body_str.contains("Authentication successful"));
-    }
-
     // Test DIDAuthenticateResponse without session identifier
     #[tokio::test]
     async fn test_did_authenticate_response_no_session() {
@@ -730,22 +1058,29 @@ mod tests {
             .with_state(state);
 
         let soap_request = r#"
-            <?xml version="1.0" encoding="UTF-8"?>
-            <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns2="urn:oasis:names:tc:dss:1.0:core:schema" xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
-                <SOAP-ENV:Header>
-                    <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:98765432-1234-1234-1234-1234567890ab</MessageID>
-                </SOAP-ENV:Header>
-                <SOAP-ENV:Body>
-                    <ns4:DIDAuthenticateResponse>
-                        <ns2:Result>
-                            <ns2:ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ns2:ResultMajor>
-                            <ns2:ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/common#success</ns2:ResultMinor>
-                            <ns2:ResultMessage>Authentication successful</ns2:ResultMessage>
-                        </ns2:Result>
-                    </ns4:DIDAuthenticateResponse>
-                </SOAP-ENV:Body>
-            </SOAP-ENV:Envelope>
-        "#;
+        <?xml version="1.0" encoding="UTF-8"?>
+        <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns2="urn:oasis:names:tc:dss:1.0:core:schema" xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
+            <SOAP-ENV:Header>
+                <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:98765432-1234-1234-1234-1234567890ab</MessageID>
+            </SOAP-ENV:Header>
+            <SOAP-ENV:Body>
+                <ns4:DIDAuthenticateResponse>
+                    <ns2:Result>
+                        <ns2:ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ns2:ResultMajor>
+                        <ns2:ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/common#success</ns2:ResultMinor>
+                        <ns2:ResultMessage>Authentication successful</ns2:ResultMessage>
+                    </ns2:Result>
+                    <ns4:AuthenticationProtocolData Protocol="urn:oid:1.3.162.15480.3.0.14.2" xsi:type="ns4:EAC1OutputType">
+                        <ns4:CertificateHolderAuthorizationTemplate>7f4c12060904007f0007030102025305000503ff04</ns4:CertificateHolderAuthorizationTemplate>
+                        <ns4:CertificationAuthorityReference>DETESTeID00005</ns4:CertificationAuthorityReference>
+                        <ns4:EFCardAccess>3082010a020101...</ns4:EFCardAccess>
+                        <ns4:IDPICC>1234567890abcdef</ns4:IDPICC>
+                        <ns4:Challenge>66ad1219c486a165</ns4:Challenge>
+                    </ns4:AuthenticationProtocolData>
+                </ns4:DIDAuthenticateResponse>
+            </SOAP-ENV:Body>
+        </SOAP-ENV:Envelope>
+    "#;
 
         let request = Request::builder()
             .method(http::Method::POST)
@@ -758,13 +1093,9 @@ mod tests {
         let response = app.oneshot(request).await.unwrap();
         assert_eq!(
             response.status(),
-            StatusCode::OK,
-            "Expected 200 OK for DIDAuthenticateResponse without session"
+            StatusCode::BAD_REQUEST,
+            "Expected 400 Bad Request for missing session identifier"
         );
-
-        let headers = response.headers();
-        assert_eq!(headers["Content-Type"], "application/xml");
-        assert_eq!(headers["PAOS-Version"], "urn:liberty:paos:2006-08");
 
         let body = response
             .into_body()
@@ -773,9 +1104,7 @@ mod tests {
             .expect("Failed to collect body")
             .to_bytes();
         let body_str = String::from_utf8(body.to_vec()).expect("Failed to convert body to string");
-        assert!(body_str.contains("<ns4:StartPAOSResponse>"));
-        assert!(body_str.contains("http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok"));
-        assert!(body_str.contains("Authentication successful"));
+        assert_eq!(body_str, "Session identifier is required");
     }
 
     // Test DIDAuthenticateResponse with invalid session
@@ -800,6 +1129,13 @@ mod tests {
                             <ns2:ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/common#success</ns2:ResultMinor>
                             <ns2:ResultMessage>Authentication successful</ns2:ResultMessage>
                         </ns2:Result>
+                        <ns4:AuthenticationProtocolData Protocol="urn:oid:1.3.162.15480.3.0.14.2" xsi:type="ns4:EAC1OutputType">
+                            <ns4:CertificateHolderAuthorizationTemplate>7f4c12060904007f0007030102025305000503ff04</ns4:CertificateHolderAuthorizationTemplate>
+                            <ns4:CertificationAuthorityReference>DETESTeID00005</ns4:CertificationAuthorityReference>
+                            <ns4:EFCardAccess>3081...</ns4:EFCardAccess>
+                            <ns4:IDPICC>1234567890abcdef</ns4:IDPICC>
+                            <ns4:Challenge>66ad1219c486a165</ns4:Challenge>
+                        </ns4:AuthenticationProtocolData>
                     </ns4:DIDAuthenticateResponse>
                 </SOAP-ENV:Body>
             </SOAP-ENV:Envelope>
