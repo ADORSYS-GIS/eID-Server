@@ -149,7 +149,6 @@ impl Server {
         Ok(())
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,7 +178,7 @@ mod tests {
         };
 
         let eid_service = UseidService::new(EIDServiceConfig::default());
-        let tls_config = TlsConfig::default(); // Assuming a default implementation exists
+        let tls_config = TlsConfig::new(config.tls_cert_path.clone(), config.tls_key_path.clone()); // Pass cert and key paths
         let _server = Server::new(eid_service, config, tls_config)
             .await
             .expect("Failed to create server");
@@ -207,7 +206,7 @@ mod tests {
         };
 
         let eid_service = UseidService::new(EIDServiceConfig::default());
-        let tls_config = TlsConfig::default(); // Assuming a default implementation exists
+        let tls_config = TlsConfig::new(config.tls_cert_path.clone(), config.tls_key_path.clone()); // Pass cert and key paths
         let _server = Server::new(eid_service, config, tls_config)
             .await
             .expect("Failed to create server");

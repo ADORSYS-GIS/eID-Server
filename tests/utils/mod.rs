@@ -5,7 +5,7 @@ use eid_server::{
         ports::{DIDAuthenticate, EIDService, EidService},
         session_manager::SessionManager,
     },
-    server::Server,
+    server::{AppServerConfig, Server},
     telemetry,
     tls::{TestCertificates, TlsConfig, generate_test_certificates},
 };
@@ -23,12 +23,23 @@ pub async fn spawn_server(
         config
     };
 
-    let server = Server::new(eid_service, &config, tls_config).await.unwrap();
+    // Convert ServerConfig to AppServerConfig
+    let app_server_config = AppServerConfig {
+        host: config.server.host.clone(), // Clone to avoid moving
+        port: config.server.port,
+        tls_cert_path: config.server.tls_cert_path,
+        tls_key_path: config.server.tls_key_path,
+        transmit: config.server.transmit,
+    };
+
+    let server = Server::new(eid_service, app_server_config, tls_config)
+        .await
+        .unwrap();
 
     let port = server.port();
     tokio::spawn(server.run());
 
-    format!("https://{}:{}", config.server.host, port)
+    format!("https://{}:{}", &config.server.host, port)
 }
 
 #[allow(dead_code)]

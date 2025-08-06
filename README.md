@@ -68,14 +68,14 @@ The eID Server enables identity verification using a SOAP-based flow between the
    ```toml
    [server]
    host = "127.0.0.1"
-   port = 8080
+   port = 3000
    ```
 
    You can also use environment variables to configure the server:
 
    ```sh
    export APP_SERVER_HOST=127.0.0.1
-   export APP_SERVER_PORT=8080
+   export APP_SERVER_PORT=3000
    ```
 
 3. Build and run the project:

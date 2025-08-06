@@ -87,7 +87,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             host: "127.0.0.1".to_string(),
-            port: 8080,
+            port: 3000,
             tls_cert_path: "Config/cert.pem".to_string(),
             tls_key_path: "Config/key.pem".to_string(),
             transmit: TransmitConfig::default(),
@@ -105,7 +105,7 @@ impl Config {
     ) -> Result<Self, AppConfigError> {
         let mut builder = ConfigLib::builder()
             .set_default("server.host", "127.0.0.1")?
-            .set_default("server.port", 8080)?
+            .set_default("server.port", 3000)?
             .add_source(File::with_name("config/settings").required(false));
 
         if let Some(vars) = env_vars {
@@ -120,10 +120,10 @@ impl Config {
             );
         }
 
-        // Build the config once and reuse it
+        // Build the config once
         let built_config = builder.build()?;
 
-        let config = match built_config.try_deserialize::<Config>() {
+        let config = match built_config.clone().try_deserialize::<Config>() {
             Ok(mut config) => {
                 if config.redis_url.as_ref().is_some_and(|url| url.is_empty()) {
                     config.redis_url = None;
@@ -165,7 +165,7 @@ mod tests {
     fn test_default_config() {
         let config = Config::load().expect("Failed to load config");
         assert_eq!(config.server.host, "127.0.0.1");
-        assert_eq!(config.server.port, 8080);
+        assert_eq!(config.server.port, 300);
         assert_eq!(config.redis_url, None);
         assert_eq!(config.server.transmit.max_apdu_size, 4096);
         assert_eq!(config.server.tls_cert_path, "Config/cert.pem");
@@ -202,7 +202,7 @@ mod tests {
 
         let config = Config::load_with_sources(Some(env_vars)).expect("Failed to load config");
         assert_eq!(config.server.host, "192.168.1.1");
-        assert_eq!(config.server.port, 8080);
+        assert_eq!(config.server.port, 3000);
         assert_eq!(config.redis_url, None);
     }
 

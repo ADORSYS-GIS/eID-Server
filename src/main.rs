@@ -1,8 +1,8 @@
 use color_eyre::eyre::{Context, Result};
 use eid_server::{
-    config::{Config, TransmitConfig},
+    config::{Config},
     domain::eid::service::{EIDServiceConfig, UseidService},
-    server::Server,
+    server::{AppServerConfig, Server},
     telemetry,
     tls::{self, TlsConfig},
 };
@@ -27,25 +27,34 @@ async fn main() -> Result<()> {
     let session_mgr = eid_service.session_manager.clone();
 
     // Build the TLS configuration
-    let cert = fs::read(&config.server.tls_cert_path)
-        .wrap_err(format!("Failed to read TLS certificate from {}", config.server.tls_cert_path))?;
-    let key = fs::read(&config.server.tls_key_path)
-        .wrap_err(format!("Failed to read TLS key from {}", config.server.tls_key_path))?;
+    let cert = fs::read(&config.server.tls_cert_path).wrap_err(format!(
+        "Failed to read TLS certificate from {}",
+        config.server.tls_cert_path
+    ))?;
+    let key = fs::read(&config.server.tls_key_path).wrap_err(format!(
+        "Failed to read TLS key from {}",
+        config.server.tls_key_path
+    ))?;
     let tls_session_store = tls::InMemorySessionStore::new();
-    let tls_config = TlsConfig::new(&cert, &key)
-        .with_psk(session_mgr)
-        .with_session_store(tls_session_store)
-        .with_min_tls_version(&config.server.transmit.min_tls_version)
-        .with_cipher_suites(&config.server.transmit.allowed_cipher_suites)
-        .with_client_cert_required(config.server.transmit.require_client_certificate);
+    let tls_config = TlsConfig::new(
+        <&[u8] as Into<Vec<u8>>>::into(&*cert),
+        <&[u8] as Into<Vec<u8>>>::into(&*key),
+    )
+    .with_psk(session_mgr)
+    .with_session_store(tls_session_store);
+
+    // Convert ServerConfig to AppServerConfig
+    let app_server_config = AppServerConfig {
+        host: config.server.host,
+        port: config.server.port,
+        tls_cert_path: config.server.tls_cert_path,
+        tls_key_path: config.server.tls_key_path,
+        transmit: config.server.transmit,
+    };
 
     // Create and run the server
-    let server = Server::new(
-        eid_service,
-        &config,
-        tls_config,
-    )
-    .await
-    .wrap_err("Failed to initialize server")?;
+    let server = Server::new(eid_service, app_server_config, tls_config)
+        .await
+        .wrap_err("Failed to initialize server")?;
     server.run().await.wrap_err("Server failed to run")
 }
