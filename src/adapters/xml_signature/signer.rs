@@ -4,16 +4,53 @@
 //! outgoing SOAP responses (RecipientToken).
 
 use base64::Engine;
+use color_eyre::eyre::{self, Context, Result};
 use quick_xml::se::to_string;
 use ring::rand;
 use ring::signature::{RSA_PKCS1_SHA256, RsaKeyPair};
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::path::Path;
 use tracing::info;
 
 use super::constants::*;
 use super::types::*;
 use super::utils::{canonicalize_xml, parse_and_validate_pem, remove_signatures_from_xml};
+
+/// Errors that can occur during XML signature operations
+#[derive(Debug, thiserror::Error)]
+pub enum XmlSignatureError {
+    /// Error reading a file
+    #[error("Failed to read file '{path}': {source}")]
+    FileRead {
+        path: String,
+        source: std::io::Error,
+    },
+
+    /// Error parsing PEM data
+    #[error("Failed to parse PEM data: {message}")]
+    PemParsing { message: String },
+
+    /// Error creating RSA key pair
+    #[error("Failed to create RSA key pair from PEM: {message}")]
+    RsaKeyPair { message: String },
+
+    /// Error serializing XML
+    #[error("Failed to serialize XML: {source}")]
+    XmlSerialization { source: quick_xml::se::SeError },
+
+    /// Error canonicalizing XML
+    #[error("Failed to canonicalize XML: {message}")]
+    XmlCanonicalization { message: String },
+
+    /// Error removing signatures from XML
+    #[error("Failed to remove signatures from XML: {message}")]
+    XmlSignatureRemoval { message: String },
+
+    /// Error signing digest
+    #[error("Failed to sign digest: {message}")]
+    DigestSigning { message: String },
+}
 
 /// XML signature signer for outgoing SOAP responses (RecipientToken)
 pub struct XmlSignatureSigner {
@@ -43,7 +80,7 @@ impl XmlSignatureSigner {
     pub fn new(
         private_key_pem: impl Into<Vec<u8>>,
         cert_pem: impl Into<Vec<u8>>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, XmlSignatureError> {
         let key_data = private_key_pem.into();
         let cert_data = cert_pem.into();
 
@@ -64,21 +101,32 @@ impl XmlSignatureSigner {
     }
 
     /// Create a new signer with private key and certificate from files (for backward compatibility)
-    pub fn new_from_files(key_path: &str, cert_path: &str) -> Result<Self, String> {
+    pub fn new_from_files(
+        key_path: impl AsRef<Path>,
+        cert_path: impl AsRef<Path>,
+    ) -> Result<Self, XmlSignatureError> {
+        let key_path = key_path.as_ref();
+        let cert_path = cert_path.as_ref();
         info!(
-            "Creating XML signature signer with certificate from files: key={key_path}, cert={cert_path}",
+            "Creating XML signature signer with certificate from files: key={}, cert={}",
+            key_path.display(),
+            cert_path.display()
         );
 
-        let key_data = fs::read(key_path)
-            .map_err(|e| format!("Failed to read private key file {key_path}: {e}"))?;
-        let cert_data = fs::read(cert_path)
-            .map_err(|e| format!("Failed to read certificate file {cert_path}: {e}"))?;
+        let key_data = fs::read(key_path).map_err(|e| XmlSignatureError::FileRead {
+            path: key_path.display().to_string(),
+            source: e,
+        })?;
+        let cert_data = fs::read(cert_path).map_err(|e| XmlSignatureError::FileRead {
+            path: cert_path.display().to_string(),
+            source: e,
+        })?;
 
         Self::new(key_data, cert_data)
     }
 
     /// RSA key pair from PEM data
-    fn key_pair_from_pem_data(pem_data: &[u8]) -> Result<RsaKeyPair, String> {
+    fn key_pair_from_pem_data(pem_data: &[u8]) -> Result<RsaKeyPair, XmlSignatureError> {
         info!(
             "Loading RSA private key from PEM data ({} bytes)",
             pem_data.len()
@@ -92,14 +140,19 @@ impl XmlSignatureSigner {
             PEM_DSA_PRIVATE_KEY_TAG,
             PEM_ENCRYPTED_PRIVATE_KEY_TAG,
         ];
-        let pem = parse_and_validate_pem(pem_data, private_key_tags)?;
+        let pem = parse_and_validate_pem(pem_data, private_key_tags).map_err(|e| {
+            XmlSignatureError::PemParsing {
+                message: e.to_string(),
+            }
+        })?;
 
-        RsaKeyPair::from_pkcs8(pem.contents())
-            .map_err(|e| format!("Failed to create RSA key pair from PEM: {e:?}"))
+        RsaKeyPair::from_pkcs8(pem.contents()).map_err(|e| XmlSignatureError::RsaKeyPair {
+            message: format!("{e:?}"),
+        })
     }
 
     /// Load certificate from PEM data and return base64 encoded DER
-    fn load_certificate_from_pem_data(pem_data: &[u8]) -> Result<String, String> {
+    fn load_certificate_from_pem_data(pem_data: &[u8]) -> Result<String, XmlSignatureError> {
         info!(
             "Loading certificate from PEM data ({} bytes)",
             pem_data.len()
@@ -111,36 +164,27 @@ impl XmlSignatureSigner {
             PEM_X509_CERTIFICATE_TAG,
             PEM_TRUSTED_CERTIFICATE_TAG,
         ];
-        let pem = parse_and_validate_pem(pem_data, certificate_tags)?;
+        let pem = parse_and_validate_pem(pem_data, certificate_tags).map_err(|e| {
+            XmlSignatureError::PemParsing {
+                message: e.to_string(),
+            }
+        })?;
 
         Ok(base64::engine::general_purpose::STANDARD.encode(pem.contents()))
     }
 
-    /// Sign SOAP response XML
-    pub fn sign_soap_response(&self, soap_xml: &str) -> Result<String, String> {
-        info!("Signing SOAP response with self-signed certificate");
+    /// Sign SOAP response XML with XMLDSig signature following W3C standards
+    pub fn sign_soap_response(&self, soap_xml: &str) -> Result<String> {
+        info!("Signing SOAP response with XMLDSig compliant signature");
 
-        let real_signature = self.create_real_signature(soap_xml)?;
-        let signed_xml = self.insert_signature_into_xml(soap_xml, &real_signature)?;
-
-        info!("SOAP response signed successfully with self-signed certificate");
-        Ok(signed_xml)
-    }
-
-    /// XMLDSig signature following W3C standards
-    fn create_real_signature(&self, soap_xml: &str) -> Result<String, String> {
-        info!("Creating XMLDSig compliant signature");
-
-        // Step 1: Calculate digest of the referenced content (the SOAP document)
-        // Apply enveloped-signature transform (remove any existing signatures)
         let content_to_digest = remove_signatures_from_xml(soap_xml)?;
-        let content_digest = self.calculate_content_digest(&content_to_digest)?;
+        let content_digest = self
+            .calculate_content_digest(&content_to_digest)
+            .map_err(|e| eyre::eyre!("{}", e))?;
         let content_digest_b64 = base64::engine::general_purpose::STANDARD.encode(content_digest);
 
-        // Step 2: Reference structure
         let reference = self.create_reference(content_digest_b64);
 
-        // Step 3: SignedInfo element using serde structs
         let signed_info = SignedInfo {
             xmlns: Some(XMLDSIG_NAMESPACE.to_string()),
             canonicalization_method: CanonicalizationMethod {
@@ -153,17 +197,18 @@ impl XmlSignatureSigner {
         };
 
         let signed_info_xml =
-            to_string(&signed_info).map_err(|e| format!("Failed to serialize SignedInfo: {e}"))?;
+            to_string(&signed_info).with_context(|| "Failed to serialize SignedInfo")?;
 
-        // Step 4: Canonicalize the SignedInfo element (C14N)
         let canonicalized_signed_info = canonicalize_xml(&signed_info_xml)?;
 
-        // Step 5: Sign the canonicalized SignedInfo (not the entire document!)
-        let signed_info_digest = self.calculate_content_digest(&canonicalized_signed_info)?;
-        let signature_bytes = self.sign_digest(&signed_info_digest)?;
+        let signed_info_digest = self
+            .calculate_content_digest(&canonicalized_signed_info)
+            .map_err(|e| eyre::eyre!("{}", e))?;
+        let signature_bytes = self
+            .sign_digest(&signed_info_digest)
+            .map_err(|e| eyre::eyre!("{}", e))?;
         let signature_b64 = base64::engine::general_purpose::STANDARD.encode(&signature_bytes);
 
-        // Step 6: complete signature structure using serde structs
         let signature = Signature {
             xmlns: XMLDSIG_NAMESPACE.to_string(),
             signed_info: SignedInfo {
@@ -189,10 +234,14 @@ impl XmlSignatureSigner {
         };
 
         let signature_xml =
-            to_string(&signature).map_err(|e| format!("Failed to serialize Signature: {e}"))?;
+            to_string(&signature).with_context(|| "Failed to serialize Signature")?;
 
-        info!("XMLDSig compliant signature created successfully");
-        Ok(signature_xml)
+        let signed_xml = self
+            .insert_signature_into_xml(soap_xml, &signature_xml)
+            .map_err(|e| eyre::eyre!("{}", e))?;
+
+        info!("SOAP response signed successfully with XMLDSig compliant signature");
+        Ok(signed_xml)
     }
 
     /// Calculate SHA-256 digest of content

@@ -7,9 +7,10 @@ use base64::Engine;
 use openssl::hash::MessageDigest;
 use openssl::sign::Verifier;
 use openssl::x509::X509;
-use quick_xml::{Reader, events::Event, se::to_string};
+use quick_xml::se::to_string;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::path::Path;
 use tracing::{debug, info, warn};
 
 use super::constants::*;
@@ -44,7 +45,7 @@ impl XmlSignatureValidator {
             PEM_X509_CERTIFICATE_TAG,
             PEM_TRUSTED_CERTIFICATE_TAG,
         ];
-        parse_and_validate_pem(&cert_data, certificate_tags)?;
+        parse_and_validate_pem(&cert_data, certificate_tags).map_err(|e| e.to_string())?;
 
         self.trusted_certs.push(cert_data);
         info!("Successfully added trusted certificate");
@@ -52,11 +53,22 @@ impl XmlSignatureValidator {
     }
 
     /// Add a trusted certificate from PEM file (for backward compatibility)
-    pub fn add_trusted_cert_from_file(&mut self, cert_path: &str) -> Result<(), String> {
-        info!("Adding trusted certificate from file: {cert_path}");
+    pub fn add_trusted_cert_from_file(
+        &mut self,
+        cert_path: impl AsRef<Path>,
+    ) -> Result<(), String> {
+        let cert_path = cert_path.as_ref();
+        info!(
+            "Adding trusted certificate from file: {}",
+            cert_path.display()
+        );
 
-        let cert_data = fs::read(cert_path)
-            .map_err(|e| format!("Failed to read certificate file {cert_path}: {e}"))?;
+        let cert_data = fs::read(cert_path).map_err(|e| {
+            format!(
+                "Failed to read certificate file {}: {e}",
+                cert_path.display()
+            )
+        })?;
 
         self.add_trusted_cert(cert_data)
     }
@@ -159,47 +171,27 @@ impl XmlSignatureValidator {
         })
     }
 
-    /// Extract content of an XML element using proper XML parsing
+    /// Extract content of an XML element using serde-based parsing
     fn extract_xml_element_content(&self, xml: &str, element_name: &str) -> Result<String, String> {
         debug!("Extracting content for element: {}", element_name);
 
-        let mut reader = Reader::from_str(xml);
-        reader.config_mut().trim_text(true);
-        let mut buf = Vec::new();
-        let mut in_target_element = false;
-        let mut content = String::new();
+        // Create a temporary XML wrapper with the specific element we want to parse
+        let element_xml = format!(
+            "<{element_name}>{}</{element_name}>",
+            xml.split(&format!("<{element_name}>"))
+                .nth(1)
+                .and_then(|s| s.split(&format!("</{element_name}>")).next())
+                .ok_or_else(|| format!("Could not find element: {element_name}"))?
+        );
 
-        loop {
-            match reader.read_event_into(&mut buf) {
-                Ok(Event::Start(ref e)) => {
-                    if e.name().as_ref() == element_name.as_bytes() {
-                        in_target_element = true;
-                    }
-                }
-                Ok(Event::Text(e)) => {
-                    if in_target_element {
-                        content = e
-                            .unescape()
-                            .map_err(|e| format!("Failed to unescape text: {e}"))?
-                            .to_string();
-                    }
-                }
-                Ok(Event::End(ref e)) => {
-                    if e.name().as_ref() == element_name.as_bytes() && in_target_element {
-                        return Ok(content.trim().to_string());
-                    }
-                }
-                Ok(Event::Eof) => break,
-                Err(e) => return Err(format!("XML parsing error: {e}")),
-                _ => {}
-            }
-            buf.clear();
-        }
+        // Use serde with quick_xml to deserialize the element content
+        let element: XmlElementWithContent = quick_xml::de::from_str(&element_xml)
+            .map_err(|e| format!("Failed to deserialize element content: {e}"))?;
 
-        Err(format!("Could not find element: {element_name}"))
+        Ok(element.content.trim().to_string())
     }
 
-    /// Extract attribute value from XML element using proper XML parsing
+    /// Extract attribute value from XML element using serde-based parsing
     fn extract_attribute_value(
         &self,
         xml: &str,
@@ -211,31 +203,32 @@ impl XmlSignatureValidator {
             attribute_name, element_name
         );
 
-        let mut reader = Reader::from_str(xml);
-        reader.config_mut().trim_text(true);
-        let mut buf = Vec::new();
+        // Extract the element from the XML
+        let element_start = format!("<{element_name}");
+        let element_end = format!("</{element_name}>");
 
-        loop {
-            match reader.read_event_into(&mut buf) {
-                Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
-                    if e.name().as_ref() == element_name.as_bytes() {
-                        for attr in e.attributes() {
-                            let attr =
-                                attr.map_err(|e| format!("Failed to parse attribute: {e}"))?;
-                            if attr.key.as_ref() == attribute_name.as_bytes() {
-                                return attr
-                                    .unescape_value()
-                                    .map_err(|e| format!("Failed to unescape attribute value: {e}"))
-                                    .map(|s| s.to_string());
-                            }
-                        }
-                    }
-                }
-                Ok(Event::Eof) => break,
-                Err(e) => return Err(format!("XML parsing error: {e}")),
-                _ => {}
-            }
-            buf.clear();
+        let start_pos = xml
+            .find(&element_start)
+            .ok_or_else(|| format!("Could not find element: {element_name}"))?;
+
+        let end_pos = xml
+            .find(&element_end)
+            .ok_or_else(|| format!("Could not find closing tag for element: {element_name}"))?;
+
+        let element_xml = &xml[start_pos..end_pos + element_end.len()];
+
+        // Use serde with quick_xml to deserialize the element attributes
+        let element: XmlElementWithAttribute = quick_xml::de::from_str(element_xml)
+            .map_err(|e| format!("Failed to deserialize element attributes: {e}"))?;
+
+        // Check for attribute with and without @ prefix
+        if let Some(value) = element.attributes.get(attribute_name) {
+            return Ok(value.clone());
+        }
+
+        let attr_with_prefix = format!("@{attribute_name}");
+        if let Some(value) = element.attributes.get(&attr_with_prefix) {
+            return Ok(value.clone());
         }
 
         Err(format!(
@@ -324,7 +317,8 @@ impl XmlSignatureValidator {
             to_string(&signed_info).map_err(|e| format!("Failed to serialize SignedInfo: {e}"))?;
 
         // Canonicalize SignedInfo (simplified)
-        let canonicalized_signed_info = canonicalize_xml(&signed_info_xml)?;
+        let canonicalized_signed_info =
+            canonicalize_xml(&signed_info_xml).map_err(|e| e.to_string())?;
 
         if !self.verify_digest_value(soap_xml, &components.digest_value_b64)? {
             warn!("Digest value verification failed");
@@ -362,7 +356,8 @@ impl XmlSignatureValidator {
         expected_digest_b64: &str,
     ) -> Result<bool, String> {
         // Apply enveloped-signature transform (remove signatures)
-        let content_without_signatures = remove_signatures_from_xml(soap_xml)?;
+        let content_without_signatures =
+            remove_signatures_from_xml(soap_xml).map_err(|e| e.to_string())?;
 
         let mut hasher = Sha256::new();
         hasher.update(content_without_signatures.as_bytes());

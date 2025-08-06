@@ -3,24 +3,21 @@
 //! This module contains utility functions for XML processing including PEM parsing,
 //! signature removal, and XML canonicalization.
 
+use color_eyre::eyre::{self, Context, Result};
 use pem;
 use tracing::debug;
 use xml_c14n::{self, CanonicalizationOptions};
 
 /// Parse and validate PEM content with expected tags
-///
-/// This function now supports multi-tag validation, allowing any of the provided
-/// expected tags to be considered valid. This utilizes the comprehensive PEM tag
-/// constants defined in constants.rs.
-pub fn parse_and_validate_pem(pem_data: &[u8], expected_tags: &[&str]) -> Result<pem::Pem, String> {
+pub fn parse_and_validate_pem(pem_data: &[u8], expected_tags: &[&str]) -> Result<pem::Pem> {
     if expected_tags.is_empty() {
-        return Err("At least one expected tag must be provided".to_string());
+        return Err(eyre::eyre!("At least one expected tag must be provided"));
     }
 
-    let pem = pem::parse(pem_data).map_err(|e| format!("Failed to parse PEM content: {e}"))?;
+    let pem = pem::parse(pem_data).with_context(|| "Failed to parse PEM content")?;
 
     if !expected_tags.contains(&pem.tag()) {
-        return Err(format!(
+        return Err(eyre::eyre!(
             "Expected one of {:?} in PEM, found: {}",
             expected_tags,
             pem.tag()
@@ -31,7 +28,7 @@ pub fn parse_and_validate_pem(pem_data: &[u8], expected_tags: &[&str]) -> Result
 }
 
 /// Remove signature elements from XML (improved enveloped-signature transform)
-pub fn remove_signatures_from_xml(xml: &str) -> Result<String, String> {
+pub fn remove_signatures_from_xml(xml: &str) -> Result<String> {
     debug!("Removing signature elements from XML using improved string processing");
 
     let mut result = xml.to_string();
@@ -91,11 +88,11 @@ pub fn remove_signatures_from_xml(xml: &str) -> Result<String, String> {
 }
 
 /// Canonicalize XML using proper C14N library (xml_c14n crate)
-pub fn canonicalize_xml(xml: &str) -> Result<String, String> {
+pub fn canonicalize_xml(xml: &str) -> Result<String> {
     debug!("Canonicalizing XML using proper C14N library (xml_c14n crate)");
 
     // that were originally signed, following the canonical XML specification
     let options = CanonicalizationOptions::default();
     xml_c14n::canonicalize_xml(xml, options)
-        .map_err(|e| format!("Failed to canonicalize XML using C14N: {e}"))
+        .with_context(|| "Failed to canonicalize XML using C14N")
 }

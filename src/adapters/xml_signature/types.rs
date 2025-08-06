@@ -4,10 +4,10 @@
 //! used throughout the XML signature implementation.
 
 use super::constants::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Generic XML element with algorithm attribute - used for various signature components
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlgorithmElement {
     #[serde(rename = "@Algorithm")]
     pub algorithm: String,
@@ -139,4 +139,18 @@ pub struct SignatureComponents {
     pub canonicalization_algorithm: String,
     pub digest_algorithm: String,
     pub digest_value_b64: String,
+}
+
+/// Helper struct for parsing any XML element with text content
+#[derive(Debug, Deserialize)]
+pub struct XmlElementWithContent {
+    #[serde(rename = "$text")]
+    pub content: String,
+}
+
+/// Helper struct for parsing any XML element with a specific attribute
+#[derive(Debug, Deserialize)]
+pub struct XmlElementWithAttribute {
+    #[serde(flatten)]
+    pub attributes: std::collections::HashMap<String, String>,
 }

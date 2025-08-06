@@ -805,6 +805,7 @@ fn create_xml_signature_signer_with_config(
     config: &XmlSignatureConfig,
 ) -> Result<XmlSignatureSigner, String> {
     XmlSignatureSigner::new_from_files(&config.key_path, &config.cert_path)
+        .map_err(|e| e.to_string())
 }
 
 /// Creates an XML signature signer with eID-Server certificate (backward compatibility)
