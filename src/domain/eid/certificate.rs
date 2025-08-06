@@ -1,3 +1,26 @@
+// Configuration struct for certificate paths
+#[derive(Debug, Clone)]
+pub struct CertificateConfig {
+    pub term_path: String,
+    pub dv_path: String,
+    pub cvca_path: String,
+    pub term_key_path: String,
+    pub tls_cert_path: String,
+}
+
+// Default configuration
+impl Default for CertificateConfig {
+    fn default() -> Self {
+        CertificateConfig {
+            term_path: "certs_ecdh/CERT_ECARD_CV_TERM_1_A.cvc".to_string(),
+            dv_path: "certs_ecdh/CERT_ECARD_CV_DV_1_A.cvc".to_string(),
+            cvca_path: "certs_ecdh/CERT_ECARD_CV_CVCA_1.cvcert".to_string(),
+            term_key_path: "certs_ecdh/AT_KEY_19.pkcs8".to_string(),
+            tls_cert_path: "Config/cert.pem".to_string(),
+        }
+    }
+}
+
 use crate::domain::eid::models::{
     AuthError, AuthenticationProtocolData, ConnectionHandle, EAC1OutputType, EAC2OutputType,
     EACPhase,
@@ -39,6 +62,7 @@ pub struct CertificateStore {
     #[allow(dead_code)]
     certificate_cache: Arc<RwLock<LruCache<String, Vec<u8>>>>,
     private_keys: Arc<RwLock<HashMap<String, Vec<u8>>>>,
+    config: CertificateConfig,
 }
 
 const MAX_TRUSTED_ROOTS: usize = 100;
@@ -48,12 +72,17 @@ const SESSION_KEY_SIZE: usize = 32;
 
 impl CertificateStore {
     pub fn new() -> Self {
+        Self::with_config(CertificateConfig::default())
+    }
+
+    pub fn with_config(config: CertificateConfig) -> Self {
         Self {
             trusted_roots: Arc::new(RwLock::new(Vec::new())),
             certificate_cache: Arc::new(RwLock::new(LruCache::new(
                 std::num::NonZeroUsize::new(MAX_CERTIFICATE_CACHE).unwrap(),
             ))),
             private_keys: Arc::new(RwLock::new(HashMap::new())),
+            config,
         }
     }
 
@@ -109,30 +138,27 @@ impl CertificateStore {
 
     pub async fn load_cv_chain(&self) -> Result<Vec<u8>, AuthError> {
         let cert_paths = [
-            std::env::var("CVCA_PATH")
-                .map_err(|_| AuthError::invalid_certificate("CVCA_PATH not set in .env"))?,
-            std::env::var("DV_PATH")
-                .map_err(|_| AuthError::invalid_certificate("DV_PATH not set in .env"))?,
-            std::env::var("TERM_PATH")
-                .map_err(|_| AuthError::invalid_certificate("TERM_PATH not set in .env"))?,
+            (self.config.cvca_path.clone(), "CVCA"),
+            (self.config.dv_path.clone(), "DV"),
+            (self.config.term_path.clone(), "TERM"),
         ];
 
         let mut chain = Vec::new();
-        for (i, path) in cert_paths.iter().enumerate() {
+        for (i, (path, cert_type)) in cert_paths.iter().enumerate() {
             let cert_data = fs::read(path).map_err(|e| {
-                AuthError::invalid_certificate(format!("Failed to read certificate at {path}: {e}"))
+                AuthError::invalid_certificate(format!("Failed to read {cert_type} certificate at {path}: {e}"))
             })?;
 
             if cert_data.is_empty() {
                 return Err(AuthError::invalid_certificate(format!(
-                    "Empty certificate file at {path}"
+                    "Empty {cert_type} certificate file at {path}"
                 )));
             }
 
             // Validate CV certificate structure
             if cert_data.len() < 2 || cert_data[0] != 0x7F || cert_data[1] != 0x21 {
                 return Err(AuthError::invalid_certificate(format!(
-                    "Certificate at {path} is not a CV certificate (expected 0x7F21, got {:02x}{:02x})",
+                    "{cert_type} certificate at {path} is not a CV certificate (expected 0x7F21, got {:02x}{:02x})",
                     cert_data[0],
                     cert_data.get(1).unwrap_or(&0)
                 )));
@@ -141,12 +167,12 @@ impl CertificateStore {
             // Parse and validate certificate
             let _parsed_cvc = Self::parse_cvc(&cert_data).map_err(|e| {
                 AuthError::invalid_certificate(format!(
-                    "Failed to parse certificate at {path}: {e}"
+                    "Failed to parse {cert_type} certificate at {path}: {e}"
                 ))
             })?;
             let holder_ref = Self::extract_holder_reference(&cert_data).unwrap_or_default();
             info!(
-                "Loaded certificate {} from {} ({} bytes, holder_ref: {}, first 20 bytes: {:02x?})",
+                "Loaded {cert_type} certificate {} from {} ({} bytes, holder_ref: {}, first 20 bytes: {:02x?})",
                 i + 1,
                 path,
                 cert_data.len(),
@@ -157,7 +183,7 @@ impl CertificateStore {
             // Validate HolderReference format (e.g., DETESTeID00001 or similar)
             if !holder_ref.starts_with("DE") {
                 warn!(
-                    "Certificate at {} has unexpected HolderReference: {}",
+                    "{cert_type} certificate at {} has unexpected HolderReference: {}",
                     path, holder_ref
                 );
             }
@@ -196,9 +222,7 @@ impl CertificateStore {
         &self,
         _certs: &[Vec<u8>],
     ) -> Result<String, AuthError> {
-        let tls_cert_path = std::env::var("TLS_CERT_PATH")
-            .map_err(|e| AuthError::invalid_certificate(format!("TLS_CERT_PATH not set: {e}")))?;
-
+        let tls_cert_path = self.config.tls_cert_path.clone();
         let tls_cert = fs::read(&tls_cert_path).map_err(|e| {
             AuthError::invalid_certificate(format!(
                 "Failed to read TLS certificate at {tls_cert_path}: {e}"

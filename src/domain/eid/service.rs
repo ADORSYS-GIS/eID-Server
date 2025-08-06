@@ -8,7 +8,7 @@ use std::fs;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
-use super::certificate::{CardCommunicator, CertificateStore, CryptoProvider};
+use super::certificate::{CardCommunicator, CertificateConfig, CertificateStore, CryptoProvider};
 use super::models::{
     AuthError, DIDAuthenticateRequest, DIDAuthenticateResponse, ResponseProtocolData, ServerInfo,
 };
@@ -57,8 +57,8 @@ pub struct SessionInfo {
     pub psk: String,
     pub operations: Vec<String>,
     pub connection_handles: Vec<ConnectionHandle>,
-    pub eac_phase: EACPhase,            // New field to track phase
-    pub eac1_challenge: Option<String>, // Store challenge for EAC2
+    pub eac_phase: EACPhase,
+    pub eac1_challenge: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -358,24 +358,21 @@ impl DIDAuthenticateService {
     }
 
     pub async fn new_with_defaults(session_manager: Arc<dyn SessionManager>) -> Self {
-        dotenvy::dotenv().expect("Failed to load .env file");
-        let certificate_store = CertificateStore::new();
+        let certificate_config = CertificateConfig::default();
+        let certificate_store = CertificateStore::with_config(certificate_config.clone());
 
         // Load CVCA as trusted root
-        let cvca_path = std::env::var("CVCA_PATH").expect("CVCA_PATH not set in .env");
-        let cvca_data = fs::read(&cvca_path).expect("Failed to read CVCA certificate");
+        let cvca_data = fs::read(&certificate_config.cvca_path).expect("Failed to read CVCA certificate");
         if let Err(e) = certificate_store.add_trusted_root(cvca_data).await {
             tracing::error!("Failed to add trusted root certificate: {:?}", e);
             panic!("Cannot proceed without trusted CVCA certificate");
         }
 
         // Load private keys
-        let term_path = std::env::var("TERM_PATH").expect("TERM_PATH not set in .env");
-        let term_data = fs::read(&term_path).expect("Failed to read terminal certificate");
+        let term_data = fs::read(&certificate_config.term_path).expect("Failed to read terminal certificate");
         let holder_ref = CertificateStore::extract_holder_reference(&term_data)
             .unwrap_or_else(|| "UnknownHolder".to_string());
-        let term_key_path = std::env::var("TERM_KEY_PATH").expect("TERM_KEY_PATH not set in .env");
-        let term_key_data = fs::read(&term_key_path).expect("Failed to read terminal private key");
+        let term_key_data = fs::read(&certificate_config.term_key_path).expect("Failed to read terminal private key");
         if let Err(e) = certificate_store
             .add_private_key(holder_ref, term_key_data)
             .await
@@ -384,8 +381,7 @@ impl DIDAuthenticateService {
             panic!("Cannot proceed without terminal private key");
         }
 
-        let ausweisapp2_endpoint = std::env::var("AUSWEISAPP2_ENDPOINT")
-            .unwrap_or_else(|_| "http://127.0.0.1:24727/".to_string());
+        let ausweisapp2_endpoint = "http://127.0.0.1:24727/".to_string();
 
         Self {
             certificate_store: certificate_store.clone(),
