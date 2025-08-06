@@ -95,9 +95,6 @@ pub fn parse_start_paos(xml: &str) -> Result<PaosRequest, String> {
         buf.clear();
     }
 
-    if session_identifier.is_empty() {
-        return Err("Missing SessionIdentifier in StartPAOS".to_string());
-    }
     if card_application.is_empty() {
         return Err("Missing CardApplication in StartPAOS".to_string());
     }
@@ -285,14 +282,6 @@ pub fn parse_did_authenticate_response(xml: &str) -> Result<PaosRequest, String>
             || id_picc.is_empty()
             || challenge.is_empty()
         {
-            debug!(
-                "Incomplete EAC1 output: chat={}, car={}, ef_card_access={}, id_picc={}, challenge={}",
-                chat.is_empty(),
-                car.is_empty(),
-                ef_card_access.is_empty(),
-                id_picc.is_empty(),
-                challenge.is_empty()
-            );
             None
         } else {
             Some(EAC1OutputType {
@@ -545,10 +534,7 @@ where
             result_minor,
             result_message,
         } => {
-            let message_id = message_id.unwrap_or_else(|| {
-                debug!("No MessageID provided, generating fallback UUID");
-                format!("urn:uuid:{}", Uuid::new_v4())
-            });
+            let message_id = message_id.unwrap_or_else(|| format!("urn:uuid:{}", Uuid::new_v4()));
 
             // If result_major indicates an error, return the error response immediately
             if result_major.contains("error") {
@@ -585,8 +571,6 @@ where
                     result_minor,
                     result_message
                 );
-
-                debug!("Generated error StartPAOSResponse: {}", paos_response);
 
                 return Ok((
                     StatusCode::OK,
