@@ -1,3 +1,26 @@
+// Configuration struct for certificate paths
+#[derive(Debug, Clone)]
+pub struct CertificateConfig {
+    pub term_path: String,
+    pub dv_path: String,
+    pub cvca_path: String,
+    pub term_key_path: String,
+    pub tls_cert_path: String,
+}
+
+// Default configuration
+impl Default for CertificateConfig {
+    fn default() -> Self {
+        CertificateConfig {
+            term_path: "certs_ecdh/CERT_ECARD_CV_TERM_1_A.cvc".to_string(),
+            dv_path: "certs_ecdh/CERT_ECARD_CV_DV_1_A.cvc".to_string(),
+            cvca_path: "certs_ecdh/CERT_ECARD_CV_CVCA_1.cvcert".to_string(),
+            term_key_path: "certs_ecdh/AT_KEY_19.pkcs8".to_string(),
+            tls_cert_path: "Config/cert.pem".to_string(),
+        }
+    }
+}
+
 use crate::domain::eid::models::{
     AuthError, AuthenticationProtocolData, ConnectionHandle, EAC1OutputType, EAC2OutputType,
     EACPhase,
@@ -39,6 +62,7 @@ pub struct CertificateStore {
     #[allow(dead_code)]
     certificate_cache: Arc<RwLock<LruCache<String, Vec<u8>>>>,
     private_keys: Arc<RwLock<HashMap<String, Vec<u8>>>>,
+    config: CertificateConfig,
 }
 
 const MAX_TRUSTED_ROOTS: usize = 100;
@@ -48,12 +72,17 @@ const SESSION_KEY_SIZE: usize = 32;
 
 impl CertificateStore {
     pub fn new() -> Self {
+        Self::with_config(CertificateConfig::default())
+    }
+
+    pub fn with_config(config: CertificateConfig) -> Self {
         Self {
             trusted_roots: Arc::new(RwLock::new(Vec::new())),
             certificate_cache: Arc::new(RwLock::new(LruCache::new(
                 std::num::NonZeroUsize::new(MAX_CERTIFICATE_CACHE).unwrap(),
             ))),
             private_keys: Arc::new(RwLock::new(HashMap::new())),
+            config,
         }
     }
 
@@ -109,30 +138,29 @@ impl CertificateStore {
 
     pub async fn load_cv_chain(&self) -> Result<Vec<u8>, AuthError> {
         let cert_paths = [
-            std::env::var("CVCA_PATH")
-                .map_err(|_| AuthError::invalid_certificate("CVCA_PATH not set in .env"))?,
-            std::env::var("DV_PATH")
-                .map_err(|_| AuthError::invalid_certificate("DV_PATH not set in .env"))?,
-            std::env::var("TERM_PATH")
-                .map_err(|_| AuthError::invalid_certificate("TERM_PATH not set in .env"))?,
+            (self.config.cvca_path.clone(), "CVCA"),
+            (self.config.dv_path.clone(), "DV"),
+            (self.config.term_path.clone(), "TERM"),
         ];
 
         let mut chain = Vec::new();
-        for (i, path) in cert_paths.iter().enumerate() {
+        for (i, (path, cert_type)) in cert_paths.iter().enumerate() {
             let cert_data = fs::read(path).map_err(|e| {
-                AuthError::invalid_certificate(format!("Failed to read certificate at {path}: {e}"))
+                AuthError::invalid_certificate(format!(
+                    "Failed to read {cert_type} certificate at {path}: {e}"
+                ))
             })?;
 
             if cert_data.is_empty() {
                 return Err(AuthError::invalid_certificate(format!(
-                    "Empty certificate file at {path}"
+                    "Empty {cert_type} certificate file at {path}"
                 )));
             }
 
             // Validate CV certificate structure
             if cert_data.len() < 2 || cert_data[0] != 0x7F || cert_data[1] != 0x21 {
                 return Err(AuthError::invalid_certificate(format!(
-                    "Certificate at {path} is not a CV certificate (expected 0x7F21, got {:02x}{:02x})",
+                    "{cert_type} certificate at {path} is not a CV certificate (expected 0x7F21, got {:02x}{:02x})",
                     cert_data[0],
                     cert_data.get(1).unwrap_or(&0)
                 )));
@@ -141,12 +169,12 @@ impl CertificateStore {
             // Parse and validate certificate
             let _parsed_cvc = Self::parse_cvc(&cert_data).map_err(|e| {
                 AuthError::invalid_certificate(format!(
-                    "Failed to parse certificate at {path}: {e}"
+                    "Failed to parse {cert_type} certificate at {path}: {e}"
                 ))
             })?;
             let holder_ref = Self::extract_holder_reference(&cert_data).unwrap_or_default();
             info!(
-                "Loaded certificate {} from {} ({} bytes, holder_ref: {}, first 20 bytes: {:02x?})",
+                "Loaded {cert_type} certificate {} from {} ({} bytes, holder_ref: {}, first 20 bytes: {:02x?})",
                 i + 1,
                 path,
                 cert_data.len(),
@@ -157,7 +185,7 @@ impl CertificateStore {
             // Validate HolderReference format (e.g., DETESTeID00001 or similar)
             if !holder_ref.starts_with("DE") {
                 warn!(
-                    "Certificate at {} has unexpected HolderReference: {}",
+                    "{cert_type} certificate at {} has unexpected HolderReference: {}",
                     path, holder_ref
                 );
             }
@@ -196,9 +224,7 @@ impl CertificateStore {
         &self,
         _certs: &[Vec<u8>],
     ) -> Result<String, AuthError> {
-        let tls_cert_path = std::env::var("TLS_CERT_PATH")
-            .map_err(|e| AuthError::invalid_certificate(format!("TLS_CERT_PATH not set: {e}")))?;
-
+        let tls_cert_path = self.config.tls_cert_path.clone();
         let tls_cert = fs::read(&tls_cert_path).map_err(|e| {
             AuthError::invalid_certificate(format!(
                 "Failed to read TLS certificate at {tls_cert_path}: {e}"
@@ -215,7 +241,7 @@ impl CertificateStore {
         content.extend_from_slice(&[0x04, 0x00, 0x7F, 0x00, 0x07, 0x03, 0x01, 0x03, 0x01, 0x01]);
 
         // 2. IssuerName ([1] EXPLICIT UTF8String)
-        let issuer_name = b"Governikus Test DVCA";
+        let issuer_name = b"Serer Test CA";
         content.push(0xA1); // [1] EXPLICIT UTF8String
         Self::write_der_length(&mut content, issuer_name.len() + 2); // +2 for inner tag and length
         content.push(0x0C); // UTF8String
@@ -223,7 +249,7 @@ impl CertificateStore {
         content.extend_from_slice(issuer_name);
 
         // 3. IssuerURL ([2] EXPLICIT PrintableString)
-        let issuer_url = b"http://www.governikus.de";
+        let issuer_url = b"http://www.serer.com";
         content.push(0xA2); // [2] EXPLICIT PrintableString
         Self::write_der_length(&mut content, issuer_url.len() + 2); // +2 for inner tag and length
         content.push(0x13); // PrintableString (0x13, not 0x16)
@@ -231,7 +257,7 @@ impl CertificateStore {
         content.extend_from_slice(issuer_url);
 
         // 4. SubjectName ([3] EXPLICIT UTF8String)
-        let subject_name = b"Governikus GmbH & Co. KG";
+        let subject_name = b"Serer GmbH";
         content.push(0xA3); // [3] EXPLICIT UTF8String
         Self::write_der_length(&mut content, subject_name.len() + 2); // +2 for inner tag and length
         content.push(0x0C); // UTF8String
@@ -239,7 +265,7 @@ impl CertificateStore {
         content.extend_from_slice(subject_name);
 
         // 5. SubjectURL ([4] EXPLICIT PrintableString)
-        let subject_url = b"https://test.governikus-eid.de";
+        let subject_url = b"https://test.serer-eid.com";
         content.push(0xA4); // [4] EXPLICIT PrintableString
         Self::write_der_length(&mut content, subject_url.len() + 2); // +2 for inner tag and length
         content.push(0x13); // PrintableString (0x13, not 0x16)
@@ -247,7 +273,7 @@ impl CertificateStore {
         content.extend_from_slice(subject_url);
 
         // 6. TermsOfUsage ([5] EXPLICIT ANY)
-        let terms = "Name, Anschrift und E-Mail-Adresse des Diensteanbieters:\r\nGovernikus GmbH & Co. KG\r\nHochschulring 4\r\n28359 Bremen\r\nkontakt@governikus.de\r\n\r\nHinweis auf die für den Diensteanbieter zuständigen Stellen, die die Einhaltung der Vorschriften zum Datenschutz kontrollieren:\r\nDie Landesbeauftragte für Datenschutz und Informationsfreiheit der Freien Hansestadt Bremen\r\nArndtstraße 1\r\n27570 Bremerhaven\r\n0421/596-2010\r\noffice@datenschutz.bremen.de\r\nhttp://www.datenschutz.bremen.de";
+        let terms = "Name, Address, and Email of the Service Provider:\r\nSerer GmbH\r\nExample Street 123\r\n12345 Example City\r\ncontact@serer.com\r\n\r\nNote regarding the authorities responsible for data protection compliance:\r\nData Protection Authority\r\nMain Street 456\r\n12345 Example City\r\n0123/456-7890\r\ninfo@dataprotection.example.com\r\nhttp://www.dataprotection.example.com";
         let terms_bytes = terms.as_bytes();
 
         // Calculate the proper length for EXPLICIT wrapper
@@ -280,7 +306,7 @@ impl CertificateStore {
         Self::write_der_length(&mut content, set_content.len());
         content.extend_from_slice(&set_content);
 
-        // 6. Wrap everything in outer SEQUENCE
+        // 8. Wrap everything in outer SEQUENCE
         let mut result = Vec::new();
         result.push(0x30); // SEQUENCE
         Self::write_der_length(&mut result, content.len());
@@ -1035,23 +1061,9 @@ impl CryptoProvider {
             AuthError::crypto_error("Invalid PKCS#8 private key format")
         })?;
 
-        // Extract raw private key (assuming X25519 or P-256)
-        let _raw_private_key = match private_key.algorithm.oid.to_string().as_str() {
-            "1.3.101.110" => {
-                // X25519
-                if private_key_bytes.len() < 32 {
-                    return Err(AuthError::crypto_error("Invalid X25519 private key length"));
-                }
-                private_key.private_key
-            }
-            "1.2.840.10045.2.1" => {
-                // ECDSA (e.g., P-256)
-                // Extract the private key from OCTET STRING
-                if private_key.private_key.len() < 2 || private_key.private_key[0] != 0x04 {
-                    return Err(AuthError::crypto_error("Invalid ECDSA private key format"));
-                }
-                &private_key.private_key[1..]
-            }
+        let algorithm = match private_key.algorithm.oid.to_string().as_str() {
+            "1.3.101.110" => &agreement::X25519,
+            "1.2.840.10045.2.1" => &agreement::ECDH_P256, // Use P-256 for brainpoolP256r1
             oid => {
                 return Err(AuthError::crypto_error(format!(
                     "Unsupported private key algorithm: {oid}"
@@ -1059,16 +1071,13 @@ impl CryptoProvider {
             }
         };
 
-        // Create private key for ECDH
-        let private_key = agreement::EphemeralPrivateKey::generate(&agreement::X25519, &*self.rng)
-            .map_err(|e| {
+        let private_key =
+            agreement::EphemeralPrivateKey::generate(algorithm, &*self.rng).map_err(|e| {
                 error!("Failed to generate private key: {:?}", e);
                 AuthError::crypto_error("ECDH private key generation")
             })?;
 
-        // Create public key from peer's bytes
-        let peer_public_key =
-            agreement::UnparsedPublicKey::new(&agreement::X25519, peer_public_key);
+        let peer_public_key = agreement::UnparsedPublicKey::new(algorithm, peer_public_key);
 
         // Perform key agreement
         let shared_secret =
@@ -1518,11 +1527,9 @@ impl CardCommunicator {
         if let Some(major) = result_major
             && major.contains("error")
         {
-            {
-                return Err(AuthError::card_communication_error(format!(
-                    "SOAP response indicates error: major={major}, minor={result_minor:?}"
-                )));
-            }
+            return Err(AuthError::card_communication_error(format!(
+                "SOAP response indicates error: major={major}, minor={result_minor:?}"
+            )));
         }
 
         if chat.is_empty()
