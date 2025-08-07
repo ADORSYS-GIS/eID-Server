@@ -50,6 +50,9 @@ x509-parser = "0.17"
 lru = "0.16"
 hex = "0.4"
 openssl = { version = "0.10", features = ["vendored"] }
+cms = "0.2"
+der = "0.7"
+sha2 = "0.10"
 
 [dependencies.redis]
 version = "0.32"
@@ -57,6 +60,7 @@ features = ["tokio-rustls-comp", "connection-manager"]
 
 [dev-dependencies]
 http-body-util = "0.1"
+tempfile = "3.0"
 
 [profile.dev.package.backtrace]
 opt-level = 3
