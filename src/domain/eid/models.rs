@@ -221,7 +221,7 @@ pub struct AuthenticationProtocolData {
 
 impl AuthenticationProtocolData {
     pub fn new_eac1(
-        certificate: String,
+        certificates: Vec<String>,
         certificate_description: String,
         required_chat: String,
         optional_chat: Option<String>,
@@ -230,7 +230,7 @@ impl AuthenticationProtocolData {
         Self {
             phase: EACPhase::EAC1,
             eac1_input: Some(EAC1InputType {
-                certificate,
+                certificates,
                 certificate_description,
                 required_chat,
                 optional_chat,
@@ -405,7 +405,7 @@ pub enum EACPhase {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EAC1InputType {
-    pub certificate: String,
+    pub certificates: Vec<String>,
     pub certificate_description: String,
     pub required_chat: String,
     pub optional_chat: Option<String>,

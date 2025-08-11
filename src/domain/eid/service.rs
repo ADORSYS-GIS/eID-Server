@@ -451,6 +451,11 @@ impl DIDAuthenticateService {
             return Err(AuthError::timeout_error("Session validation"));
         }
 
+        let certificate_hex_chain = self
+            .certificate_store
+            .load_cv_chain()
+            .await?;
+
         match request.authentication_protocol_data.phase {
             EACPhase::EAC1 => {
                 let eac1_input = request
@@ -458,30 +463,6 @@ impl DIDAuthenticateService {
                     .eac1_input
                     .as_ref()
                     .ok_or_else(|| AuthError::protocol_error("Missing EAC1 input data"))?;
-
-                // Load certificate chain if none provided
-                let certificate_der = if eac1_input.certificate.is_empty() {
-                    debug!("No certificate provided, loading default chain");
-                    self.certificate_store.load_cv_chain().await?
-                } else {
-                    base64::engine::general_purpose::STANDARD
-                        .decode(&eac1_input.certificate)
-                        .map_err(|e| {
-                            AuthError::invalid_certificate(format!(
-                                "Failed to decode certificate: {e}"
-                            ))
-                        })?
-                };
-
-                let is_valid = self
-                    .certificate_store
-                    .validate_certificate_chain(certificate_der.clone())
-                    .await?;
-                if !is_valid {
-                    return Err(AuthError::invalid_certificate(
-                        "Certificate chain validation failed",
-                    ));
-                }
 
                 let personal_data = self
                     .card_communicator
@@ -491,8 +472,7 @@ impl DIDAuthenticateService {
                         &AuthenticationProtocolData {
                             phase: EACPhase::EAC1,
                             eac1_input: Some(EAC1InputType {
-                                certificate: base64::engine::general_purpose::STANDARD
-                                    .encode(&certificate_der),
+                                certificates: certificate_hex_chain.clone(),
                                 certificate_description: eac1_input.certificate_description.clone(),
                                 required_chat: eac1_input.required_chat.clone(),
                                 optional_chat: eac1_input.optional_chat.clone(),
@@ -586,14 +566,13 @@ impl DIDAuthenticateService {
                 }
 
                 // Perform ECDH key exchange
-                let certificate_der = self.certificate_store.load_cv_chain().await?;
-                let certs = self
-                    .certificate_store
-                    .split_concatenated_der(&certificate_der)?;
-                let term_cert = certs.last().ok_or_else(|| {
+                let term_cert = certificate_hex_chain.last().ok_or_else(|| {
                     AuthError::invalid_certificate("No terminal certificate found")
                 })?;
-                let holder_ref = CertificateStore::extract_holder_reference(term_cert)
+                let term_cert_bytes = hex::decode(term_cert).map_err(|e| {
+                    AuthError::crypto_error(format!("Failed to decode terminal certificate: {e}"))
+                })?;
+                let holder_ref = CertificateStore::extract_holder_reference(&term_cert_bytes)
                     .unwrap_or_else(|| "UnknownHolder".to_string());
                 let private_key = self
                     .certificate_store

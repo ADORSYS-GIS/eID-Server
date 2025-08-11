@@ -12,10 +12,10 @@ pub struct CertificateConfig {
 impl Default for CertificateConfig {
     fn default() -> Self {
         CertificateConfig {
-            term_path: "certs_ecdh/CERT_ECARD_CV_TERM_1_A.cvc".to_string(),
-            dv_path: "certs_ecdh/CERT_ECARD_CV_DV_1_A.cvc".to_string(),
-            cvca_path: "certs_ecdh/CERT_ECARD_CV_CVCA_1.cvcert".to_string(),
-            term_key_path: "certs_ecdh/AT_KEY_19.pkcs8".to_string(),
+            term_path: "certs_ecdh/term".to_string(),
+            dv_path: "certs_ecdh/dvca".to_string(),
+            cvca_path: "certs_ecdh/cvca".to_string(),
+            term_key_path: "certs_ecdh/term_key".to_string(),
             tls_cert_path: "Config/cert.pem".to_string(),
         }
     }
@@ -136,16 +136,16 @@ impl CertificateStore {
         Ok(())
     }
 
-    pub async fn load_cv_chain(&self) -> Result<Vec<u8>, AuthError> {
+    pub async fn load_cv_chain(&self) -> Result<Vec<String>, AuthError> {
         let cert_paths = [
-            (self.config.cvca_path.clone(), "CVCA"),
+            // (self.config.cvca_path.clone(), "CVCA"),
             (self.config.dv_path.clone(), "DV"),
             (self.config.term_path.clone(), "TERM"),
         ];
 
         let mut chain = Vec::new();
-        for (i, (path, cert_type)) in cert_paths.iter().enumerate() {
-            let cert_data = fs::read(path).map_err(|e| {
+        for (path, cert_type) in cert_paths.iter() {
+            let cert_data = fs::read_to_string(path).map_err(|e| {
                 AuthError::invalid_certificate(format!(
                     "Failed to read {cert_type} certificate at {path}: {e}"
                 ))
@@ -157,40 +157,7 @@ impl CertificateStore {
                 )));
             }
 
-            // Validate CV certificate structure
-            if cert_data.len() < 2 || cert_data[0] != 0x7F || cert_data[1] != 0x21 {
-                return Err(AuthError::invalid_certificate(format!(
-                    "{cert_type} certificate at {path} is not a CV certificate (expected 0x7F21, got {:02x}{:02x})",
-                    cert_data[0],
-                    cert_data.get(1).unwrap_or(&0)
-                )));
-            }
-
-            // Parse and validate certificate
-            let _parsed_cvc = Self::parse_cvc(&cert_data).map_err(|e| {
-                AuthError::invalid_certificate(format!(
-                    "Failed to parse {cert_type} certificate at {path}: {e}"
-                ))
-            })?;
-            let holder_ref = Self::extract_holder_reference(&cert_data).unwrap_or_default();
-            info!(
-                "Loaded {cert_type} certificate {} from {} ({} bytes, holder_ref: {}, first 20 bytes: {:02x?})",
-                i + 1,
-                path,
-                cert_data.len(),
-                holder_ref,
-                &cert_data[..cert_data.len().min(20)]
-            );
-
-            // Validate HolderReference format (e.g., DETESTeID00001 or similar)
-            if !holder_ref.starts_with("DE") {
-                warn!(
-                    "{cert_type} certificate at {} has unexpected HolderReference: {}",
-                    path, holder_ref
-                );
-            }
-
-            chain.extend_from_slice(&cert_data);
+            chain.push(cert_data);
         }
 
         if chain.is_empty() {
@@ -1231,7 +1198,8 @@ pub enum AuthenticationProtocolDataXml {
 #[serde(rename_all = "PascalCase")]
 pub struct EAC1InputXml {
     protocol: &'static str,
-    certificate: String,
+    #[serde(rename = "Certificate")]
+    certificates: Vec<String>,
     certificate_description: String,
     required_chat: String,
     optional_chat: Option<String>,
@@ -1356,7 +1324,7 @@ impl CardCommunicator {
                     .ok_or_else(|| AuthError::protocol_error("Missing EAC1 input data"))?;
                 AuthenticationProtocolDataXml::EAC1(EAC1InputXml {
                     protocol,
-                    certificate: eac1_input.certificate.clone(),
+                    certificates: eac1_input.certificates.clone(),
                     certificate_description: eac1_input.certificate_description.clone(),
                     required_chat: eac1_input.required_chat.clone(),
                     optional_chat: eac1_input.optional_chat.clone(),

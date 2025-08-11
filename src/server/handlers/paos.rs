@@ -430,7 +430,7 @@ where
             let temp_service =
                 DIDAuthenticateService::new_with_defaults(state.use_id.clone()).await;
 
-            let certificate_der = temp_service
+            let certs_chain_hex = temp_service
                 .certificate_store
                 .load_cv_chain()
                 .await
@@ -442,26 +442,24 @@ where
                     )
                 })?;
 
-            let certs = temp_service
-                .certificate_store
-                .split_concatenated_der(&certificate_der)
-                .map_err(|err| {
-                    error!("Failed to split certificate chain: {}", err);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "Failed to split certificate chain".to_string(),
-                    )
-                })?;
-
-            if certs.is_empty() {
+            if certs_chain_hex.is_empty() {
                 error!("Certificate chain is empty");
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "Empty certificate chain".to_string(),
                 ));
             }
-
-            let certificates_hex: Vec<String> = certs.iter().map(hex::encode).collect();
+            let mut certs = Vec::new();
+            for hex in &certs_chain_hex {
+                let cert = hex::decode(hex).map_err(|e| {
+                    error!("Failed to decode cert: {e}");
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Failed to decode cert".to_string(),
+                    )
+                })?;
+                certs.push(cert);
+            }
             let certificate_description = temp_service
                 .certificate_store
                 .generate_certificate_description(&certs)
@@ -473,7 +471,7 @@ where
                     )
                 })?;
 
-            let certificates_xml: String = certificates_hex
+            let certificates_xml: String = certs_chain_hex
                 .into_iter()
                 .map(|cert| format!("<ns4:Certificate>{cert}</ns4:Certificate>"))
                 .collect::<Vec<String>>()
@@ -633,7 +631,7 @@ where
                         )
                     })?;
 
-                    let certificate_der = temp_service
+                    let certs = temp_service
                         .certificate_store
                         .load_cv_chain()
                         .await
@@ -645,23 +643,19 @@ where
                             )
                         })?;
 
-                    let certs = temp_service
-                        .certificate_store
-                        .split_concatenated_der(&certificate_der)
-                        .map_err(|err| {
-                            error!("Failed to split certificate chain: {err}");
-                            (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                "Failed to split certificate chain".to_string(),
-                            )
-                        })?;
-
                     let term_cert = certs.last().ok_or((
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "No terminal certificate found".to_string(),
                     ))?;
+                    let term_cert = hex::decode(term_cert).map_err(|e| {
+                        error!("Failed to decode cert: {e}");
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "Failed to decode cert".to_string(),
+                        )
+                    })?;
 
-                    let holder_ref = CertificateStore::extract_holder_reference(term_cert)
+                    let holder_ref = CertificateStore::extract_holder_reference(&term_cert)
                         .unwrap_or_else(|| "UnknownHolder".to_string());
                     let _private_key = temp_service
                         .certificate_store
