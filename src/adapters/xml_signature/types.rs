@@ -28,27 +28,23 @@ pub struct Transforms {
 
 /// XML reference element
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct Reference {
     #[serde(rename = "@URI")]
     pub uri: String,
-    #[serde(rename = "Transforms")]
     pub transforms: Transforms,
-    #[serde(rename = "DigestMethod")]
     pub digest_method: DigestMethod,
-    #[serde(rename = "DigestValue")]
     pub digest_value: String,
 }
 
 /// XML SignedInfo element with optional namespace
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct SignedInfo {
     #[serde(rename = "@xmlns", skip_serializing_if = "Option::is_none")]
     pub xmlns: Option<String>,
-    #[serde(rename = "CanonicalizationMethod")]
     pub canonicalization_method: CanonicalizationMethod,
-    #[serde(rename = "SignatureMethod")]
     pub signature_method: SignatureMethod,
-    #[serde(rename = "Reference")]
     pub reference: Reference,
 }
 
@@ -82,14 +78,12 @@ pub struct KeyInfo {
 
 /// Complete XML Signature element
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct Signature {
     #[serde(rename = "@xmlns")]
     pub xmlns: String,
-    #[serde(rename = "SignedInfo")]
     pub signed_info: SignedInfo,
-    #[serde(rename = "SignatureValue")]
     pub signature_value: SignatureValue,
-    #[serde(rename = "KeyInfo")]
     pub key_info: KeyInfo,
 }
 
