@@ -817,11 +817,80 @@ where
                             )
                         })?;
 
-                    let paos_response = format!(
+                    // EAC2 authentication completed successfully - now integrate transmit functionality
+                    debug!("EAC2 authentication completed, initiating transmit functionality");
+
+                    // Create a transmit request to continue the PAOS workflow
+                    let transmit_request = format!(
                         r#"<?xml version="1.0" encoding="UTF-8"?>
-                        <SOAP-ENV:Envelope 
-                            xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" 
-                            xmlns:ns2="urn:oasis:names:tc:dss:1.0:core:schema" 
+                        <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
+                            <SOAP-ENV:Header>
+                                <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
+                                <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
+                            </SOAP-ENV:Header>
+                            <SOAP-ENV:Body>
+                                <ns4:Transmit>
+                                    <ns4:SlotHandle>00</ns4:SlotHandle>
+                                    <ns4:InputAPDUInfo>
+                                        <ns4:InputAPDU>00A4040C07A0000002471001</ns4:InputAPDU>
+                                        <ns4:AcceptableStatusCode>9000</ns4:AcceptableStatusCode>
+                                    </ns4:InputAPDUInfo>
+                                </ns4:Transmit>
+                            </SOAP-ENV:Body>
+                        </SOAP-ENV:Envelope>"#,
+                        message_id,
+                        Uuid::new_v4()
+                    );
+
+                    // Process the transmit request through the integrated channel
+                    match state.transmit_channel.handle_request(transmit_request.as_bytes()).await {
+                        Ok(transmit_response_bytes) => {
+                            let transmit_response = String::from_utf8_lossy(&transmit_response_bytes);
+                            debug!("Transmit processing completed successfully within PAOS workflow");
+
+                            // Return the transmit response as part of the PAOS workflow
+                            Ok((
+                                StatusCode::OK,
+                                [
+                                    ("Content-Type", "application/xml"),
+                                    ("PAOS-Version", "urn:liberty:paos:2006-08"),
+                                ],
+                                transmit_response.to_string(),
+                            ))
+                        }
+                        Err(e) => {
+                            error!("Error in integrated transmit functionality: {}", e);
+
+                            // Return error response in PAOS format
+                            let error_response = format!(
+                                r#"<?xml version="1.0" encoding="UTF-8"?>
+                                <SOAP-ENV:Envelope
+                                    xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
+                                    xmlns:ns2="urn:oasis:names:tc:dss:1.0:core:schema"
+                                    xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
+                                    <SOAP-ENV:Header>
+                                        <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
+                                        <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
+                                    </SOAP-ENV:Header>
+                                    <SOAP-ENV:Body>
+                                        <ns4:StartPAOSResponse>
+                                            <ns2:Result>
+                                                <ns2:ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ns2:ResultMajor>
+                                                <ns2:ResultMessage>Transmit error: {}</ns2:ResultMessage>
+                                            </ns2:Result>
+                                        </ns4:StartPAOSResponse>
+                                    </SOAP-ENV:Body>
+                                </SOAP-ENV:Envelope>"#,
+                                message_id,
+                                Uuid::new_v4(),
+                                e
+                            );
+
+                            let paos_response = format!(
+                                r#"<?xml version="1.0" encoding="UTF-8"?>
+                        <SOAP-ENV:Envelope
+                            xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
+                            xmlns:ns2="urn:oasis:names:tc:dss:1.0:core:schema"
                             xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
                             <SOAP-ENV:Header>
                                 <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
@@ -836,20 +905,22 @@ where
                                 </ns4:StartPAOSResponse>
                             </SOAP-ENV:Body>
                         </SOAP-ENV:Envelope>"#,
-                        message_id,
-                        Uuid::new_v4()
-                    );
+                                message_id,
+                                Uuid::new_v4()
+                            );
 
-                    debug!("Generated final StartPAOSResponse: {}", paos_response);
+                            debug!("Generated final StartPAOSResponse: {}", paos_response);
 
-                    Ok((
-                        StatusCode::OK,
-                        [
-                            ("Content-Type", "application/xml"),
-                            ("PAOS-Version", "urn:liberty:paos:2006-08"),
-                        ],
-                        paos_response,
-                    ))
+                            Ok((
+                                StatusCode::OK,
+                                [
+                                    ("Content-Type", "application/xml"),
+                                    ("PAOS-Version", "urn:liberty:paos:2006-08"),
+                                ],
+                                paos_response,
+                            ))
+                        }
+                    }
                 }
             }
         }
@@ -857,12 +928,12 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::domain::eid::{
-        service::{EIDServiceConfig, SessionInfo, UseidService},
-        session_manager::InMemorySessionManager,
-    };
+    mod tests {
+        use super::*;
+        use crate::domain::eid::{
+            service::{EIDServiceConfig, SessionInfo, UseidService},
+            session_manager::InMemorySessionManager,
+        };
     use axum::{
         Router,
         body::Body,
@@ -883,12 +954,13 @@ mod tests {
 
         let session_info = SessionInfo {
             id: session_id.to_string(),
-            expiry: Utc::now() + Duration::minutes(5),
+            expiry: Utc::now() + chrono::Duration::minutes(5),
             psk: valid_psk,
             operations: vec![],
             connection_handles: vec![],
             eac_phase: crate::domain::eid::models::EACPhase::EAC1,
             eac1_challenge: None,
+            server_message_id: None,
         };
 
         session_manager
@@ -908,10 +980,28 @@ mod tests {
 
         let use_id_service_arc = Arc::new(use_id_service);
 
+        // Create a mock transmit channel for testing
+        use crate::domain::eid::transmit::{
+            channel::TransmitChannel, protocol::ProtocolHandler, test_service::TestTransmitService,
+        };
+        use crate::config::TransmitConfig;
+        use crate::server::session::SessionManager as ServerSessionManager;
+        use std::time::Duration;
+
+        let protocol_handler = ProtocolHandler::new();
+        let session_manager = ServerSessionManager::new(Duration::from_secs(300));
+        let transmit_service = Arc::new(TestTransmitService);
+        let transmit_config = TransmitConfig::default();
+        
+        let transmit_channel = Arc::new(
+            TransmitChannel::new(protocol_handler, session_manager, transmit_service, transmit_config)
+                .expect("Failed to create test transmit channel")
+        );
+
         AppState {
             use_id: Arc::clone(&use_id_service_arc),
             eid_service: Arc::clone(&use_id_service_arc),
-            transmit_channel: todo!(),
+            transmit_channel,
         }
     }
 

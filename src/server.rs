@@ -17,8 +17,8 @@ use axum::{http::Method, routing::post};
 use axum_server::tls_openssl::{OpenSSLAcceptor, OpenSSLConfig};
 use color_eyre::eyre::{Context, Result, eyre};
 use handlers::health::health_check;
-use handlers::transmit::transmit_handler;
 use handlers::useid::use_id_handler;
+// Note: transmit_handler import removed - transmit functionality integrated within PAOS workflow
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
@@ -111,8 +111,8 @@ impl Server {
                 Router::new()
                     .route("/useID", post(use_id_handler))
                     .route("/useID", get(use_id_handler))
-                    .route("/getServerInfo", get(get_server_info))
-                    .route("/transmit", post(transmit_handler)),
+                    .route("/getServerInfo", get(get_server_info)),
+                    // Note: Transmit endpoint removed - transmit functionality is now integrated within PAOS workflow
             )
             .layer(cors_layer)
             .layer(trace_layer)

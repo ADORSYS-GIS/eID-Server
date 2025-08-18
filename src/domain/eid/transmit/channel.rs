@@ -78,8 +78,35 @@ impl TransmitChannel {
         })?;
 
         debug!("Parsing transmit XML request");
+        
+        // Extract Transmit element from SOAP envelope if present
+        let transmit_xml = if xml_str.contains("<ns4:Transmit>") {
+            // Simple regex-based extraction for SOAP envelope
+            if let Some(start) = xml_str.find("<ns4:Transmit>") {
+                if let Some(end) = xml_str.find("</ns4:Transmit>") {
+                    let transmit_content = &xml_str[start..end + "</ns4:Transmit>".len()];
+                    // Replace namespace prefix with plain tags
+                    let cleaned_content = transmit_content
+                        .replace("ns4:Transmit>", "Transmit>")
+                        .replace("ns4:SlotHandle>", "SlotHandle>")
+                        .replace("ns4:InputAPDUInfo>", "InputAPDUInfo>")
+                        .replace("ns4:InputAPDU>", "InputAPDU>")
+                        .replace("ns4:AcceptableStatusCode>", "AcceptableStatusCode>");
+                    debug!("Extracted and cleaned Transmit XML: {}", cleaned_content);
+                    cleaned_content
+                } else {
+                    error!("Found Transmit start tag but no end tag");
+                    xml_str.to_string()
+                }
+            } else {
+                xml_str.to_string()
+            }
+        } else {
+            xml_str.to_string()
+        };
+        
         // Parse the Transmit request
-        let transmit = match self.protocol_handler.parse_transmit(xml_str) {
+        let transmit = match self.protocol_handler.parse_transmit(&transmit_xml) {
             Ok(transmit) => {
                 debug!(
                     "Successfully parsed transmit request for slot: {}",

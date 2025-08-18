@@ -404,7 +404,7 @@ impl DIDAuthenticateService {
         }
 
 
-        let ausweisapp2_endpoint = "http://127.0.0.1:24727/".to_string();
+        let ausweisapp2_endpoint = "http://127.0.0.1:24727/eID-Client".to_string();
 
         Self {
             certificate_store: certificate_store.clone(),
