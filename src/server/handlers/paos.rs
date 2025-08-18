@@ -43,6 +43,13 @@ pub enum PaosRequest {
         result_minor: Option<String>,
         result_message: Option<String>,
     },
+
+    TransmitResponse {
+        message_id: Option<String>,
+        relates_to: Option<String>,
+        output_apdu: Vec<String>,
+        result_major: String,
+    },
 }
 
 #[derive(Debug)]
@@ -111,6 +118,90 @@ pub fn parse_start_paos(xml: &str) -> Result<PaosRequest, String> {
         session_identifier,
         message_id,
         connection_handle: ConnectionHandle { card_application },
+    })
+}
+
+pub fn parse_transmit_response(xml: &str) -> Result<PaosRequest, String> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut buf = Vec::new();
+
+    let mut message_id = None;
+    let mut relates_to = None;
+    let mut result_major = String::new();
+    let mut output_apdu = Vec::new();
+    let mut current_output_apdu = String::new();
+    let mut in_transmit_response = false;
+    let mut in_result = false;
+    let mut in_output_apdu = false;
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => match e.name().as_ref() {
+                b"TransmitResponse" | b"ns4:TransmitResponse" => in_transmit_response = true,
+                b"MessageID" if in_transmit_response => {
+                    message_id = Some(
+                        reader
+                            .read_text(e.name())
+                            .map_err(|e| format!("Failed to read MessageID: {e}"))?
+                            .to_string(),
+                    );
+                }
+                b"RelatesTo" | b"wsa:RelatesTo" => {
+                    relates_to = Some(
+                        reader
+                            .read_text(e.name())
+                            .map_err(|e| format!("Failed to read RelatesTo: {e}"))?
+                            .to_string(),
+                    );
+                }
+                b"Result" | b"ns2:Result" if in_transmit_response => in_result = true,
+                b"ResultMajor" | b"ns2:ResultMajor" if in_result => {
+                    result_major = reader
+                        .read_text(e.name())
+                        .map_err(|e| format!("Failed to read ResultMajor: {e}"))?
+                        .to_string();
+                }
+                b"OutputAPDU" | b"ns4:OutputAPDU" if in_transmit_response => {
+                    in_output_apdu = true;
+                    current_output_apdu.clear();
+                }
+                _ => {}
+            },
+            Ok(Event::Text(e)) if in_output_apdu => {
+                current_output_apdu.push_str(
+                    &e.unescape()
+                        .map_err(|e| format!("Failed to unescape text: {e}"))?,
+                );
+            }
+            Ok(Event::End(e)) => match e.name().as_ref() {
+                b"OutputAPDU" | b"ns4:OutputAPDU" => {
+                    in_output_apdu = false;
+                    if !current_output_apdu.is_empty() {
+                        output_apdu.push(current_output_apdu.clone());
+                        current_output_apdu.clear();
+                    }
+                }
+                b"Result" | b"ns2:Result" => in_result = false,
+                b"TransmitResponse" | b"ns4:TransmitResponse" => in_transmit_response = false,
+                _ => {}
+            },
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(format!("XML parsing error: {e}")),
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    if message_id.is_none() || relates_to.is_none() || result_major.is_empty() {
+        return Err("Missing required fields in TransmitResponse".to_string());
+    }
+
+    Ok(PaosRequest::TransmitResponse {
+        message_id,
+        relates_to,
+        output_apdu,
+        result_major,
     })
 }
 
@@ -188,9 +279,7 @@ pub fn parse_did_authenticate_response(xml: &str) -> Result<PaosRequest, String>
                 {
                     in_auth_protocol = true;
                 }
-                b"CertificateHolderAuthorizationTemplate"
-                    if in_auth_protocol =>
-                {
+                b"CertificateHolderAuthorizationTemplate" if in_auth_protocol => {
                     phase = EACPhase::EAC1;
                     chat = reader
                         .read_text(e.name())
@@ -199,9 +288,7 @@ pub fn parse_did_authenticate_response(xml: &str) -> Result<PaosRequest, String>
                         })?
                         .to_string();
                 }
-                b"CertificationAuthorityReference"
-                    if in_auth_protocol =>
-                {
+                b"CertificationAuthorityReference" if in_auth_protocol => {
                     phase = EACPhase::EAC1;
                     car = reader
                         .read_text(e.name())
@@ -327,24 +414,27 @@ where
     debug!("Received PAOS request: {}", body);
 
     // Try parsing as StartPAOS first
-    let paos_request = match parse_start_paos(&body) {
-        Ok(request) => request,
-        Err(start_err) => {
+    // Try parsing the request in order of most specific to least specific
+    let paos_request = match parse_start_paos(&body)
+        .or_else(|start_err| {
             debug!("Failed to parse as StartPAOS: {}", start_err);
-            // Try parsing as DIDAuthenticateResponse
-            match parse_did_authenticate_response(&body) {
-                Ok(request) => request,
-                Err(did_err) => {
+            parse_did_authenticate_response(&body).map_err(|did_err| {
+                debug!("Failed to parse as DIDAuthenticateResponse: {}", did_err);
+                parse_transmit_response(&body).map_err(|transmit_err| {
                     error!(
-                        "Failed to parse PAOS request: StartPAOS error: {}, DIDAuthenticateResponse error: {}. Raw request: {}",
-                        start_err, did_err, body
+                        "Failed to parse PAOS request: StartPAOS error: {}, DIDAuthenticateResponse error: {}, TransmitResponse error: {}",
+                        start_err, did_err, transmit_err
                     );
-                    return Err((
-                        StatusCode::BAD_REQUEST,
-                        format!("Failed to parse PAOS request: {did_err}"),
-                    ));
-                }
-            }
+                    transmit_err
+                })
+            })
+        }) {
+        Ok(request) => request,
+        Err(e) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("Failed to parse PAOS request: {e:?}"),
+            ))
         }
     };
 
@@ -838,102 +928,122 @@ where
                                 </ns4:Transmit>
                             </SOAP-ENV:Body>
                         </SOAP-ENV:Envelope>"#,
-                        message_id,
-                        Uuid::new_v4()
+                        message_id, new_message_id,
                     );
 
                     // Process the transmit request through the integrated channel
-                    match state.transmit_channel.handle_request(transmit_request.as_bytes()).await {
-                        Ok(transmit_response_bytes) => {
-                            let transmit_response = String::from_utf8_lossy(&transmit_response_bytes);
-                            debug!("Transmit processing completed successfully within PAOS workflow");
+                    // match state
+                    //     .transmit_channel
+                    //     .handle_request(transmit_request.as_bytes())
+                    //     .await
+                    // {
+                    //     Ok(transmit_response_bytes) => {
+                    //         let transmit_response =
+                    //             String::from_utf8_lossy(&transmit_response_bytes);
+                    //         debug!(
+                    //             "Transmit processing completed successfully within PAOS workflow"
+                    //         );
 
-                            // Return the transmit response as part of the PAOS workflow
-                            Ok((
-                                StatusCode::OK,
-                                [
-                                    ("Content-Type", "application/xml"),
-                                    ("PAOS-Version", "urn:liberty:paos:2006-08"),
-                                ],
-                                transmit_response.to_string(),
-                            ))
-                        }
-                        Err(e) => {
-                            error!("Error in integrated transmit functionality: {}", e);
+                    //         // Return the transmit response as part of the PAOS workflow
+                    //         Ok((
+                    //             StatusCode::OK,
+                    //             [
+                    //                 ("Content-Type", "application/xml"),
+                    //                 ("PAOS-Version", "urn:liberty:paos:2006-08"),
+                    //             ],
+                    //             transmit_response.to_string(),
+                    //         ))
+                    //     }
+                    //     Err(e) => {
+                    //         error!("Error in integrated transmit functionality: {}", e);
 
-                            // Return error response in PAOS format
-                            let error_response = format!(
-                                r#"<?xml version="1.0" encoding="UTF-8"?>
-                                <SOAP-ENV:Envelope
-                                    xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
-                                    xmlns:ns2="urn:oasis:names:tc:dss:1.0:core:schema"
-                                    xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
-                                    <SOAP-ENV:Header>
-                                        <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
-                                        <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
-                                    </SOAP-ENV:Header>
-                                    <SOAP-ENV:Body>
-                                        <ns4:StartPAOSResponse>
-                                            <ns2:Result>
-                                                <ns2:ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ns2:ResultMajor>
-                                                <ns2:ResultMessage>Transmit error: {}</ns2:ResultMessage>
-                                            </ns2:Result>
-                                        </ns4:StartPAOSResponse>
-                                    </SOAP-ENV:Body>
-                                </SOAP-ENV:Envelope>"#,
-                                message_id,
-                                Uuid::new_v4(),
-                                e
-                            );
+                    //         // Return error response in PAOS format
+                    //         let error_response = format!(
+                    //             r#"<?xml version="1.0" encoding="UTF-8"?>
+                    //             <SOAP-ENV:Envelope
+                    //                 xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
+                    //                 xmlns:ns2="urn:oasis:names:tc:dss:1.0:core:schema"
+                    //                 xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
+                    //                 <SOAP-ENV:Header>
+                    //                     <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
+                    //                     <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
+                    //                 </SOAP-ENV:Header>
+                    //                 <SOAP-ENV:Body>
+                    //                     <ns4:StartPAOSResponse>
+                    //                         <ns2:Result>
+                    //                             <ns2:ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ns2:ResultMajor>
+                    //                             <ns2:ResultMessage>Transmit error: {}</ns2:ResultMessage>
+                    //                         </ns2:Result>
+                    //                     </ns4:StartPAOSResponse>
+                    //                 </SOAP-ENV:Body>
+                    //             </SOAP-ENV:Envelope>"#,
+                    //             message_id,
+                    //             Uuid::new_v4(),
+                    //             e
+                    //         );
 
-                            let paos_response = format!(
-                                r#"<?xml version="1.0" encoding="UTF-8"?>
-                        <SOAP-ENV:Envelope
-                            xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
-                            xmlns:ns2="urn:oasis:names:tc:dss:1.0:core:schema"
-                            xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
-                            <SOAP-ENV:Header>
-                                <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
-                                <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
-                            </SOAP-ENV:Header>
-                            <SOAP-ENV:Body>
-                                <ns4:StartPAOSResponse>
-                                    <ns2:Result>
-                                        <ns2:ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ns2:ResultMajor>
-                                        <ns2:ResultMessage>Authentication successful</ns2:ResultMessage>
-                                    </ns2:Result>
-                                </ns4:StartPAOSResponse>
-                            </SOAP-ENV:Body>
-                        </SOAP-ENV:Envelope>"#,
-                                message_id,
-                                Uuid::new_v4()
-                            );
-
-                            debug!("Generated final StartPAOSResponse: {}", paos_response);
-
-                            Ok((
-                                StatusCode::OK,
-                                [
-                                    ("Content-Type", "application/xml"),
-                                    ("PAOS-Version", "urn:liberty:paos:2006-08"),
-                                ],
-                                paos_response,
-                            ))
-                        }
-                    }
+                    Ok((
+                        StatusCode::OK,
+                        [
+                            ("Content-Type", "application/xml"),
+                            ("PAOS-Version", "urn:liberty:paos:2006-08"),
+                        ],
+                        transmit_request,
+                    ))
                 }
             }
+        }
+        PaosRequest::TransmitResponse {
+            message_id,
+            relates_to,
+            output_apdu,
+            result_major,
+        } => {
+            debug!("Received TransmitResponse {output_apdu:?}");
+            let paos_response = format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+        <SOAP-ENV:Envelope
+            xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
+            xmlns:ns2="urn:oasis:names:tc:dss:1.0:core:schema"
+            xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
+            <SOAP-ENV:Header>
+                <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
+                <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
+            </SOAP-ENV:Header>
+            <SOAP-ENV:Body>
+                <ns4:StartPAOSResponse>
+                    <ns2:Result>
+                        <ns2:ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ns2:ResultMajor>
+                        <ns2:ResultMessage>Authentication successful</ns2:ResultMessage>
+                    </ns2:Result>
+                </ns4:StartPAOSResponse>
+            </SOAP-ENV:Body>
+        </SOAP-ENV:Envelope>"#,
+                relates_to.unwrap_or_default(),
+                Uuid::new_v4()
+            );
+
+            debug!("Generated final StartPAOSResponse: {}", paos_response);
+
+            Ok((
+                StatusCode::OK,
+                [
+                    ("Content-Type", "application/xml"),
+                    ("PAOS-Version", "urn:liberty:paos:2006-08"),
+                ],
+                paos_response,
+            ))
         }
     }
 }
 
 #[cfg(test)]
-    mod tests {
-        use super::*;
-        use crate::domain::eid::{
-            service::{EIDServiceConfig, SessionInfo, UseidService},
-            session_manager::InMemorySessionManager,
-        };
+mod tests {
+    use super::*;
+    use crate::domain::eid::{
+        service::{EIDServiceConfig, SessionInfo, UseidService},
+        session_manager::InMemorySessionManager,
+    };
     use axum::{
         Router,
         body::Body,
@@ -981,10 +1091,10 @@ where
         let use_id_service_arc = Arc::new(use_id_service);
 
         // Create a mock transmit channel for testing
+        use crate::config::TransmitConfig;
         use crate::domain::eid::transmit::{
             channel::TransmitChannel, protocol::ProtocolHandler, test_service::TestTransmitService,
         };
-        use crate::config::TransmitConfig;
         use crate::server::session::SessionManager as ServerSessionManager;
         use std::time::Duration;
 
@@ -992,10 +1102,15 @@ where
         let session_manager = ServerSessionManager::new(Duration::from_secs(300));
         let transmit_service = Arc::new(TestTransmitService);
         let transmit_config = TransmitConfig::default();
-        
+
         let transmit_channel = Arc::new(
-            TransmitChannel::new(protocol_handler, session_manager, transmit_service, transmit_config)
-                .expect("Failed to create test transmit channel")
+            TransmitChannel::new(
+                protocol_handler,
+                session_manager,
+                transmit_service,
+                transmit_config,
+            )
+            .expect("Failed to create test transmit channel"),
         );
 
         AppState {
