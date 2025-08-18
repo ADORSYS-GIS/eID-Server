@@ -10,7 +10,14 @@ use crate::{
 };
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use base64::Engine;
-use openssl::{ecdsa::EcdsaSig, hash::MessageDigest, pkey::PKey, sign::Signer};
+use openssl::{
+    bn::BigNumContext,
+    ec::{EcPoint, PointConversionForm},
+    ecdsa::EcdsaSig,
+    hash::MessageDigest,
+    pkey::PKey,
+    sign::Signer,
+};
 use quick_xml::{Reader, events::Event};
 use tracing::{debug, error, warn};
 use uuid::Uuid;
@@ -675,9 +682,7 @@ where
                         .await
                         .unwrap();
 
-                    let dv_cert_hex = certs[certs.len() - 2].clone();
-
-                    let (_, public_key_bytes) = temp_service
+                    let (term_priv_key, public_key_bytes) = temp_service
                         .crypto_provider
                         .generate_keypair()
                         .await
@@ -688,6 +693,15 @@ where
                                 "Failed to generate keypair".to_string(),
                             )
                         })?;
+                    let group = term_priv_key.group();
+                    let mut ctx = BigNumContext::new().unwrap();
+                    let point = EcPoint::from_bytes(group, &public_key_bytes, &mut ctx).unwrap();
+                    let mut compressed = point
+                        .to_bytes(group, PointConversionForm::COMPRESSED, &mut ctx)
+                        .unwrap();
+                    if compressed.len() == 33 {
+                        compressed = compressed[1..].to_vec();
+                    }
 
                     let public_key_hex = hex::encode(&public_key_bytes);
 
@@ -695,7 +709,7 @@ where
                     let mut signer = Signer::new(MessageDigest::sha256(), &pkey).unwrap();
                     let challenge_bytes = hex::decode(eac1_output.challenge).unwrap();
                     signed_data.extend_from_slice(&challenge_bytes);
-                    signed_data.extend_from_slice(&public_key_bytes);
+                    signed_data.extend_from_slice(&compressed);
 
                     signer.update(&signed_data).unwrap();
 
@@ -730,8 +744,8 @@ where
                                 </ns4:DIDAuthenticate>
                             </SOAP-ENV:Body>
                         </SOAP-ENV:Envelope>"#,
-                        Uuid::new_v4(),
                         message_id,
+                        Uuid::new_v4(),
                         "e80704007f00070302",
                         // session_info
                         //     .connection_handles
@@ -789,23 +803,13 @@ where
                                 )
                             })?;
 
-                        let _challenge_bytes =
-                            hex::decode(session_info.eac1_challenge.as_deref().unwrap_or_default())
-                                .map_err(|err| {
-                                    error!("Failed to decode EAC1 challenge: {}", err);
-                                    (
-                                        StatusCode::BAD_REQUEST,
-                                        "Invalid EAC1 challenge format".to_string(),
-                                    )
-                                })?;
-
-                        if auth_token_bytes.len() < 32 {
-                            error!("Authentication token too short");
-                            return Err((
+                        let nonce_bytes = hex::decode(&nonce).map_err(|err| {
+                            error!("Failed to decode nonce: {err}");
+                            (
                                 StatusCode::BAD_REQUEST,
-                                "Invalid authentication token".to_string(),
-                            ));
-                        }
+                                "Invalid nonce format".to_string(),
+                            )
+                        })?;
                     } else {
                         error!("Unexpected EAC2 output type B");
                         return Err((
