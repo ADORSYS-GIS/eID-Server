@@ -187,26 +187,11 @@ pub fn parse_did_authenticate_response(xml: &str) -> Result<PaosRequest, String>
                     if in_did_authenticate =>
                 {
                     in_auth_protocol = true;
-                    for attr in e.attributes() {
-                        let attr = attr.map_err(|e| format!("Failed to read attribute: {e}"))?;
-                        if attr.key.as_ref() == b"Protocol" {
-                            let protocol = attr
-                                .unescape_value()
-                                .map_err(|e| format!("Failed to decode Protocol: {e}"))?
-                                .to_string();
-                            phase = if protocol == "urn:oid:1.3.162.15480.3.0.14.2" {
-                                EACPhase::EAC1
-                            } else if protocol == "urn:oid:1.3.162.15480.3.0.14.3" {
-                                EACPhase::EAC2
-                            } else {
-                                return Err(format!("Unknown protocol: {protocol}"));
-                            };
-                        }
-                    }
                 }
                 b"CertificateHolderAuthorizationTemplate"
-                    if in_auth_protocol && phase == EACPhase::EAC1 =>
+                    if in_auth_protocol =>
                 {
+                    phase = EACPhase::EAC1;
                     chat = reader
                         .read_text(e.name())
                         .map_err(|e| {
@@ -215,8 +200,9 @@ pub fn parse_did_authenticate_response(xml: &str) -> Result<PaosRequest, String>
                         .to_string();
                 }
                 b"CertificationAuthorityReference"
-                    if in_auth_protocol && phase == EACPhase::EAC1 =>
+                    if in_auth_protocol =>
                 {
+                    phase = EACPhase::EAC1;
                     car = reader
                         .read_text(e.name())
                         .map_err(|e| {
@@ -224,37 +210,43 @@ pub fn parse_did_authenticate_response(xml: &str) -> Result<PaosRequest, String>
                         })?
                         .to_string();
                 }
-                b"EFCardAccess" if in_auth_protocol && phase == EACPhase::EAC1 => {
+                b"EFCardAccess" if in_auth_protocol => {
+                    phase = EACPhase::EAC1;
                     ef_card_access = reader
                         .read_text(e.name())
                         .map_err(|e| format!("Failed to read EFCardAccess: {e}"))?
                         .to_string();
                 }
-                b"IDPICC" if in_auth_protocol && phase == EACPhase::EAC1 => {
+                b"IDPICC" if in_auth_protocol => {
+                    phase = EACPhase::EAC1;
                     id_picc = reader
                         .read_text(e.name())
                         .map_err(|e| format!("Failed to read IDPICC: {e}"))?
                         .to_string();
                 }
-                b"Challenge" if in_auth_protocol && phase == EACPhase::EAC1 => {
+                b"Challenge" if in_auth_protocol => {
+                    phase = EACPhase::EAC1;
                     challenge = reader
                         .read_text(e.name())
                         .map_err(|e| format!("Failed to read Challenge: {e}"))?
                         .to_string();
                 }
-                b"EFCardSecurity" if in_auth_protocol && phase == EACPhase::EAC2 => {
+                b"EFCardSecurity" if in_auth_protocol => {
+                    phase = EACPhase::EAC2;
                     ef_card_security = reader
                         .read_text(e.name())
                         .map_err(|e| format!("Failed to read EFCardSecurity: {e}"))?
                         .to_string();
                 }
-                b"AuthenticationToken" if in_auth_protocol && phase == EACPhase::EAC2 => {
+                b"AuthenticationToken" if in_auth_protocol => {
+                    phase = EACPhase::EAC2;
                     authentication_token = reader
                         .read_text(e.name())
                         .map_err(|e| format!("Failed to read AuthenticationToken: {e}"))?
                         .to_string();
                 }
-                b"Nonce" if in_auth_protocol && phase == EACPhase::EAC2 => {
+                b"Nonce" if in_auth_protocol => {
+                    phase = EACPhase::EAC2;
                     nonce = reader
                         .read_text(e.name())
                         .map_err(|e| format!("Failed to read Nonce: {e}"))?
@@ -598,36 +590,33 @@ where
                 ));
             }
 
+            let new_message_id = relates_to.ok_or_else(|| {
+                error!("Missing RelatesTo header in DIDAuthenticateResponse");
+                (
+                    StatusCode::BAD_REQUEST,
+                    "RelatesTo header is required".to_string(),
+                )
+            })?;
+
             // Validate session
-            let mut session_info = match relates_to {
-                Some(relates_to_id) => {
-                    match state
-                        .use_id
-                        .get_session_by_server_message_id(&relates_to_id)
-                        .await
-                    {
-                        Ok(Some(info)) => info,
-                        Ok(None) => {
-                            warn!("Session not found for RelatesTo: {}", relates_to_id);
-                            return Err((
-                                StatusCode::UNAUTHORIZED,
-                                "Invalid or expired session".to_string(),
-                            ));
-                        }
-                        Err(err) => {
-                            error!("Session lookup error by RelatesTo: {}", err);
-                            return Err((
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                "Internal server error".to_string(),
-                            ));
-                        }
-                    }
-                }
-                None => {
-                    error!("Missing RelatesTo header in DIDAuthenticateResponse");
+            let mut session_info = match state
+                .use_id
+                .get_session_by_server_message_id(&new_message_id)
+                .await
+            {
+                Ok(Some(info)) => info,
+                Ok(None) => {
+                    warn!("Session not found for RelatesTo: {new_message_id}");
                     return Err((
-                        StatusCode::BAD_REQUEST,
-                        "RelatesTo header is required".to_string(),
+                        StatusCode::UNAUTHORIZED,
+                        "Invalid or expired session".to_string(),
+                    ));
+                }
+                Err(err) => {
+                    error!("Session lookup error by RelatesTo: {}", err);
+                    return Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Internal server error".to_string(),
                     ));
                 }
             };
@@ -728,7 +717,7 @@ where
                         <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
                             <SOAP-ENV:Header>
                                 <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
-                                <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
+                                <MessageID xmlns="http://www.w3.org/2005/03/addressing">{}</MessageID>
                             </SOAP-ENV:Header>
                             <SOAP-ENV:Body>
                                 <ns4:DIDAuthenticate>
@@ -745,7 +734,7 @@ where
                             </SOAP-ENV:Body>
                         </SOAP-ENV:Envelope>"#,
                         message_id,
-                        Uuid::new_v4(),
+                        new_message_id,
                         "e80704007f00070302",
                         // session_info
                         //     .connection_handles
@@ -805,10 +794,7 @@ where
 
                         let nonce_bytes = hex::decode(&nonce).map_err(|err| {
                             error!("Failed to decode nonce: {err}");
-                            (
-                                StatusCode::BAD_REQUEST,
-                                "Invalid nonce format".to_string(),
-                            )
+                            (StatusCode::BAD_REQUEST, "Invalid nonce format".to_string())
                         })?;
                     } else {
                         error!("Unexpected EAC2 output type B");
@@ -845,7 +831,6 @@ where
                                 <ns4:StartPAOSResponse>
                                     <ns2:Result>
                                         <ns2:ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ns2:ResultMajor>
-                                        <ns2:ResultMinor>http://www.bsi.bund.de/ecard/api/1.1/resultminor/al/common#success</ns2:ResultMinor>
                                         <ns2:ResultMessage>Authentication successful</ns2:ResultMessage>
                                     </ns2:Result>
                                 </ns4:StartPAOSResponse>
