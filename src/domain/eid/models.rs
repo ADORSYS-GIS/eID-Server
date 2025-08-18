@@ -298,8 +298,8 @@ pub struct ResponseProtocolData {
 
 impl ResponseProtocolData {
     pub fn new_eac1(
-        certificate_holder_authorization_template: String,
-        certification_authority_reference: String,
+        certificate_holder_authorization_template: Option<String>,
+        certification_authority_reference: Option<Vec<String>>,
         ef_card_access: String,
         id_picc: String,
         challenge: String,
@@ -414,8 +414,8 @@ pub struct EAC1InputType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EAC1OutputType {
-    pub certificate_holder_authorization_template: String,
-    pub certification_authority_reference: String,
+    pub certificate_holder_authorization_template: Option<String>,
+    pub certification_authority_reference: Option<Vec<String>>,
     pub ef_card_access: String,
     pub id_picc: String,
     pub challenge: String,

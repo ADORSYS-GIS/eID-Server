@@ -10,6 +10,7 @@ use crate::{
 };
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use base64::Engine;
+use openssl::{ecdsa::EcdsaSig, hash::MessageDigest, pkey::PKey, sign::Signer};
 use quick_xml::{Reader, events::Event};
 use tracing::{debug, error, warn};
 use uuid::Uuid;
@@ -26,8 +27,8 @@ pub enum PaosRequest {
     },
 
     DIDAuthenticateResponse {
-        session_identifier: Option<String>,
         message_id: Option<String>,
+        relates_to: Option<String>,
         phase: EACPhase,
         eac1_output: Box<Option<EAC1OutputType>>,
         eac2_output: Option<EAC2OutputType>,
@@ -112,8 +113,8 @@ pub fn parse_did_authenticate_response(xml: &str) -> Result<PaosRequest, String>
     reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
 
-    let mut session_identifier = None;
     let mut message_id = None;
+    let mut relates_to = None;
     let mut result_major = String::new();
     let mut result_minor = None;
     let mut result_message = None;
@@ -136,19 +137,19 @@ pub fn parse_did_authenticate_response(xml: &str) -> Result<PaosRequest, String>
                 b"DIDAuthenticateResponse" | b"ns4:DIDAuthenticateResponse" => {
                     in_did_authenticate = true;
                 }
-                b"SessionIdentifier" | b"ns4:SessionIdentifier" if in_did_authenticate => {
-                    session_identifier = Some(
-                        reader
-                            .read_text(e.name())
-                            .map_err(|e| format!("Failed to read SessionIdentifier: {e}"))?
-                            .to_string(),
-                    );
-                }
                 b"MessageID" if in_did_authenticate => {
                     message_id = Some(
                         reader
                             .read_text(e.name())
                             .map_err(|e| format!("Failed to read MessageID: {e}"))?
+                            .to_string(),
+                    );
+                }
+                b"RelatesTo" | b"wsa:RelatesTo" => {
+                    relates_to = Some(
+                        reader
+                            .read_text(e.name())
+                            .map_err(|e| format!("Failed to read RelatesTo: {e}"))?
                             .to_string(),
                     );
                 }
@@ -276,17 +277,12 @@ pub fn parse_did_authenticate_response(xml: &str) -> Result<PaosRequest, String>
     }
 
     let eac1_output = if phase == EACPhase::EAC1 {
-        if chat.is_empty()
-            || car.is_empty()
-            || ef_card_access.is_empty()
-            || id_picc.is_empty()
-            || challenge.is_empty()
-        {
+        if ef_card_access.is_empty() || id_picc.is_empty() || challenge.is_empty() {
             None
         } else {
             Some(EAC1OutputType {
-                certificate_holder_authorization_template: chat,
-                certification_authority_reference: car,
+                certificate_holder_authorization_template: Some(chat),
+                certification_authority_reference: Some(vec![car]),
                 ef_card_access,
                 id_picc,
                 challenge,
@@ -311,8 +307,8 @@ pub fn parse_did_authenticate_response(xml: &str) -> Result<PaosRequest, String>
     };
 
     Ok(PaosRequest::DIDAuthenticateResponse {
-        session_identifier,
         message_id,
+        relates_to,
         phase,
         eac1_output: Box::new(eac1_output),
         eac2_output,
@@ -383,7 +379,7 @@ where
                 session_identifier, message_id
             );
 
-            let session_info = match state.use_id.get_session(&session_identifier).await {
+            let mut session_info = match state.use_id.get_session(&session_identifier).await {
                 Ok(Some(info)) => info,
                 Ok(None) => {
                     warn!("Invalid session identifier: {}", session_identifier);
@@ -477,12 +473,28 @@ where
                 .collect::<Vec<String>>()
                 .join("");
 
+            let server_outgoing_message_id = Uuid::new_v4().urn().to_string();
+
+            // Update session_info with the server's outgoing message ID
+            session_info.server_message_id = Some(server_outgoing_message_id.clone());
+            state
+                .use_id
+                .store_session(session_info)
+                .await
+                .map_err(|err| {
+                    error!("Failed to update session with server_message_id: {}", err);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Failed to update session".to_string(),
+                    )
+                })?;
+
             let paos_response = format!(
                 r#"<?xml version="1.0" encoding="UTF-8"?>
                 <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
                     <SOAP-ENV:Header>
                         <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
-                        <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
+                        <MessageID xmlns="http://www.w3.org/2005/03/addressing">{}</MessageID>
                     </SOAP-ENV:Header>
                     <SOAP-ENV:Body>
                         <ns4:DIDAuthenticate>
@@ -496,14 +508,13 @@ where
                                 <ns4:CertificateDescription>{}</ns4:CertificateDescription>
                                 <ns4:RequiredCHAT>{}</ns4:RequiredCHAT>
                                 <ns4:OptionalCHAT>{}</ns4:OptionalCHAT>
-                                <ns4:AuthenticatedAuxiliaryData>67177315060904007f00070301040253083230323530373330</ns4:AuthenticatedAuxiliaryData>
                                 <ns4:AcceptedEIDType>CardCertified</ns4:AcceptedEIDType>
                             </ns4:AuthenticationProtocolData>
                         </ns4:DIDAuthenticate>
                     </SOAP-ENV:Body>
                 </SOAP-ENV:Envelope>"#,
                 message_id,
-                Uuid::new_v4(),
+                server_outgoing_message_id,
                 connection_handle.card_application,
                 certificates_xml,
                 certificate_description,
@@ -523,8 +534,8 @@ where
             ))
         }
         PaosRequest::DIDAuthenticateResponse {
-            session_identifier,
             message_id,
+            relates_to,
             phase,
             eac1_output,
             eac2_output,
@@ -580,44 +591,44 @@ where
                 ));
             }
 
-            // Validate session identifier is present and not empty
-            let session_id = session_identifier.ok_or_else(|| {
-                error!("Missing session identifier in DIDAuthenticateResponse");
-                (
-                    StatusCode::BAD_REQUEST,
-                    "Session identifier is required".to_string(),
-                )
-            })?;
-
-            if session_id.is_empty() {
-                error!("Session identifier is empty in DIDAuthenticateResponse");
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    "Session identifier is required".to_string(),
-                ));
-            }
-
             // Validate session
-            let mut session_info = match state.use_id.get_session(&session_id).await {
-                Ok(Some(info)) => info,
-                Ok(None) => {
-                    warn!("Invalid session identifier: {}", session_id);
-                    return Err((
-                        StatusCode::UNAUTHORIZED,
-                        "Invalid session identifier".to_string(),
-                    ));
+            let mut session_info = match relates_to {
+                Some(relates_to_id) => {
+                    match state
+                        .use_id
+                        .get_session_by_server_message_id(&relates_to_id)
+                        .await
+                    {
+                        Ok(Some(info)) => info,
+                        Ok(None) => {
+                            warn!("Session not found for RelatesTo: {}", relates_to_id);
+                            return Err((
+                                StatusCode::UNAUTHORIZED,
+                                "Invalid or expired session".to_string(),
+                            ));
+                        }
+                        Err(err) => {
+                            error!("Session lookup error by RelatesTo: {}", err);
+                            return Err((
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "Internal server error".to_string(),
+                            ));
+                        }
+                    }
                 }
-                Err(err) => {
-                    error!("Session validation error: {}", err);
+                None => {
+                    error!("Missing RelatesTo header in DIDAuthenticateResponse");
                     return Err((
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "Internal server error".to_string(),
+                        StatusCode::BAD_REQUEST,
+                        "RelatesTo header is required".to_string(),
                     ));
                 }
             };
 
             let temp_service =
                 DIDAuthenticateService::new_with_defaults(state.use_id.clone()).await;
+
+            let mut signed_data = Vec::new();
 
             match phase {
                 EACPhase::EAC1 => {
@@ -630,6 +641,9 @@ where
                             "Missing or incomplete EAC1 output fields".to_string(),
                         )
                     })?;
+                    let id_picc_bytes = hex::decode(&eac1_output.id_picc).unwrap();
+
+                    signed_data.extend_from_slice(&id_picc_bytes);
 
                     let certs = temp_service
                         .certificate_store
@@ -643,33 +657,27 @@ where
                             )
                         })?;
 
-                    let term_cert = certs.last().ok_or((
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "No terminal certificate found".to_string(),
-                    ))?;
-                    let term_cert = hex::decode(term_cert).map_err(|e| {
-                        error!("Failed to decode cert: {e}");
+                    let term_cert_hex = certs[certs.len() - 1].clone();
+                    let term_cert = hex::decode(&term_cert_hex).map_err(|err| {
+                        error!("Failed to decode term certificate: {err}");
                         (
                             StatusCode::INTERNAL_SERVER_ERROR,
-                            "Failed to decode cert".to_string(),
+                            "Failed to decode term certificate".to_string(),
                         )
                     })?;
 
-                    let holder_ref = CertificateStore::extract_holder_reference(&term_cert)
-                        .unwrap_or_else(|| "UnknownHolder".to_string());
-                    let _private_key = temp_service
-                        .certificate_store
-                        .get_private_key(&holder_ref)
-                        .await
-                        .ok_or_else(|| {
-                            error!("No private key found for terminal certificate");
-                            (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                "No private key found".to_string(),
-                            )
-                        })?;
+                    let cert_holder =
+                        CertificateStore::extract_holder_reference(&term_cert).unwrap();
 
-                    let (_private_key, public_key) = temp_service
+                    let term_key = temp_service
+                        .certificate_store
+                        .get_private_key(&cert_holder)
+                        .await
+                        .unwrap();
+
+                    let dv_cert_hex = certs[certs.len() - 2].clone();
+
+                    let (_, public_key_bytes) = temp_service
                         .crypto_provider
                         .generate_keypair()
                         .await
@@ -681,23 +689,25 @@ where
                             )
                         })?;
 
-                    let public_key_b64 =
-                        base64::engine::general_purpose::STANDARD.encode(&public_key);
-                    let signature = temp_service
-                        .crypto_provider
-                        .hash_data(eac1_output.challenge.as_bytes(), "SHA256")
-                        .await
-                        .map_err(|err| {
-                            error!("Failed to sign challenge: {}", err);
-                            (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                "Failed to sign challenge".to_string(),
-                            )
-                        })?;
-                    let signature_b64 =
-                        base64::engine::general_purpose::STANDARD.encode(&signature);
+                    let public_key_hex = hex::encode(&public_key_bytes);
 
-                    let certificate_hex = hex::encode(term_cert);
+                    let pkey = PKey::from_ec_key(term_key.clone()).unwrap();
+                    let mut signer = Signer::new(MessageDigest::sha256(), &pkey).unwrap();
+                    let challenge_bytes = hex::decode(eac1_output.challenge).unwrap();
+                    signed_data.extend_from_slice(&challenge_bytes);
+                    signed_data.extend_from_slice(&public_key_bytes);
+
+                    signer.update(&signed_data).unwrap();
+
+                    let der_sig = signer.sign_to_vec().unwrap();
+
+                    let signature = EcdsaSig::from_der(&der_sig).unwrap();
+                    let r_bytes = signature.r().to_vec_padded(32).unwrap();
+                    let s_bytes = signature.s().to_vec_padded(32).unwrap();
+                    let mut raw_sig = Vec::with_capacity(64);
+                    raw_sig.extend(r_bytes);
+                    raw_sig.extend(s_bytes);
+                    let signature_hex = hex::encode(&raw_sig);
 
                     let paos_response = format!(
                         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -716,21 +726,21 @@ where
                                     <ns4:AuthenticationProtocolData Protocol="urn:oid:1.3.162.15480.3.0.14.3" xsi:type="ns4:EAC2InputType">
                                         <ns4:EphemeralPublicKey>{}</ns4:EphemeralPublicKey>
                                         <ns4:Signature>{}</ns4:Signature>
-                                        <ns4:Certificate>{}</ns4:Certificate>
                                     </ns4:AuthenticationProtocolData>
                                 </ns4:DIDAuthenticate>
                             </SOAP-ENV:Body>
                         </SOAP-ENV:Envelope>"#,
-                        message_id,
                         Uuid::new_v4(),
-                        session_info
-                            .connection_handles
-                            .first()
-                            .map(|h| h.connection_handle.clone())
-                            .unwrap_or_default(),
-                        public_key_b64,
-                        signature_b64,
-                        certificate_hex
+                        message_id,
+                        "e80704007f00070302",
+                        // session_info
+                        //     .connection_handles
+                        //     .first()
+                        //     .map(|h| h.connection_handle.clone())
+                        //     .unwrap_or_default(),
+                        public_key_hex,
+                        signature_hex,
+                        // dv_cert_hex
                     );
 
                     debug!("Generated PAOS response for EAC2: {}", paos_response);
@@ -770,9 +780,8 @@ where
                             ));
                         }
 
-                        let auth_token_bytes = base64::engine::general_purpose::STANDARD
-                            .decode(authentication_token)
-                            .map_err(|err| {
+                        let auth_token_bytes =
+                            hex::decode(authentication_token).map_err(|err| {
                                 error!("Failed to decode authentication token: {}", err);
                                 (
                                     StatusCode::BAD_REQUEST,

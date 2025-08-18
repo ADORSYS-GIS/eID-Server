@@ -27,6 +27,10 @@ where
         session_id: &str,
         connection_handles: Vec<String>,
     ) -> color_eyre::Result<()>;
+    async fn get_session_by_server_message_id(
+        &self,
+        message_id: &str,
+    ) -> color_eyre::Result<Option<SessionInfo>>;
 }
 
 #[derive(Clone, Debug)]
@@ -99,10 +103,15 @@ impl SessionManager for InMemorySessionManager {
         if hex::decode(&session.psk).is_err() {
             return Err(eyre!("Invalid PSK hex format in session"));
         }
+        let session_id = session.id.clone();
 
         let mut sessions = self.sessions.write().await;
-        let now = chrono::Utc::now();
-        sessions.retain(|s| s.expiry > now);
+        let index = sessions.iter().position(|s| s.id == session_id);
+        if let Some(idx) = index {
+            sessions.remove(idx);
+            sessions.push(session);
+            return Ok(());
+        }
         sessions.push(session);
         Ok(())
     }
@@ -150,6 +159,17 @@ impl SessionManager for InMemorySessionManager {
         } else {
             Err(eyre!("Session not found"))
         }
+    }
+
+    async fn get_session_by_server_message_id(
+        &self,
+        message_id: &str,
+    ) -> color_eyre::Result<Option<SessionInfo>> {
+        let sessions = self.sessions.read().await;
+        Ok(sessions
+            .iter()
+            .find(|s| s.server_message_id.as_deref() == Some(message_id))
+            .cloned())
     }
 }
 
@@ -236,6 +256,17 @@ impl SessionManager for RedisSessionManager {
                 eyre!("Failed to store session in Redis: {}", e)
             })?;
 
+        if let Some(server_message_id) = &session.server_message_id {
+            let map_key = format!("server_message_id_map:{}", server_message_id);
+            let _: () = conn
+                .set_ex(&map_key, &session.id, self.session_ttl_seconds as u64)
+                .await
+                .map_err(|e| {
+                    error!("Failed to store server_message_id mapping in Redis: {}", e);
+                    eyre!("Failed to store server_message_id mapping in Redis: {}", e)
+                })?;
+        }
+
         Ok(())
     }
 
@@ -317,6 +348,30 @@ impl SessionManager for RedisSessionManager {
             Ok(())
         } else {
             Err(eyre!("Session not found"))
+        }
+    }
+
+    async fn get_session_by_server_message_id(
+        &self,
+        message_id: &str,
+    ) -> color_eyre::Result<Option<SessionInfo>> {
+        let mut conn = self.get_redis_connection().await?;
+        let map_key = format!("server_message_id_map:{}", message_id);
+        let session_id: Option<String> = conn.get(&map_key).await.map_err(|e| {
+            error!(
+                "Failed to get session_id from server_message_id map in Redis: {}",
+                e
+            );
+            eyre!(
+                "Failed to get session_id from server_message_id map in Redis: {}",
+                e
+            )
+        })?;
+
+        if let Some(id) = session_id {
+            self.get_session(&id).await
+        } else {
+            Ok(None)
         }
     }
 }

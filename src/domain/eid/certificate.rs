@@ -26,6 +26,10 @@ use crate::domain::eid::models::{
     EACPhase,
 };
 use lru::LruCache;
+use openssl::bn::BigNumContext;
+use openssl::ec::{EcGroup, EcKey, PointConversionForm};
+use openssl::nid::Nid;
+use openssl::pkey::{PKey, Private, Public};
 use pkcs8::der::Decode;
 use quick_xml::{Reader, events::Event};
 use reqwest::Client;
@@ -61,7 +65,7 @@ pub struct CertificateStore {
     trusted_roots: Arc<RwLock<Vec<Vec<u8>>>>,
     #[allow(dead_code)]
     certificate_cache: Arc<RwLock<LruCache<String, Vec<u8>>>>,
-    private_keys: Arc<RwLock<HashMap<String, Vec<u8>>>>,
+    private_keys: Arc<RwLock<HashMap<String, String>>>,
     config: CertificateConfig,
 }
 
@@ -89,16 +93,23 @@ impl CertificateStore {
     pub async fn add_private_key(
         &self,
         holder_ref: String,
-        key_data: Vec<u8>,
+        key_data: String,
     ) -> Result<(), AuthError> {
         let mut keys = self.private_keys.write().await;
         keys.insert(holder_ref, key_data);
         Ok(())
     }
 
-    pub async fn get_private_key(&self, holder_ref: &str) -> Option<Vec<u8>> {
+    pub async fn get_private_key(&self, holder_ref: &str) -> Option<EcKey<Private>> {
         let keys = self.private_keys.read().await;
-        keys.get(holder_ref).cloned()
+        let key_pem = keys.get(holder_ref).cloned();
+        if let Some(key_pem) = key_pem {
+            let key = PKey::private_key_from_pem(key_pem.as_bytes()).unwrap();
+            let ec_key = key.ec_key().unwrap();
+            Some(ec_key)
+        } else {
+            None
+        }
     }
 
     pub async fn add_trusted_root(&self, certificate_der: Vec<u8>) -> Result<(), AuthError> {
@@ -150,19 +161,53 @@ impl CertificateStore {
                     "Failed to read {cert_type} certificate at {path}: {e}"
                 ))
             })?;
-
-            if cert_data.is_empty() {
-                return Err(AuthError::invalid_certificate(format!(
-                    "Empty {cert_type} certificate file at {path}"
-                )));
-            }
-
             chain.push(cert_data);
         }
+        // for (i, (path, cert_type)) in cert_paths.iter().enumerate() {
+        //     if i == 0 {
+        //         let cvca_certs = fs::read_to_string(path).map_err(|e| {
+        //             AuthError::invalid_certificate(format!(
+        //                 "Failed to read CVCA certificates at {path}: {e}"
+        //             ))
+        //         })?;
+        //         let cert_hex_list: Vec<String> = cvca_certs
+        //             .split('\n')
+        //             .map(|s| s.trim().to_string())
+        //             .collect();
+        //         for cert_hex in cert_hex_list {
+        //             let cert_data = hex::decode(&cert_hex).map_err(|e| {
+        //                 AuthError::invalid_certificate(format!(
+        //                     "Failed to decode CVCA certificate: {e}"
+        //                 ))
+        //             })?;
+        //             self.add_trusted_root(cert_data).await?;
+        //             chain.push(cert_hex);
+        //         }
+        //     } else {
+        //         let cert_data = fs::read_to_string(path).map_err(|e| {
+        //             AuthError::invalid_certificate(format!(
+        //                 "Failed to read {cert_type} certificate at {path}: {e}"
+        //             ))
+        //         })?;
+
+        //         if cert_data.is_empty() {
+        //             return Err(AuthError::invalid_certificate(format!(
+        //                 "Empty {cert_type} certificate file at {path}"
+        //             )));
+        //         }
+
+        //         chain.push(cert_data);
+        //     }
+        // }
 
         if chain.is_empty() {
             return Err(AuthError::invalid_certificate(
                 "No valid certificates found in chain",
+            ));
+        }
+        if chain.len() < 2 {
+            return Err(AuthError::invalid_certificate(
+                "Certificate chain must contain at least 2 certificates",
             ));
         }
 
@@ -1110,25 +1155,35 @@ impl CryptoProvider {
         Ok((enc_key, mac_key))
     }
 
-    pub async fn generate_keypair(&self) -> Result<(Vec<u8>, Vec<u8>), AuthError> {
+    pub async fn generate_keypair(&self) -> Result<(EcKey<Private>, Vec<u8>), AuthError> {
         debug!("Generating ECDH keypair");
 
-        let private_key = agreement::EphemeralPrivateKey::generate(&agreement::X25519, &*self.rng)
-            .map_err(|e| {
-                error!("Keypair generation failed: {:?}", e);
-                AuthError::crypto_error("ECDH keypair generation")
-            })?;
-
-        let public_key = private_key.compute_public_key().map_err(|e| {
-            error!("Public key computation failed: {:?}", e);
-            AuthError::crypto_error("Public key computation")
+        let group = EcGroup::from_curve_name(Nid::BRAINPOOL_P256R1).map_err(|e| {
+            error!("Failed to create EC group: {:?}", e);
+            AuthError::crypto_error("Failed to create EC group")
+        })?;
+        let ec_key = EcKey::generate(&group).map_err(|e| {
+            error!("Failed to generate EC key: {:?}", e);
+            AuthError::crypto_error("Failed to generate EC key")
+        })?;
+        
+        let public_key = ec_key.public_key();
+        let group = ec_key.group();
+        let mut ctx = BigNumContext::new().map_err(|e| {
+            error!("Failed to create BigNumContext: {:?}", e);
+            AuthError::crypto_error("Failed to create BigNumContext")
+        })?;
+        let public_key_bytes = public_key.to_bytes(
+            group,
+            PointConversionForm::UNCOMPRESSED,
+            &mut ctx,
+        ).map_err(|e| {
+            error!("Failed to convert public key to bytes: {:?}", e);
+            AuthError::crypto_error("Failed to convert public key to bytes")
         })?;
 
-        let private_key_placeholder = vec![0u8; 32];
-        let public_key_bytes = public_key.as_ref().to_vec();
-
         debug!("Successfully generated keypair");
-        Ok((private_key_placeholder, public_key_bytes))
+        Ok((ec_key, public_key_bytes))
     }
 
     pub async fn hash_data(&self, data: &[u8], algorithm: &str) -> Result<Vec<u8>, AuthError> {
@@ -1500,9 +1555,7 @@ impl CardCommunicator {
             )));
         }
 
-        if chat.is_empty()
-            || car.is_empty()
-            || ef_card_access.is_empty()
+        if ef_card_access.is_empty()
             || id_picc.is_empty()
             || challenge.is_empty()
         {
@@ -1513,8 +1566,8 @@ impl CardCommunicator {
 
         // Return serialized EAC1OutputType as a string (or adjust as needed)
         let output = EAC1OutputType {
-            certificate_holder_authorization_template: chat,
-            certification_authority_reference: car,
+            certificate_holder_authorization_template: Some(chat),
+            certification_authority_reference: Some(vec![car]),
             ef_card_access,
             id_picc,
             challenge,

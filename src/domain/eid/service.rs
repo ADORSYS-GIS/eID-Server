@@ -18,11 +18,11 @@ use super::ports::{
 };
 
 use super::session_manager::{InMemorySessionManager, RedisSessionManager, SessionManager};
+use crate::config::TransmitConfig;
 use crate::domain::eid::models::{
     AuthenticationProtocolData, EAC1InputType, EAC1OutputType, EAC2InputType, EAC2OutputType,
     EACPhase,
 };
-use crate::config::TransmitConfig;
 use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
 };
@@ -66,6 +66,7 @@ pub struct SessionInfo {
     pub connection_handles: Vec<ConnectionHandle>,
     pub eac_phase: EACPhase,
     pub eac1_challenge: Option<String>,
+    pub server_message_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -83,6 +84,7 @@ impl SessionInfo {
             connection_handles: Vec::new(),
             eac_phase: EACPhase::EAC1,
             eac1_challenge: None,
+            server_message_id: None,
         }
     }
 }
@@ -332,6 +334,15 @@ impl SessionManager for UseidService {
             .update_session_connection_handles(session_id, connection_handles)
             .await
     }
+
+    async fn get_session_by_server_message_id(
+        &self,
+        message_id: &str,
+    ) -> color_eyre::Result<Option<SessionInfo>> {
+        self.session_manager
+            .get_session_by_server_message_id(message_id)
+            .await
+    }
 }
 
 // Implement the EidService trait for UseidService
@@ -377,19 +388,21 @@ impl DIDAuthenticateService {
         }
 
         // Load private keys
-        let term_data =
-            fs::read(&certificate_config.term_path).expect("Failed to read terminal certificate");
+        let term_data_hex =
+            fs::read_to_string(&certificate_config.term_path).expect("Failed to read terminal certificate");
+        let term_data = hex::decode(term_data_hex).expect("Failed to decode terminal certificate");
         let holder_ref = CertificateStore::extract_holder_reference(&term_data)
             .unwrap_or_else(|| "UnknownHolder".to_string());
-        let term_key_data = fs::read(&certificate_config.term_key_path)
+        let term_key_pem = fs::read_to_string(&certificate_config.term_key_path)
             .expect("Failed to read terminal private key");
         if let Err(e) = certificate_store
-            .add_private_key(holder_ref, term_key_data)
+            .add_private_key(holder_ref, term_key_pem)
             .await
         {
             tracing::error!("Failed to add terminal private key: {:?}", e);
             panic!("Cannot proceed without terminal private key");
         }
+
 
         let ausweisapp2_endpoint = "http://127.0.0.1:24727/".to_string();
 
@@ -451,10 +464,7 @@ impl DIDAuthenticateService {
             return Err(AuthError::timeout_error("Session validation"));
         }
 
-        let certificate_hex_chain = self
-            .certificate_store
-            .load_cv_chain()
-            .await?;
+        let certificate_hex_chain = self.certificate_store.load_cv_chain().await?;
 
         match request.authentication_protocol_data.phase {
             EACPhase::EAC1 => {
@@ -493,11 +503,7 @@ impl DIDAuthenticateService {
                     })?;
 
                 // Validate EAC1 output
-                if eac1_output
-                    .certificate_holder_authorization_template
-                    .is_empty()
-                    || eac1_output.certification_authority_reference.is_empty()
-                    || eac1_output.ef_card_access.is_empty()
+                if eac1_output.ef_card_access.is_empty()
                     || eac1_output.id_picc.is_empty()
                     || eac1_output.challenge.is_empty()
                 {
@@ -584,7 +590,7 @@ impl DIDAuthenticateService {
 
                 let shared_secret = self
                     .crypto_provider
-                    .perform_ecdh(&private_key, &public_key_bytes)
+                    .perform_ecdh(&private_key.private_key_to_der().unwrap(), &public_key_bytes)
                     .await?;
                 let (_enc_key, _mac_key) = self
                     .crypto_provider
