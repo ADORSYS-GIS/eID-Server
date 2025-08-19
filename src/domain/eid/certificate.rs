@@ -12,9 +12,9 @@ use ring::{
 use serde::Serialize;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
-use x509_parser::{parse_x509_certificate, prelude::X509Certificate};
+use x509_parser::extensions::{GeneralName, ParsedExtension};
 use x509_parser::parse_x509_crl;
-use x509_parser::extensions::{ParsedExtension, GeneralName};
+use x509_parser::{parse_x509_certificate, prelude::X509Certificate};
 
 use crate::domain::eid::models::{AuthError, AuthenticationProtocolData, ConnectionHandle};
 
@@ -355,7 +355,10 @@ impl CertificateStore {
                 None => match self.fetch_and_cache_crl(&url).await {
                     Ok(bytes) => bytes,
                     Err(e) => {
-                        warn!("CRL fetch failed for {}: {:?}; falling back to allow", url, e);
+                        warn!(
+                            "CRL fetch failed for {}: {:?}; falling back to allow",
+                            url, e
+                        );
                         continue;
                     }
                 },
