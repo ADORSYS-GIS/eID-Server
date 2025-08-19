@@ -13,6 +13,8 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use x509_parser::{parse_x509_certificate, prelude::X509Certificate};
+use x509_parser::parse_x509_crl;
+use x509_parser::extensions::{ParsedExtension, GeneralName};
 
 use crate::domain::eid::models::{AuthError, AuthenticationProtocolData, ConnectionHandle};
 
@@ -21,10 +23,13 @@ use crate::domain::eid::models::{AuthError, AuthenticationProtocolData, Connecti
 pub struct CertificateStore {
     trusted_roots: Arc<RwLock<Vec<Vec<u8>>>>,
     certificate_cache: Arc<RwLock<LruCache<String, Vec<u8>>>>,
+    crl_cache: Arc<RwLock<LruCache<String, Vec<u8>>>>,
+    http_client: Client,
 }
 
 const MAX_TRUSTED_ROOTS: usize = 100;
 const MAX_CERTIFICATE_CACHE: usize = 1000;
+const MAX_CRL_CACHE: usize = 256;
 const CHALLENGE_SIZE: usize = 32;
 const SESSION_KEY_SIZE: usize = 32;
 
@@ -35,6 +40,10 @@ impl CertificateStore {
             certificate_cache: Arc::new(RwLock::new(LruCache::new(
                 std::num::NonZeroUsize::new(MAX_CERTIFICATE_CACHE).unwrap(),
             ))),
+            crl_cache: Arc::new(RwLock::new(LruCache::new(
+                std::num::NonZeroUsize::new(MAX_CRL_CACHE).unwrap(),
+            ))),
+            http_client: Client::new(),
         }
     }
 
@@ -305,6 +314,137 @@ impl CertificateStore {
             "read_address".to_string(),
             "age_verification".to_string(),
         ]
+    }
+
+    // CRL support
+    pub async fn prefetch_trusted_root_crls(&self) {
+        let roots = self.trusted_roots.read().await.clone();
+        for root_der in roots {
+            match parse_x509_certificate(&root_der) {
+                Ok((_, cert)) => {
+                    let urls = self.extract_crl_urls(&cert);
+                    for url in urls {
+                        if self.get_cached_crl(&url).await.is_some() {
+                            continue;
+                        }
+                        if let Err(e) = self.fetch_and_cache_crl(&url).await {
+                            warn!("Failed to prefetch CRL from {}: {:?}", url, e);
+                        }
+                    }
+                }
+                Err(e) => warn!("Failed to parse trusted root for CRL prefetch: {:?}", e),
+            }
+        }
+    }
+
+    pub async fn validate_against_crl(&self, certificate_der: &[u8]) -> Result<bool, AuthError> {
+        let (_, cert) = parse_x509_certificate(certificate_der).map_err(|e| {
+            AuthError::invalid_certificate(format!("Failed to parse certificate: {e}"))
+        })?;
+
+        let urls = self.extract_crl_urls(&cert);
+        if urls.is_empty() {
+            debug!("No CRL Distribution Points found; skipping CRL check");
+            return Ok(true);
+        }
+
+        for url in urls {
+            // Try cache first
+            let crl_bytes = match self.get_cached_crl(&url).await {
+                Some(bytes) => bytes,
+                None => match self.fetch_and_cache_crl(&url).await {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        warn!("CRL fetch failed for {}: {:?}; falling back to allow", url, e);
+                        continue;
+                    }
+                },
+            };
+
+            // Parse CRL
+            let crl = match parse_x509_crl(&crl_bytes) {
+                Ok((_, crl)) => crl,
+                Err(e) => {
+                    warn!("Failed to parse CRL from {}: {:?}; skipping", url, e);
+                    continue;
+                }
+            };
+
+            // Basic issuer check (best-effort)
+            if crl.tbs_cert_list.issuer.to_string() != cert.tbs_certificate.issuer.to_string() {
+                warn!(
+                    "CRL issuer does not match certificate issuer for URL {}; skipping",
+                    url
+                );
+                continue;
+            }
+
+            // Check if certificate serial is listed as revoked
+            let cert_serial = cert.tbs_certificate.raw_serial();
+            let revoked = &crl.tbs_cert_list.revoked_certificates;
+            let is_revoked = revoked
+                .iter()
+                .any(|entry| entry.user_certificate.to_bytes_be().as_slice() == cert_serial);
+            if is_revoked {
+                warn!("Certificate is revoked according to CRL at {}", url);
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    fn extract_crl_urls(&self, cert: &X509Certificate<'_>) -> Vec<String> {
+        let mut urls = Vec::new();
+        for ext in cert.extensions() {
+            if let ParsedExtension::CRLDistributionPoints(points) = ext.parsed_extension() {
+                for dp in &points.points {
+                    if let Some(name) = &dp.distribution_point {
+                        match name {
+                            x509_parser::extensions::DistributionPointName::FullName(gns) => {
+                                for gn in gns {
+                                    if let GeneralName::URI(uri) = gn {
+                                        urls.push(uri.to_string());
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        urls
+    }
+
+    async fn get_cached_crl(&self, url: &str) -> Option<Vec<u8>> {
+        self.crl_cache.read().await.peek(url).cloned()
+    }
+
+    async fn fetch_and_cache_crl(&self, url: &str) -> Result<Vec<u8>, AuthError> {
+        debug!("Fetching CRL from {}", url);
+        let response = self
+            .http_client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| AuthError::card_communication_error(format!("CRL GET failed: {e}")))?;
+        if !response.status().is_success() {
+            return Err(AuthError::card_communication_error(format!(
+                "CRL GET non-success status {}",
+                response.status()
+            )));
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| AuthError::card_communication_error(format!("CRL body read failed: {e}")))?
+            .to_vec();
+        self.crl_cache
+            .write()
+            .await
+            .put(url.to_string(), bytes.clone());
+        Ok(bytes)
     }
 }
 
