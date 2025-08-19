@@ -144,15 +144,11 @@ impl UseidService {
         if ops.place_of_residence == AttributeRequester::REQUIRED {
             required.push("PlaceOfResidence".to_string());
         }
-        if let Some(community_id) = &ops.community_id {
-            if *community_id == AttributeRequester::REQUIRED {
-                required.push("CommunityID".to_string());
-            }
+        if matches!(ops.community_id, Some(AttributeRequester::REQUIRED)) {
+            required.push("CommunityID".to_string());
         }
-        if let Some(residence_permit_id) = &ops.residence_permit_id {
-            if *residence_permit_id == AttributeRequester::REQUIRED {
-                required.push("ResidencePermitID".to_string());
-            }
+        if matches!(ops.residence_permit_id, Some(AttributeRequester::REQUIRED)) {
+            required.push("ResidencePermitID".to_string());
         }
         if ops.restricted_id == AttributeRequester::REQUIRED {
             required.push("RestrictedID".to_string());

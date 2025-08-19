@@ -402,16 +402,13 @@ impl CertificateStore {
         for ext in cert.extensions() {
             if let ParsedExtension::CRLDistributionPoints(points) = ext.parsed_extension() {
                 for dp in &points.points {
-                    if let Some(name) = &dp.distribution_point {
-                        match name {
-                            x509_parser::extensions::DistributionPointName::FullName(gns) => {
-                                for gn in gns {
-                                    if let GeneralName::URI(uri) = gn {
-                                        urls.push(uri.to_string());
-                                    }
-                                }
+                    if let Some(x509_parser::extensions::DistributionPointName::FullName(gns)) =
+                        &dp.distribution_point
+                    {
+                        for gn in gns {
+                            if let GeneralName::URI(uri) = gn {
+                                urls.push(uri.to_string());
                             }
-                            _ => {}
                         }
                     }
                 }
