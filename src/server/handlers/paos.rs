@@ -6,15 +6,19 @@ use crate::{
         service::DIDAuthenticateService,
         session_manager::SessionManager,
     },
-    server::AppState,
+    server::{
+        AppState,
+        handlers::apdu::{DataGroup, EidCommands, SecureMessaging, SharedSecretComputer},
+    },
 };
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use base64::Engine;
 use openssl::{
-    bn::BigNumContext,
-    ec::{EcPoint, PointConversionForm},
+    bn::{BigNum, BigNumContext},
+    ec::{EcGroup, EcKey, EcPoint, PointConversionForm},
     ecdsa::EcdsaSig,
     hash::MessageDigest,
+    nid::Nid,
     pkey::PKey,
     sign::Signer,
 };
@@ -139,7 +143,7 @@ pub fn parse_transmit_response(xml: &str) -> Result<PaosRequest, String> {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => match e.name().as_ref() {
                 b"TransmitResponse" | b"ns4:TransmitResponse" => in_transmit_response = true,
-                b"MessageID" if in_transmit_response => {
+                b"MessageID" | b"wsa:MessageID" => {
                     message_id = Some(
                         reader
                             .read_text(e.name())
@@ -155,7 +159,7 @@ pub fn parse_transmit_response(xml: &str) -> Result<PaosRequest, String> {
                             .to_string(),
                     );
                 }
-                b"Result" | b"ns2:Result" if in_transmit_response => in_result = true,
+                b"Result" | b"ns2:Result" => in_result = true,
                 b"ResultMajor" | b"ns2:ResultMajor" if in_result => {
                     result_major = reader
                         .read_text(e.name())
@@ -193,8 +197,17 @@ pub fn parse_transmit_response(xml: &str) -> Result<PaosRequest, String> {
         buf.clear();
     }
 
-    if message_id.is_none() || relates_to.is_none() || result_major.is_empty() {
-        return Err("Missing required fields in TransmitResponse".to_string());
+    if relates_to.is_none() {
+        return Err("Missing RelatesTo in TransmitResponse".to_string());
+    }
+    if output_apdu.is_empty() {
+        return Err("Missing OutputAPDU in TransmitResponse".to_string());
+    }
+    if result_major.is_empty() {
+        return Err("Missing ResultMajor in TransmitResponse".to_string());
+    }
+    if message_id.is_none() {
+        return Err("Missing MessageID in TransmitResponse".to_string());
     }
 
     Ok(PaosRequest::TransmitResponse {
@@ -418,7 +431,7 @@ where
     let paos_request = match parse_start_paos(&body)
         .or_else(|start_err| {
             debug!("Failed to parse as StartPAOS: {}", start_err);
-            parse_did_authenticate_response(&body).map_err(|did_err| {
+            parse_did_authenticate_response(&body).or_else(|did_err| {
                 debug!("Failed to parse as DIDAuthenticateResponse: {}", did_err);
                 parse_transmit_response(&body).map_err(|transmit_err| {
                     error!(
@@ -711,7 +724,7 @@ where
                 }
             };
 
-            let temp_service =
+            let mut temp_service =
                 DIDAuthenticateService::new_with_defaults(state.use_id.clone()).await;
 
             let mut signed_data = Vec::new();
@@ -728,6 +741,7 @@ where
                         )
                     })?;
                     let id_picc_bytes = hex::decode(&eac1_output.id_picc).unwrap();
+                    session_info.card_ephemeral_public_key = Some(id_picc_bytes.clone());
 
                     signed_data.extend_from_slice(&id_picc_bytes);
 
@@ -772,6 +786,22 @@ where
                                 "Failed to generate keypair".to_string(),
                             )
                         })?;
+
+                    session_info.ecdh_priv = Some(term_priv_key.private_key().to_vec());
+                    session_info.ecdh_pub = Some(public_key_bytes.clone());
+
+                    state
+                        .use_id
+                        .store_session(session_info.clone())
+                        .await
+                        .map_err(|err| {
+                            error!("Failed to store session: {err}");
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "Failed to store session".to_string(),
+                            )
+                        })?;
+
                     let group = term_priv_key.group();
                     let mut ctx = BigNumContext::new().unwrap();
                     let point = EcPoint::from_bytes(group, &public_key_bytes, &mut ctx).unwrap();
@@ -856,6 +886,8 @@ where
                         )
                     })?;
 
+                    let mut apdus_hex = String::new();
+
                     if let EAC2OutputType::A {
                         ef_card_security,
                         authentication_token,
@@ -873,9 +905,24 @@ where
                             ));
                         }
 
+                        let (ecdh_priv, ecdh_pub) =
+                            session_info.get_ecdh_keypair().map_err(|err| {
+                                error!("Failed to get ECDH keypair: {err}");
+                                (
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    "Failed to get ECDH keypair".to_string(),
+                                )
+                            })?;
+
+                        let group = EcGroup::from_curve_name(Nid::BRAINPOOL_P256R1).unwrap();
+                        let d = BigNum::from_slice(&ecdh_priv).unwrap();
+                        let mut ctx = BigNumContext::new().unwrap();
+                        let point = EcPoint::from_bytes(&group, &ecdh_pub, &mut ctx).unwrap();
+                        let ecdh_priv = EcKey::from_private_components(&group, &d, &point).unwrap();
+
                         let auth_token_bytes =
                             hex::decode(authentication_token).map_err(|err| {
-                                error!("Failed to decode authentication token: {}", err);
+                                error!("Failed to decode authentication token: {err}");
                                 (
                                     StatusCode::BAD_REQUEST,
                                     "Invalid authentication token format".to_string(),
@@ -886,6 +933,59 @@ where
                             error!("Failed to decode nonce: {err}");
                             (StatusCode::BAD_REQUEST, "Invalid nonce format".to_string())
                         })?;
+
+                        let card_pubkey_bytes = hex::decode("0419d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f17758d7a3aa6943ef23e5e2909b3e8b31bfaa4544c2cbf1fb487f31ff239c8f8").map_err(|err| {
+                            error!("Failed to decode card public key: {err}");
+                            (StatusCode::BAD_REQUEST, "Invalid card public key format".to_string())
+                        })?;
+
+                        let shared_secret = SharedSecretComputer::compute_shared_secret(
+                            ecdh_priv,
+                            &card_pubkey_bytes,
+                        )
+                        .map_err(|err| {
+                            error!("Failed to compute shared secret: {err}");
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "Failed to compute shared secret".to_string(),
+                            )
+                        })?;
+
+                        let session_keys =
+                            SharedSecretComputer::derive_keys(&shared_secret, &nonce_bytes)
+                                .map_err(|err| {
+                                    error!("Failed to derive session keys: {err}");
+                                    (
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        "Failed to derive session keys".to_string(),
+                                    )
+                                })?;
+                        let mut secure_msg = SecureMessaging::new(session_keys);
+                        let mut commands = Vec::new();
+
+                        let data_groups = [DataGroup::DG1];
+
+                        for dg in &data_groups {
+                            let cmds = EidCommands::read_data_group(*dg);
+                            for cmd in cmds {
+                                debug!("unsecure cmd: {}", hex::encode(cmd.to_bytes()));
+                                let secure_cmd = secure_msg.create_secure_command(&cmd).unwrap();
+                                debug!("secure cmd: {}", hex::encode(secure_cmd.to_bytes()));
+                                commands.push(secure_cmd.to_bytes());
+                            }
+                        }
+
+                        let apdus: String = commands
+                            .into_iter()
+                            .map(|cmd| format!("<ns4:InputAPDUInfo><ns4:InputAPDU>{}</ns4:InputAPDU></ns4:InputAPDUInfo>", hex::encode(cmd)))
+                            .collect::<Vec<String>>()
+                            .join("");
+                        apdus_hex = apdus;
+
+                        let auth_token = secure_msg.calculate_mac(&ecdh_pub).unwrap();
+                        if auth_token.to_vec() != auth_token_bytes {
+                            warn!("Authentication token mismatch");
+                        }
                     } else {
                         error!("Unexpected EAC2 output type B");
                         return Err((
@@ -916,19 +1016,16 @@ where
                         <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
                             <SOAP-ENV:Header>
                                 <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
-                                <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
+                                <MessageID xmlns="http://www.w3.org/2005/03/addressing">{}</MessageID>
                             </SOAP-ENV:Header>
                             <SOAP-ENV:Body>
                                 <ns4:Transmit>
                                     <ns4:SlotHandle>00</ns4:SlotHandle>
-                                    <ns4:InputAPDUInfo>
-                                        <ns4:InputAPDU>00A4040C07A0000002471001</ns4:InputAPDU>
-                                        <ns4:AcceptableStatusCode>9000</ns4:AcceptableStatusCode>
-                                    </ns4:InputAPDUInfo>
+                                    {}
                                 </ns4:Transmit>
                             </SOAP-ENV:Body>
                         </SOAP-ENV:Envelope>"#,
-                        message_id, new_message_id,
+                        message_id, new_message_id, apdus_hex
                     );
 
                     // Process the transmit request through the integrated channel
@@ -1008,7 +1105,7 @@ where
             xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
             <SOAP-ENV:Header>
                 <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
-                <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
+                <MessageID xmlns="http://www.w3.org/2005/03/addressing">{}</MessageID>
             </SOAP-ENV:Header>
             <SOAP-ENV:Body>
                 <ns4:StartPAOSResponse>

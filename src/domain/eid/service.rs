@@ -1,6 +1,8 @@
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use color_eyre::Result;
+use openssl::ec::EcKey;
+use openssl::pkey::Private;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::default::Default;
@@ -67,6 +69,9 @@ pub struct SessionInfo {
     pub eac_phase: EACPhase,
     pub eac1_challenge: Option<String>,
     pub server_message_id: Option<String>,
+    pub card_ephemeral_public_key: Option<Vec<u8>>,
+    pub ecdh_priv: Option<Vec<u8>>,
+    pub ecdh_pub: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -85,7 +90,19 @@ impl SessionInfo {
             eac_phase: EACPhase::EAC1,
             eac1_challenge: None,
             server_message_id: None,
+            card_ephemeral_public_key: None,
+            ecdh_priv: None,
+            ecdh_pub: None,
         }
+    }
+
+    pub fn get_ecdh_keypair(&self) -> Result<(Vec<u8>, Vec<u8>)> {
+        if let Some(ecdh_priv) = &self.ecdh_priv {
+            if let Some(ecdh_pub) = &self.ecdh_pub {
+                return Ok((ecdh_priv.clone(), ecdh_pub.clone()));
+            }
+        }
+        Err(color_eyre::eyre::eyre!("EC keypair not found. Generate and store it first."))
     }
 }
 

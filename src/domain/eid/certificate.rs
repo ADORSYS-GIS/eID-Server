@@ -29,7 +29,7 @@ use lru::LruCache;
 use openssl::bn::BigNumContext;
 use openssl::ec::{EcGroup, EcKey, PointConversionForm};
 use openssl::nid::Nid;
-use openssl::pkey::{PKey, Private, Public};
+use openssl::pkey::{PKey, Private};
 use pkcs8::der::Decode;
 use quick_xml::{Reader, events::Event};
 use reqwest::Client;
@@ -1155,7 +1155,7 @@ impl CryptoProvider {
         Ok((enc_key, mac_key))
     }
 
-    pub async fn generate_keypair(&self) -> Result<(EcKey<Private>, Vec<u8>), AuthError> {
+    pub async fn generate_keypair(&mut self) -> Result<(EcKey<Private>, Vec<u8>), AuthError> {
         debug!("Generating ECDH keypair");
 
         let group = EcGroup::from_curve_name(Nid::BRAINPOOL_P256R1).map_err(|e| {
@@ -1166,21 +1166,19 @@ impl CryptoProvider {
             error!("Failed to generate EC key: {:?}", e);
             AuthError::crypto_error("Failed to generate EC key")
         })?;
-        
+
         let public_key = ec_key.public_key();
         let group = ec_key.group();
         let mut ctx = BigNumContext::new().map_err(|e| {
             error!("Failed to create BigNumContext: {:?}", e);
             AuthError::crypto_error("Failed to create BigNumContext")
         })?;
-        let public_key_bytes = public_key.to_bytes(
-            group,
-            PointConversionForm::UNCOMPRESSED,
-            &mut ctx,
-        ).map_err(|e| {
-            error!("Failed to convert public key to bytes: {:?}", e);
-            AuthError::crypto_error("Failed to convert public key to bytes")
-        })?;
+        let public_key_bytes = public_key
+            .to_bytes(group, PointConversionForm::UNCOMPRESSED, &mut ctx)
+            .map_err(|e| {
+                error!("Failed to convert public key to bytes: {:?}", e);
+                AuthError::crypto_error("Failed to convert public key to bytes")
+            })?;
 
         debug!("Successfully generated keypair");
         Ok((ec_key, public_key_bytes))
@@ -1555,10 +1553,7 @@ impl CardCommunicator {
             )));
         }
 
-        if ef_card_access.is_empty()
-            || id_picc.is_empty()
-            || challenge.is_empty()
-        {
+        if ef_card_access.is_empty() || id_picc.is_empty() || challenge.is_empty() {
             return Err(AuthError::card_communication_error(
                 "Missing required EAC1 output fields in response",
             ));
