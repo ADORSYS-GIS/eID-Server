@@ -66,6 +66,7 @@ digest = "0.10"
 # ASN.1 encoding/decoding
 der = "0.7"
 x509-cert = "0.2"
+rasn = "0.27"
 
 # Utility crates
 zeroize = { version = "1.7", features = ["zeroize_derive"] }

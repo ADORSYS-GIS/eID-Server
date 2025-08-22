@@ -27,6 +27,7 @@ use sha1::Sha1;
 use sha2::Sha256;
 use std::collections::HashMap;
 use thiserror::Error;
+use tracing::info;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 type Result<T> = std::result::Result<T, ApduError>;
@@ -333,10 +334,7 @@ pub struct SecureMessaging {
 
 impl SecureMessaging {
     pub fn new(keys: SecureMessagingKeys) -> Self {
-        Self {
-            keys,
-            ssc: 0,
-        }
+        Self { keys, ssc: 0 }
     }
 
     fn iso7816_pad_vec(mut v: Vec<u8>, block: usize) -> Vec<u8> {
@@ -446,12 +444,15 @@ impl SecureMessaging {
         Ok(mac_bytes)
     }
 
+    pub fn update_ssc(&mut self) {
+        self.ssc += 1;
+    }
+
     // Create secure command APDU
     pub fn create_secure_command(&mut self, command: &CommandApdu) -> Result<CommandApdu> {
-        self.ssc += 1;
         let ssc_bytes = Self::ssc_to_be_bytes(self.ssc);
         let iv = Self::derive_encrypted_iv(&self.keys.k_enc, &ssc_bytes)?;
-        let header = [command.cla | 0x0C, command.ins, command.p1, command.p2];
+        let header = [command.cla & 0xFC | 0x0C, command.ins, command.p1, command.p2];
 
         // Encrypt command data if present
         let mut formatted_encrypted_data = Vec::new();
@@ -467,16 +468,16 @@ impl SecureMessaging {
         // Add expected length if present
         let mut secured_le = Vec::new();
         if let Some(le) = command.le {
-            if le > 0 {
-                let le_bytes = if le <= 255 {
-                    vec![le as u8]
-                } else {
-                    le.to_be_bytes().to_vec()
-                };
-                secured_le.push(0x97);
-                secured_le.push(le_bytes.len() as u8);
-                secured_le.extend_from_slice(&le_bytes);
-            }
+            let le_bytes = if le == 0 {
+                vec![0x00]
+            } else if le <= 0xFF {
+                vec![le as u8]
+            } else {
+                le.to_be_bytes().to_vec()
+            };
+            secured_le.push(0x97);
+            secured_le.push(le_bytes.len() as u8);
+            secured_le.extend_from_slice(&le_bytes);
         }
 
         let secure_header = header;
@@ -759,20 +760,14 @@ impl EidCommands {
         let p1 = ((offset >> 8) & 0xFF) as u8;
         let p2 = (offset & 0xFF) as u8;
 
-        CommandApdu::new(
-            Ins::ReadBinary,
-            p1,
-            p2,
-            Vec::new(),
-            Some(length as u32),
-        )
+        CommandApdu::new(Ins::ReadBinary, p1, p2, Vec::new(), Some(length as u32))
     }
 
     // Read data group
     pub fn read_data_group(data_group: DataGroup) -> Vec<CommandApdu> {
         vec![
             Self::select_file(data_group.fid()),
-            // Self::read_binary(0, 0),
+            Self::read_binary(0, 0),
         ]
     }
 }

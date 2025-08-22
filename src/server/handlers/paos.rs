@@ -8,11 +8,13 @@ use crate::{
     },
     server::{
         AppState,
-        handlers::apdu::{DataGroup, EidCommands, SecureMessaging, SharedSecretComputer},
+        handlers::{
+            apdu::{DataGroup, EidCommands, SecureMessaging, SharedSecretComputer},
+            token::encode_uncompressed_public_key,
+        },
     },
 };
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
-use base64::Engine;
 use openssl::{
     bn::{BigNum, BigNumContext},
     ec::{EcGroup, EcKey, EcPoint, PointConversionForm},
@@ -23,7 +25,7 @@ use openssl::{
     sign::Signer,
 };
 use quick_xml::{Reader, events::Event};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 pub const EAC_REQUIRED_CHAT: &str = "7f4c12060904007f00070301020253050000000004";
@@ -961,17 +963,58 @@ where
                                     )
                                 })?;
                         let mut secure_msg = SecureMessaging::new(session_keys);
+
+                        // Authentication Token Validation
+                        let mac_input =
+                            encode_uncompressed_public_key("ca_ecdh_aes_128", &ecdh_pub);
+                        let computed_auth_token = secure_msg.calculate_mac(&mac_input).unwrap();
+                        if computed_auth_token.to_vec() != auth_token_bytes {
+                            warn!(
+                                "Authentication token mismatch: expected {}, got {}",
+                                hex::encode(auth_token_bytes),
+                                hex::encode(computed_auth_token)
+                            );
+                        } else {
+                            info!("Authentication token matches. Proceeding with Transmit APDU...");
+                        }
+
                         let mut commands = Vec::new();
 
-                        let data_groups = [DataGroup::DG1];
+                        let data_groups = [
+                            DataGroup::DG1,
+                            DataGroup::DG2,
+                            DataGroup::DG3,
+                            DataGroup::DG4,
+                            DataGroup::DG5,
+                            DataGroup::DG6,
+                            DataGroup::DG7,
+                            DataGroup::DG8,
+                            DataGroup::DG9,
+                            DataGroup::DG10,
+                            DataGroup::DG11,
+                            DataGroup::DG12,
+                            DataGroup::DG13,
+                            DataGroup::DG14,
+                            DataGroup::DG15,
+                            DataGroup::DG16,
+                            DataGroup::DG17,
+                            DataGroup::DG18,
+                            DataGroup::DG19,
+                            DataGroup::DG20,
+                            DataGroup::DG21,
+                            DataGroup::DG22,
+                        ];
 
                         for dg in &data_groups {
                             let cmds = EidCommands::read_data_group(*dg);
                             for cmd in cmds {
-                                debug!("unsecure cmd: {}", hex::encode(cmd.to_bytes()));
+                                // advance the SSC to account for the command
+                                secure_msg.update_ssc();
                                 let secure_cmd = secure_msg.create_secure_command(&cmd).unwrap();
-                                debug!("secure cmd: {}", hex::encode(secure_cmd.to_bytes()));
                                 commands.push(secure_cmd.to_bytes());
+                                // advance the SSC again to account for the card's response
+                                // This keeps the SSC in sync for the next command in the batch.
+                                secure_msg.update_ssc();
                             }
                         }
 
@@ -981,11 +1024,6 @@ where
                             .collect::<Vec<String>>()
                             .join("");
                         apdus_hex = apdus;
-
-                        let auth_token = secure_msg.calculate_mac(&ecdh_pub).unwrap();
-                        if auth_token.to_vec() != auth_token_bytes {
-                            warn!("Authentication token mismatch");
-                        }
                     } else {
                         error!("Unexpected EAC2 output type B");
                         return Err((
@@ -1027,57 +1065,6 @@ where
                         </SOAP-ENV:Envelope>"#,
                         message_id, new_message_id, apdus_hex
                     );
-
-                    // Process the transmit request through the integrated channel
-                    // match state
-                    //     .transmit_channel
-                    //     .handle_request(transmit_request.as_bytes())
-                    //     .await
-                    // {
-                    //     Ok(transmit_response_bytes) => {
-                    //         let transmit_response =
-                    //             String::from_utf8_lossy(&transmit_response_bytes);
-                    //         debug!(
-                    //             "Transmit processing completed successfully within PAOS workflow"
-                    //         );
-
-                    //         // Return the transmit response as part of the PAOS workflow
-                    //         Ok((
-                    //             StatusCode::OK,
-                    //             [
-                    //                 ("Content-Type", "application/xml"),
-                    //                 ("PAOS-Version", "urn:liberty:paos:2006-08"),
-                    //             ],
-                    //             transmit_response.to_string(),
-                    //         ))
-                    //     }
-                    //     Err(e) => {
-                    //         error!("Error in integrated transmit functionality: {}", e);
-
-                    //         // Return error response in PAOS format
-                    //         let error_response = format!(
-                    //             r#"<?xml version="1.0" encoding="UTF-8"?>
-                    //             <SOAP-ENV:Envelope
-                    //                 xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
-                    //                 xmlns:ns2="urn:oasis:names:tc:dss:1.0:core:schema"
-                    //                 xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
-                    //                 <SOAP-ENV:Header>
-                    //                     <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">{}</RelatesTo>
-                    //                     <MessageID xmlns="http://www.w3.org/2005/03/addressing">urn:uuid:{}</MessageID>
-                    //                 </SOAP-ENV:Header>
-                    //                 <SOAP-ENV:Body>
-                    //                     <ns4:StartPAOSResponse>
-                    //                         <ns2:Result>
-                    //                             <ns2:ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error</ns2:ResultMajor>
-                    //                             <ns2:ResultMessage>Transmit error: {}</ns2:ResultMessage>
-                    //                         </ns2:Result>
-                    //                     </ns4:StartPAOSResponse>
-                    //                 </SOAP-ENV:Body>
-                    //             </SOAP-ENV:Envelope>"#,
-                    //             message_id,
-                    //             Uuid::new_v4(),
-                    //             e
-                    //         );
 
                     Ok((
                         StatusCode::OK,
