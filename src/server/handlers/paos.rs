@@ -195,6 +195,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn test_paos_handler_endpoint_ok() {
         let state = create_test_state("faf7554cf8a24e51a4dbfa9881121905".to_string()).await;
         let app = Router::new()

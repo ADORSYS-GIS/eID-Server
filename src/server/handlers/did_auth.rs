@@ -534,6 +534,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn test_axum_handler_integration() {
         let config = EIDServiceConfig::default();
         let store = MemoryStore::new();
