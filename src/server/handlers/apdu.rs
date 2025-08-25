@@ -1,28 +1,22 @@
 use aes::Aes128;
 use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
 use cmac::{Cmac, CmacCore, Mac};
-use der::{Decode, Encode, Tag};
 use digest::core_api::CoreWrapper;
 use digest::{Digest, FixedOutput};
-use elliptic_curve::{
-    CurveArithmetic, PublicKey as EcPublicKey, SecretKey as EcSecretKey,
-    ecdh::diffie_hellman,
-    sec1::{FromEncodedPoint, ToEncodedPoint},
-};
-use hmac::{Hmac, Mac as HmacMac};
+use hex_literal::hex;
 use openssl::bn::BigNumContext;
 use openssl::symm::{Crypter, Mode};
 use openssl::{
     derive::Deriver,
     ec::{EcGroup, EcKey, EcPoint, PointConversionForm},
     error::ErrorStack,
-    hash::{MessageDigest, hash},
     nid::Nid,
     pkey::{PKey, Private, Public},
     sign::Signer,
     symm::{Cipher, decrypt, encrypt},
 };
-use p256::{NistP256, PublicKey as P256PublicKey, SecretKey as P256SecretKey};
+use rasn::types::{Integer, OctetString};
+use rasn::{AsnType, Decode, Encode};
 use sha1::Sha1;
 use sha2::Sha256;
 use std::collections::HashMap;
@@ -41,9 +35,11 @@ pub enum ApduError {
     #[error("OpenSSL error: {0}")]
     OpenSsl(#[from] ErrorStack),
     #[error("ASN.1 encoding error: {0}")]
-    Asn1(#[from] der::Error),
-    #[error("Invalid secure messaging objects")]
-    InvalidSmObjects,
+    Asn1(#[from] rasn::error::EncodeError),
+    #[error("ASN.1 decoding error: {0}")]
+    Asn1Decode(#[from] rasn::error::DecodeError),
+    #[error("Invalid secure messaging objects: {0}")]
+    InvalidSmObjects(String),
     #[error("MAC verification failed")]
     MacVerificationFailed,
     #[error("Encryption/Decryption failed")]
@@ -55,6 +51,8 @@ pub enum ApduError {
 pub enum EllipticCurve {
     /// NIST P-256 (secp256r1)
     P256,
+    /// NIST P-384 (secp384r1)
+    P384,
     /// Brainpool P-256r1
     BrainpoolP256r1,
     /// Brainpool P-384r1
@@ -65,7 +63,7 @@ impl EllipticCurve {
     pub fn coordinate_size(&self) -> usize {
         match self {
             Self::P256 | Self::BrainpoolP256r1 => 32,
-            Self::BrainpoolP384r1 => 48,
+            Self::P384 | Self::BrainpoolP384r1 => 48,
         }
     }
 
@@ -84,6 +82,7 @@ impl EllipticCurve {
     pub fn to_nid(&self) -> Nid {
         match self {
             Self::P256 => Nid::X9_62_PRIME256V1,
+            Self::P384 => Nid::SECP384R1,
             Self::BrainpoolP256r1 => Nid::BRAINPOOL_P256R1,
             Self::BrainpoolP384r1 => Nid::BRAINPOOL_P384R1,
         }
@@ -138,21 +137,6 @@ impl From<u8> for Ins {
             _ => Self::Unknown,
         }
     }
-}
-
-// APDU Parameters
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum Param {
-    Implicit = 0x00,
-    Change = 0x02,
-    Unblock = 0x03,
-    ChipAuthentication = 0x41,
-    TerminalAuthentication = 0x81,
-    AuthenticationTemplate = 0xA4,
-    DigitalSignatureTemplate = 0xB6,
-    SelfDescriptive = 0xBE,
-    Pace = 0xC1,
 }
 
 // Status codes
@@ -325,6 +309,20 @@ impl SecureMessagingKeys {
     }
 }
 
+// TLV structure for secure messaging
+#[derive(Debug, Clone, Encode, Decode, AsnType)]
+#[rasn(choice)]
+pub enum Tlv {
+    #[rasn(tag(context, 7))]
+    EncryptedData(OctetString),
+    #[rasn(tag(context, 23))]
+    ExpectedLength(OctetString),
+    #[rasn(tag(context, 25))]
+    ProcessingStatus([u8; 2]),
+    #[rasn(tag(context, 14), size(8))]
+    Mac(OctetString),
+}
+
 // Secure Messaging Context
 #[derive(Debug)]
 pub struct SecureMessaging {
@@ -344,6 +342,14 @@ impl SecureMessaging {
         v
     }
 
+    fn iso7816_unpad_vec(v: &[u8]) -> Vec<u8> {
+        let mut v = v.to_vec();
+        if let Some(pad_start) = v.iter().rposition(|&b| b == 0x80) {
+            v.truncate(pad_start);
+        }
+        v
+    }
+
     fn ssc_to_be_bytes(counter: u32) -> [u8; 16] {
         let mut ssc = [0u8; 16];
         let be = counter.to_be_bytes();
@@ -351,14 +357,14 @@ impl SecureMessaging {
         ssc
     }
 
-    // AES-CBC encrypt a single-block SSC with IV = zeros to derive the "encrypted IV"
-    // This matches mCipher.setIv(zeros); mCipher.encrypt(getSendSequenceCounter());
+    // AES-CBC encrypt a single-block SSC with IV = zeros
+    // to derive the initialization vector
     fn derive_encrypted_iv(kenc: &[u8], ssc_block: &[u8; 16]) -> Result<Vec<u8>> {
         let zero_iv = vec![0u8; 16];
         Self::aes_cbc_encrypt(kenc, &zero_iv, ssc_block)
     }
 
-    /// AES-CBC encrypt data with IV
+    /// Encrypt the data using AES-CBC with the given key and IV
     fn aes_cbc_encrypt(kenc: &[u8], iv: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
         if plaintext.is_empty() {
             return Ok(Vec::new());
@@ -452,7 +458,12 @@ impl SecureMessaging {
     pub fn create_secure_command(&mut self, command: &CommandApdu) -> Result<CommandApdu> {
         let ssc_bytes = Self::ssc_to_be_bytes(self.ssc);
         let iv = Self::derive_encrypted_iv(&self.keys.k_enc, &ssc_bytes)?;
-        let header = [command.cla & 0xFC | 0x0C, command.ins, command.p1, command.p2];
+        let header = [
+            command.cla & 0xFC | 0x0C,
+            command.ins,
+            command.p1,
+            command.p2,
+        ];
 
         // Encrypt command data if present
         let mut formatted_encrypted_data = Vec::new();
@@ -460,9 +471,9 @@ impl SecureMessaging {
             let encrypted_data = self.encrypt_data(&command.data, &iv)?;
             let mut v = vec![0x01];
             v.extend_from_slice(&encrypted_data);
-            formatted_encrypted_data.push(0x87);
-            formatted_encrypted_data.push((v.len()) as u8);
-            formatted_encrypted_data.extend_from_slice(&v);
+            let encrypted_data_tlv = Tlv::EncryptedData(v.into());
+            let encoded = rasn::der::encode(&encrypted_data_tlv)?;
+            formatted_encrypted_data.extend_from_slice(&encoded);
         }
 
         // Add expected length if present
@@ -475,9 +486,9 @@ impl SecureMessaging {
             } else {
                 le.to_be_bytes().to_vec()
             };
-            secured_le.push(0x97);
-            secured_le.push(le_bytes.len() as u8);
-            secured_le.extend_from_slice(&le_bytes);
+            let le_tlv = Tlv::ExpectedLength(le_bytes.into());
+            let encoded = rasn::der::encode(&le_tlv)?;
+            secured_le.extend_from_slice(&encoded);
         }
 
         let secure_header = header;
@@ -504,9 +515,9 @@ impl SecureMessaging {
 
         let mut secure_data = formatted_encrypted_data;
         secure_data.extend_from_slice(&secured_le);
-        secure_data.push(0x8E);
-        secure_data.push(0x08);
-        secure_data.extend_from_slice(&mac);
+        let mac_tlv = Tlv::Mac(mac.into());
+        let encoded = rasn::der::encode(&mac_tlv)?;
+        secure_data.extend_from_slice(&encoded);
 
         let apdu = CommandApdu::from_components(secure_header, &*secure_data, command.le);
 
@@ -524,70 +535,130 @@ impl SecureMessaging {
     // Process secure response APDU
     pub fn process_secure_response(&mut self, response: &ResponseApdu) -> Result<ResponseApdu> {
         if response.data.is_empty() {
-            return Err(ApduError::InvalidSmObjects);
+            return Err(ApduError::InvalidSmObjects(
+                "Response data is empty".to_string(),
+            ));
         }
-
-        let mut data = response.data.as_slice();
-        let mut decrypted_data = Vec::new();
-        let mut status_bytes = None;
-        let mut received_mac = None;
-
-        self.ssc += 1;
         let ssc_bytes = Self::ssc_to_be_bytes(self.ssc);
 
-        // Parse TLV objects
-        while !data.is_empty() {
-            let tag = data[0];
-            let length = data[1];
-            let value = &data[2..2 + length as usize];
+        let data = response.data.as_slice();
+        let mut encrypted_data = Vec::new();
+        let mut encrypted_data_object_encoded = Vec::new();
+        let mut status_bytes = None;
+        let mut status_bytes_encoded = Vec::new();
+        let mut received_mac = None;
+
+        let mut offset = 0;
+        while offset < data.len() {
+            if offset + 2 > data.len() {
+                return Err(ApduError::InvalidSmObjects(
+                    "Invalid TLV object".to_string(),
+                ));
+            }
+
+            let tag = data[offset];
+            let length = data[offset + 1];
+
+            // Save the start position of this TLV object
+            let tlv_start = offset;
+
+            offset += 2;
+
+            if offset + length as usize > data.len() {
+                return Err(ApduError::InvalidSmObjects(
+                    "Invalid TLV object".to_string(),
+                ));
+            }
+
+            let value = &data[offset..offset + length as usize];
+            offset += length as usize;
+
+            // Save the entire encoded TLV object
+            let tlv_object = &data[tlv_start..offset];
 
             match tag {
                 0x87 => {
                     // Encrypted data
-                    let iv = Self::derive_encrypted_iv(&self.keys.k_enc, &ssc_bytes)?;
                     if value.is_empty() || value[0] != 0x01 {
-                        return Err(ApduError::InvalidSmObjects);
+                        return Err(ApduError::InvalidSmObjects(
+                            "Invalid encrypted data".to_string(),
+                        ));
                     }
-                    decrypted_data = self.decrypt_data(&value[1..], &iv)?;
+                    encrypted_data = value[1..].to_vec();
+                    encrypted_data_object_encoded = tlv_object.to_vec();
                 }
                 0x99 => {
                     // Processing status
                     if value.len() != 2 {
-                        return Err(ApduError::InvalidSmObjects);
+                        return Err(ApduError::InvalidSmObjects(
+                            "Invalid processing status".to_string(),
+                        ));
                     }
-                    status_bytes = Some([value[0], value[1]]);
+                    let mut status = [0u8; 2];
+                    status.copy_from_slice(value);
+                    status_bytes = Some(status);
+                    status_bytes_encoded = tlv_object.to_vec();
                 }
                 0x8E => {
                     // MAC
                     if value.len() != 8 {
-                        return Err(ApduError::InvalidSmObjects);
+                        return Err(ApduError::InvalidSmObjects("Invalid MAC".to_string()));
                     }
                     let mut mac = [0u8; 8];
                     mac.copy_from_slice(value);
                     received_mac = Some(mac);
                 }
-                _ => {
-                    // Unknown tag, skip
-                }
+                _ => return Err(ApduError::InvalidSmObjects("Unknown tag".to_string())),
             }
-
-            data = &data[2 + length as usize..];
         }
+
+        // Verify status codes match if present
+        if let Some(status) = status_bytes {
+            let secured_status_code = ((status[0] as u16) << 8) | (status[1] as u16);
+            let response_status_code = ((response.sw1 as u16) << 8) | (response.sw2 as u16);
+
+            if secured_status_code != response_status_code {
+                return Err(ApduError::InvalidSmObjects(
+                    "Status codes do not match".to_string(),
+                ));
+            }
+        }
+
+        let mut data_to_mac = Vec::new();
+        if !encrypted_data.is_empty() {
+            data_to_mac.extend_from_slice(&encrypted_data_object_encoded);
+        }
+        if !status_bytes_encoded.is_empty() {
+            data_to_mac.extend_from_slice(&status_bytes_encoded);
+        }
+
+        // Pad to cipher block size
+        data_to_mac = Self::iso7816_pad_vec(data_to_mac, 16);
+
+        // Prepend SSC to MAC input
+        let mut mac_input = Vec::new();
+        mac_input.extend_from_slice(&ssc_bytes);
+        mac_input.extend_from_slice(&data_to_mac);
 
         // Verify MAC
         if let Some(mac) = received_mac {
-            let mut mac_input = ssc_bytes.to_vec();
-            mac_input.extend_from_slice(&response.data[..response.data.len() - 10]);
-
             let calculated_mac = self.calculate_mac(&mac_input)?;
             if mac != calculated_mac {
                 return Err(ApduError::MacVerificationFailed);
             }
         } else {
-            return Err(ApduError::InvalidSmObjects);
+            return Err(ApduError::InvalidSmObjects("MAC not present".to_string()));
         }
 
-        // Use status from secure messaging or original response
+        // Decrypt data if present
+        let mut decrypted_data = Vec::new();
+        if !encrypted_data.is_empty() {
+            let iv = Self::derive_encrypted_iv(&self.keys.k_enc, &ssc_bytes)?;
+            let padded_decrypted_data = self.decrypt_data(&encrypted_data, &iv)?;
+            decrypted_data = Self::iso7816_unpad_vec(&padded_decrypted_data);
+        }
+
+        // Create final response
         let (sw1, sw2) = if let Some(status) = status_bytes {
             (status[0], status[1])
         } else {
@@ -697,7 +768,6 @@ pub enum DataGroup {
     DG13 = 0x0D, // Birth Name
     DG14 = 0x0E, // Written Signature
     DG15 = 0x0F, // Date of Issuance
-    DG16 = 0x10, // Reserved for Future Use
     DG17 = 0x11, // Normal Place of Residence
     DG18 = 0x12, // Municipality ID
     DG19 = 0x13, // Residence Permit I
@@ -724,7 +794,6 @@ impl DataGroup {
             DataGroup::DG13 => 0x010D,
             DataGroup::DG14 => 0x010E,
             DataGroup::DG15 => 0x010F,
-            DataGroup::DG16 => 0x0110,
             DataGroup::DG17 => 0x0111,
             DataGroup::DG18 => 0x0112,
             DataGroup::DG19 => 0x0113,
@@ -755,6 +824,16 @@ impl EidCommands {
         )
     }
 
+    pub fn select_eid_application() -> CommandApdu {
+        CommandApdu::new(
+            Ins::Select,
+            0x04,
+            0x0C,
+            hex!("E80704007F00070302").to_vec(),
+            Some(0),
+        )
+    }
+
     // Read binary data
     pub fn read_binary(offset: u16, length: u8) -> CommandApdu {
         let p1 = ((offset >> 8) & 0xFF) as u8;
@@ -765,9 +844,6 @@ impl EidCommands {
 
     // Read data group
     pub fn read_data_group(data_group: DataGroup) -> Vec<CommandApdu> {
-        vec![
-            Self::select_file(data_group.fid()),
-            Self::read_binary(0, 0),
-        ]
+        vec![Self::select_file(data_group.fid()), Self::read_binary(0, 0)]
     }
 }

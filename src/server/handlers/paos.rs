@@ -15,6 +15,7 @@ use crate::{
     },
 };
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
+use hex_literal::hex;
 use openssl::{
     bn::{BigNum, BigNumContext},
     ec::{EcGroup, EcKey, EcPoint, PointConversionForm},
@@ -936,10 +937,9 @@ where
                             (StatusCode::BAD_REQUEST, "Invalid nonce format".to_string())
                         })?;
 
-                        let card_pubkey_bytes = hex::decode("0419d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f17758d7a3aa6943ef23e5e2909b3e8b31bfaa4544c2cbf1fb487f31ff239c8f8").map_err(|err| {
-                            error!("Failed to decode card public key: {err}");
-                            (StatusCode::BAD_REQUEST, "Invalid card public key format".to_string())
-                        })?;
+                        let card_pubkey_bytes = hex!(
+                            "0419d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f17758d7a3aa6943ef23e5e2909b3e8b31bfaa4544c2cbf1fb487f31ff239c8f8"
+                        );
 
                         let shared_secret = SharedSecretComputer::compute_shared_secret(
                             ecdh_priv,
@@ -952,6 +952,16 @@ where
                                 "Failed to compute shared secret".to_string(),
                             )
                         })?;
+                        std::fs::write(
+                            "/Users/hermann/Desktop/workspace/apdu_decrypt/shared_key.hex",
+                            hex::encode(&shared_secret),
+                        )
+                        .unwrap();
+                        std::fs::write(
+                            "/Users/hermann/Desktop/workspace/apdu_decrypt/nonce.hex",
+                            hex::encode(&nonce_bytes),
+                        )
+                        .unwrap();
 
                         let session_keys =
                             SharedSecretComputer::derive_keys(&shared_secret, &nonce_bytes)
@@ -996,7 +1006,6 @@ where
                             DataGroup::DG13,
                             DataGroup::DG14,
                             DataGroup::DG15,
-                            DataGroup::DG16,
                             DataGroup::DG17,
                             DataGroup::DG18,
                             DataGroup::DG19,
@@ -1004,6 +1013,13 @@ where
                             DataGroup::DG21,
                             DataGroup::DG22,
                         ];
+
+                        secure_msg.update_ssc();
+                        let select_cmd = EidCommands::select_eid_application();
+                        let secure_select_cmd =
+                            secure_msg.create_secure_command(&select_cmd).unwrap();
+                        commands.push(secure_select_cmd.to_bytes());
+                        secure_msg.update_ssc();
 
                         for dg in &data_groups {
                             let cmds = EidCommands::read_data_group(*dg);
@@ -1020,7 +1036,7 @@ where
 
                         let apdus: String = commands
                             .into_iter()
-                            .map(|cmd| format!("<ns4:InputAPDUInfo><ns4:InputAPDU>{}</ns4:InputAPDU></ns4:InputAPDUInfo>", hex::encode(cmd)))
+                            .map(|cmd| format!("<ns4:InputAPDUInfo><ns4:InputAPDU>{}</ns4:InputAPDU></ns4:InputAPDUInfo>", hex::encode_upper(cmd)))
                             .collect::<Vec<String>>()
                             .join("");
                         apdus_hex = apdus;
@@ -1084,6 +1100,16 @@ where
             result_major,
         } => {
             debug!("Received TransmitResponse {output_apdu:?}");
+            let mut apdu_responses = vec![];
+            for apdu in output_apdu {
+                apdu_responses.push(apdu);
+            }
+            let apdu_responses = apdu_responses.join("\n");
+            std::fs::write(
+                "/Users/hermann/Desktop/workspace/apdu_decrypt/apdus.hex",
+                apdu_responses,
+            )
+            .unwrap();
             let paos_response = format!(
                 r#"<?xml version="1.0" encoding="UTF-8"?>
         <SOAP-ENV:Envelope
@@ -1098,7 +1124,6 @@ where
                 <ns4:StartPAOSResponse>
                     <ns2:Result>
                         <ns2:ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ns2:ResultMajor>
-                        <ns2:ResultMessage>Authentication successful</ns2:ResultMessage>
                     </ns2:Result>
                 </ns4:StartPAOSResponse>
             </SOAP-ENV:Body>
