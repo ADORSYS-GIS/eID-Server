@@ -14,6 +14,7 @@ use crate::{
         },
     },
     server::AppState,
+    session::SessionStore,
 };
 
 fn convert_to_soap_model(
@@ -61,11 +62,14 @@ fn convert_to_soap_model(
 /// Handler for the /eIDService/getServerInfo endpoint
 /// Handler for the /eIDService/getServerInfo endpoint
 /// Returns information about the eID-Server capabilities and version
-pub(crate) async fn get_server_info<S>(State(state): State<AppState<S>>) -> impl IntoResponse
+pub(crate) async fn get_server_info<S, STORE>(
+    State(state): State<AppState<S, STORE>>,
+) -> impl IntoResponse
 where
     S: EIDService + EidService,
+    STORE: SessionStore + Clone,
 {
-    let server_info = state.eid_service.get_server_info();
+    let server_info = state.service.get_server_info();
     let soap_response = convert_to_soap_model(server_info);
     let xml =
         build_get_server_info_response(&soap_response).unwrap_or_else(|_| "<error/>".to_string());

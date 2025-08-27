@@ -7,9 +7,9 @@ use std::net::TcpListener;
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::domain::eid::session_manager::SessionManager;
 use crate::eid::get_server_info::handler::get_server_info;
 use crate::server::handlers::paos::paos_handler;
+use crate::session::{SessionManager, SessionStore};
 use axum::{Router, routing::get};
 use axum::{http::Method, routing::post};
 use axum_server::tls_openssl::{OpenSSLAcceptor, OpenSSLConfig};
@@ -26,9 +26,13 @@ use crate::domain::eid::ports::{DIDAuthenticate, EIDService, EidService};
 use crate::tls::TlsConfig;
 
 #[derive(Debug, Clone)]
-pub struct AppState<S: EIDService + EidService> {
-    pub use_id: Arc<S>,
-    pub eid_service: Arc<S>,
+pub struct AppState<S, STORE>
+where
+    S: EIDService + EidService,
+    STORE: SessionStore + Clone,
+{
+    pub service: Arc<S>,
+    pub session_manager: Arc<SessionManager<STORE>>,
 }
 
 pub struct Server {
@@ -40,7 +44,8 @@ pub struct Server {
 impl Server {
     /// Creates a new HTTPS server.
     pub async fn new(
-        eid_service: impl EIDService + EidService + DIDAuthenticate + SessionManager,
+        session_store: impl SessionStore + Clone + 'static,
+        eid_service: impl EIDService + EidService + DIDAuthenticate,
         config: &Config,
         tls_config: TlsConfig,
     ) -> Result<Self> {
@@ -61,10 +66,9 @@ impl Server {
                 Method::OPTIONS,
             ]);
 
-        let eid_service = Arc::new(eid_service);
         let state = AppState {
-            use_id: eid_service.clone(),
-            eid_service,
+            service: Arc::new(eid_service),
+            session_manager: Arc::new(SessionManager::new(session_store)),
         };
 
         let router = Router::new()
