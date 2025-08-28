@@ -1,48 +1,40 @@
 //! Service layer that provides the business logic of the domain.
 
 use std::fs;
-use std::sync::Arc;
 
 use base64::Engine;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use color_eyre::Result;
 use color_eyre::eyre::eyre;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 use super::certificate::{CardCommunicator, CertificateStore, CryptoProvider};
 use super::models::{
     AuthError, DIDAuthenticateRequest, DIDAuthenticateResponse, ResponseProtocolData, ServerInfo,
 };
 use super::ports::{DIDAuthenticate, EIDService, EidService};
-use super::session_manager::{InMemorySessionManager, RedisSessionManager, SessionManager};
 use crate::eid::common::models::{
     AttributeRequester, OperationsRequester, ResultCode, ResultMajor, SessionResponse,
 };
 use crate::eid::use_id::model::{Psk, UseIDRequest, UseIDResponse};
+use crate::session::{SessionManager, SessionStore};
+use crate::tls::{PskStore, PskStoreError};
 use async_trait::async_trait;
 
 // Configuration for the eID Service
 #[derive(Clone, Debug)]
 pub struct EIDServiceConfig {
-    /// Maximum number of concurrent sessions
-    pub max_sessions: usize,
-    /// Session timeout in minutes
-    pub session_timeout_minutes: i64,
     /// Optional eCard server address to return in responses
     pub ecard_server_address: Option<String>,
-    /// Redis connection URL (optional, if using Redis backend)
-    pub redis_url: Option<String>,
 }
 
 impl Default for EIDServiceConfig {
     fn default() -> Self {
         Self {
-            max_sessions: 1000,
-            session_timeout_minutes: 5,
             ecard_server_address: Some("https://localhost:3000".to_string()),
-            redis_url: None,
         }
     }
 }
@@ -51,7 +43,6 @@ impl Default for EIDServiceConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionInfo {
     pub id: String,
-    pub expiry: DateTime<Utc>,
     pub psk: String,
     pub operations: Vec<String>,
     pub connection_handles: Vec<ConnectionHandle>,
@@ -63,10 +54,9 @@ pub struct ConnectionHandle {
 }
 
 impl SessionInfo {
-    pub fn new(id: String, psk: String, operations: Vec<String>, timeout_minutes: i64) -> Self {
+    pub fn new(id: String, psk: String, operations: Vec<String>) -> Self {
         SessionInfo {
             id,
-            expiry: Utc::now() + chrono::Duration::minutes(timeout_minutes),
             psk,
             operations,
             connection_handles: Vec::new(),
@@ -76,22 +66,13 @@ impl SessionInfo {
 
 /// Main service for handling useID requests
 #[derive(Clone, Debug)]
-pub struct UseidService {
+pub struct UseidService<S: SessionStore + Clone> {
     pub config: EIDServiceConfig,
-    pub session_manager: Arc<dyn SessionManager>,
+    pub session_manager: SessionManager<S>,
 }
 
-impl UseidService {
-    pub fn new(config: EIDServiceConfig) -> Self {
-        let session_manager: Arc<dyn SessionManager> = if let Some(redis_url) = &config.redis_url {
-            Arc::new(
-                RedisSessionManager::new(redis_url, config.session_timeout_minutes)
-                    .expect("Failed to initialize RedisSessionManager"),
-            )
-        } else {
-            Arc::new(InMemorySessionManager::new())
-        };
-
+impl<S: SessionStore + Clone> UseidService<S> {
+    pub fn new(config: EIDServiceConfig, session_manager: SessionManager<S>) -> Self {
         Self {
             config,
             session_manager,
@@ -169,30 +150,25 @@ impl UseidService {
 
 // Implement the EIDService trait for UseidService
 #[async_trait]
-impl EIDService for UseidService {
+impl<S: SessionStore + Clone + 'static> EIDService for UseidService<S> {
     async fn handle_use_id(&self, request: UseIDRequest) -> Result<UseIDResponse> {
         // Validate the request: Check if any operations are REQUIRED
         let required_operations = Self::get_required_operations(&request._use_operations);
         debug!("Required operations: {:?}", required_operations);
 
-        // Check if we've reached the maximum number of sessions
-        if self.session_manager.session_count().await? >= self.config.max_sessions {
-            return Err(color_eyre::eyre::eyre!("Maximum session limit reached"));
-        }
-
         // Generate session ID
-        let session_id = self.session_manager.generate_session_id().await?;
-        if session_id.is_empty() {
-            error!("Generated empty session ID");
-            return Err(color_eyre::eyre::eyre!("Failed to generate session ID"));
-        }
-        debug!("Generated session_id: {}", session_id);
+        let session_id = Uuid::new_v4().simple().to_string();
 
         // Generate or use provided PSK
         let psk = match &request._psk {
             Some(psk) => {
                 // Check if PSK ID matches an existing session
-                if self.session_manager.get_session(&psk.id).await?.is_some() {
+                if self
+                    .session_manager
+                    .get::<SessionInfo>(&psk.id)
+                    .await?
+                    .is_some()
+                {
                     error!("Attempted to reuse session ID: {}", psk.id);
                     return Err(color_eyre::eyre::eyre!("Session ID reuse detected"));
                 }
@@ -205,24 +181,18 @@ impl EIDService for UseidService {
             error!("Generated empty PSK");
             return Err(eyre!("Failed to generate PSK"));
         }
+        debug!("Generated PSK: {psk}");
 
-        debug!("Generated PSK: {}", psk);
+        let session_info =
+            SessionInfo::new(session_id.clone(), psk.clone(), required_operations.clone());
 
         // Store session with PSK
-        let session_info = SessionInfo::new(
-            session_id.clone(),
-            psk.clone(),
-            required_operations.clone(),
-            self.config.session_timeout_minutes,
-        );
-
-        // Store the session
         self.session_manager
-            .store_session(session_info.clone())
+            .insert(&session_id, session_info.clone())
             .await?;
         info!(
-            "Created new session: {}, expires: {}, operations: {:?}",
-            session_id, session_info.expiry, session_info.operations
+            "Created new session: {}, operations: {:?}",
+            session_id, session_info.operations
         );
 
         // Construct TcTokenURL
@@ -285,64 +255,27 @@ impl EIDService for UseidService {
     }
 }
 
-#[async_trait]
-impl SessionManager for UseidService {
-    async fn generate_session_id(&self) -> color_eyre::Result<String> {
-        self.session_manager.generate_session_id().await
-    }
-
-    async fn store_session(&self, session: SessionInfo) -> color_eyre::Result<()> {
-        self.session_manager.store_session(session).await
-    }
-
-    async fn get_session(&self, session_id: &str) -> color_eyre::Result<Option<SessionInfo>> {
-        self.session_manager.get_session(session_id).await
-    }
-
-    async fn remove_expired_sessions(&self) -> color_eyre::Result<()> {
-        self.session_manager.remove_expired_sessions().await
-    }
-
-    async fn session_count(&self) -> color_eyre::Result<usize> {
-        self.session_manager.session_count().await
-    }
-
-    async fn is_session_valid(&self, session_id: &str) -> color_eyre::Result<bool> {
-        self.session_manager.is_session_valid(session_id).await
-    }
-
-    async fn update_session_connection_handles(
-        &self,
-        session_id: &str,
-        connection_handles: Vec<String>,
-    ) -> color_eyre::Result<()> {
-        self.session_manager
-            .update_session_connection_handles(session_id, connection_handles)
-            .await
-    }
-}
-
 // Implement the EidService trait for UseidService
-impl EidService for UseidService {
+impl<S: SessionStore + Clone + 'static> EidService for UseidService<S> {
     fn get_server_info(&self) -> ServerInfo {
         ServerInfo::default()
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct DIDAuthenticateService {
+pub struct DIDAuthenticateService<S: SessionStore + Clone> {
     certificate_store: CertificateStore,
     crypto_provider: CryptoProvider,
     card_communicator: CardCommunicator,
-    session_manager: Arc<dyn SessionManager>,
+    session_manager: SessionManager<S>,
 }
 
-impl DIDAuthenticateService {
+impl<S: SessionStore + Clone + 'static> DIDAuthenticateService<S> {
     pub fn new(
         certificate_store: CertificateStore,
         crypto_provider: CryptoProvider,
         card_communicator: CardCommunicator,
-        session_manager: Arc<dyn SessionManager>,
+        session_manager: SessionManager<S>,
     ) -> Self {
         Self {
             certificate_store,
@@ -352,7 +285,7 @@ impl DIDAuthenticateService {
         }
     }
 
-    pub async fn new_with_defaults(session_manager: Arc<dyn SessionManager>) -> Self {
+    pub async fn new_with_defaults(session_manager: SessionManager<S>) -> Self {
         dotenvy::dotenv().expect("Failed to load .env file");
         let certificate_store = CertificateStore::new();
 
@@ -399,7 +332,7 @@ impl DIDAuthenticateService {
     async fn authenticate_internal(
         &self,
         request: DIDAuthenticateRequest,
-        session_manager: Arc<dyn SessionManager>,
+        session_manager: SessionManager<S>,
     ) -> Result<ResponseProtocolData, AuthError> {
         request.validate()?;
         debug!("Request validation passed");
@@ -411,19 +344,14 @@ impl DIDAuthenticateService {
             .as_ref()
             .ok_or_else(|| AuthError::invalid_connection("Missing channel handle"))?;
 
-        let session_info = session_manager
-            .get_session(session_id)
+        if !session_manager
+            .exists(session_id)
             .await
-            .map_err(|e| AuthError::internal_error(format!("Failed to acquire session: {e}")))?;
-
-        let session_info = session_info.ok_or_else(|| {
-            error!("Session {} not found", session_id);
-            AuthError::invalid_connection("Invalid or expired session")
-        })?;
-
-        if session_info.expiry < Utc::now() {
-            error!("Session {} expired at {}", session_id, session_info.expiry);
-            return Err(AuthError::timeout_error("Session validation"));
+            .map_err(|e| AuthError::internal_error(format!("Failed to acquire session: {e}")))?
+        {
+            return Err(AuthError::invalid_connection(
+                "Invalid or expired session: {session_id}",
+            ));
         }
 
         let certificate_der = base64::engine::general_purpose::STANDARD
@@ -475,7 +403,7 @@ impl DIDAuthenticateService {
 }
 
 #[async_trait]
-impl DIDAuthenticate for UseidService {
+impl<S: SessionStore + Clone + 'static> DIDAuthenticate for UseidService<S> {
     async fn handle_did_authenticate(
         &self,
         request: DIDAuthenticateRequest,
@@ -496,5 +424,32 @@ impl DIDAuthenticate for UseidService {
         let did_service =
             DIDAuthenticateService::new_with_defaults(self.session_manager.clone()).await;
         Ok(did_service.authenticate(request).await)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PskStoreAdapter<S: SessionStore + Clone>(SessionManager<S>);
+
+impl<S: SessionStore + Clone> PskStoreAdapter<S> {
+    pub fn new(session_manager: SessionManager<S>) -> Self {
+        Self(session_manager)
+    }
+}
+
+#[async_trait]
+impl<S: SessionStore + Clone + 'static> PskStore for PskStoreAdapter<S> {
+    async fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
+        let result: Option<SessionInfo> = self
+            .0
+            .get(identity)
+            .await
+            .map_err(|e| PskStoreError::msg(format!("Session lookup failed: {e}")))?;
+
+        match result {
+            Some(s) => hex::decode(&s.psk)
+                .map(Some)
+                .map_err(|e| PskStoreError::msg(format!("Invalid PSK hex format: {e}"))),
+            None => Ok(None),
+        }
     }
 }

@@ -2,7 +2,8 @@ mod utils;
 
 use eid_server::{
     domain::eid::service::{EIDServiceConfig, UseidService},
-    tls::{InMemorySessionStore, TlsConfig, generate_ca_certificate, generate_leaf_certificate},
+    session::{MemoryStore, SessionManager},
+    tls::{TlsConfig, generate_ca_certificate, generate_leaf_certificate},
 };
 use reqwest::{Certificate, Client, Identity};
 
@@ -13,12 +14,15 @@ async fn test_mutual_tls_works() {
     let (ca_cert, ca_key) = generate_ca_certificate();
     let (server_cert, server_key) = generate_leaf_certificate(&ca_cert, &ca_key);
 
+    let session_store = MemoryStore::new();
+    let session_manager = SessionManager::new(session_store.clone());
+    let eid_service = UseidService::new(EIDServiceConfig::default(), session_manager.clone());
+
     let tls_config = TlsConfig::new(server_cert, server_key)
         .with_client_auth(&[ca_cert.to_pem().unwrap()], None::<&[u8]>)
-        .with_session_store(InMemorySessionStore::new());
+        .with_session_store(session_store.clone());
 
-    let eid_service = UseidService::new(EIDServiceConfig::default());
-    let addr = utils::spawn_server(eid_service, tls_config).await;
+    let addr = utils::spawn_server(session_store, eid_service, tls_config).await;
 
     // ======= building the client =======
 

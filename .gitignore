@@ -24,3 +24,6 @@ target/
 
 # Added by Qodo
 .qodo
+
+# Environment variables
+.env
