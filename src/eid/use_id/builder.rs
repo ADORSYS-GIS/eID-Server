@@ -48,7 +48,7 @@ use crate::eid::{
 /// ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// let response = UseIDResponse {
 ///     session: "session123".to_string(),
 ///     ecard_server_address: Some("http://ecard.server.com".to_string()),

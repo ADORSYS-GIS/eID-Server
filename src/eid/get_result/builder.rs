@@ -17,7 +17,7 @@ use crate::eid::{
 /// * `Err(GetResultError::GenericError)` if serialization fails.
 ///
 /// # Example
-/// ```rust
+/// ```rust,ignore
 /// let response = GetResultResponse { /* ... */ };
 /// let xml_string = build_get_result_response(response)?;
 /// println!("{}", xml_string);

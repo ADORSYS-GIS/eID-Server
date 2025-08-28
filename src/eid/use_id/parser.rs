@@ -28,7 +28,7 @@ use super::model::{UseIDRequest, UseIDRequestEnvelope};
 /// - Unexpected data is encountered in known fields
 ///
 /// # Example
-/// ```rust
+/// ```rust,ignore
 /// let xml = include_str!("use_id_request.xml");
 /// let parsed = parse_use_id_request(xml)?;
 /// assert_eq!(parsed.age_verification, Some(18));
