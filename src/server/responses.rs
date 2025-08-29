@@ -9,6 +9,7 @@ const PAOS_CONTENT_TYPE: &str = "application/xml, charset=utf-8";
 pub struct PaosResponse<T: Into<String>>(T);
 
 impl<T: Into<String>> PaosResponse<T> {
+    #[allow(dead_code)]
     pub fn new(data: T) -> Self {
         Self(data)
     }
