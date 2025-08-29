@@ -22,5 +22,8 @@ target/
 # Added by vscode
 .vscode/
 
+# Added by Qodo
+.qodo
+
 # Environment variables
 .env

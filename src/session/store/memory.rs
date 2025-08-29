@@ -30,8 +30,7 @@ impl MemoryStore {
 #[async_trait]
 impl SessionStore for MemoryStore {
     async fn save(&self, session_id: &[u8], data: &[u8], ttl: Option<u64>) -> Result<()> {
-        let expiry =
-            ttl.map(|secs| UtcDateTime::now().saturating_add(Duration::seconds(secs as i64)));
+        let expiry = ttl.map(|s| UtcDateTime::now() + Duration::seconds(s as i64));
         let session_data = SessionData {
             data: data.to_vec(),
             expiry,

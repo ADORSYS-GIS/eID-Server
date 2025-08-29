@@ -1,8 +1,7 @@
 mod utils;
 
 use eid_server::{
-    domain::eid::service::{EIDServiceConfig, UseidService},
-    session::{MemoryStore, SessionManager},
+    session::MemoryStore,
     tls::{TestCertificates, TlsConfig, generate_test_certificates},
 };
 use reqwest::Client;
@@ -16,13 +15,11 @@ async fn test_health_check_works() {
     } = generate_test_certificates();
 
     let session_store = MemoryStore::new();
-    let session_manager = SessionManager::new(session_store.clone());
 
     // build the tls configuration
     let tls_config = TlsConfig::new(server_cert, server_key);
-    let eid_service = UseidService::new(EIDServiceConfig::default(), session_manager);
 
-    let addr = utils::spawn_server(session_store, eid_service, tls_config).await;
+    let addr = utils::spawn_server(session_store, tls_config).await;
 
     // Create a custom client that ignores invalid certificates
     let client = Client::builder()
