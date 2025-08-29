@@ -7,32 +7,21 @@ use std::net::TcpListener;
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::eid::get_server_info::handler::get_server_info;
-use crate::server::handlers::paos::paos_handler;
+use crate::server::handlers::health::health_check;
 use crate::session::{SessionManager, SessionStore};
+use crate::tls::TlsConfig;
+use axum::http::Method;
 use axum::{Router, routing::get};
-use axum::{http::Method, routing::post};
 use axum_server::tls_openssl::{OpenSSLAcceptor, OpenSSLConfig};
 use color_eyre::eyre::{Context, Result};
-use handlers::did_auth::did_authenticate;
-use handlers::health::health_check;
-use handlers::useid::use_id_handler;
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
 
-use crate::domain::eid::ports::{DIDAuthenticate, EIDService, EidService};
-use crate::tls::TlsConfig;
-
 #[derive(Debug, Clone)]
-pub struct AppState<S, STORE>
-where
-    S: EIDService + EidService,
-    STORE: SessionStore + Clone,
-{
-    pub service: Arc<S>,
-    pub session_manager: Arc<SessionManager<STORE>>,
+pub struct AppState<S: SessionStore> {
+    pub session_manager: Arc<SessionManager<S>>,
 }
 
 pub struct Server {
@@ -44,8 +33,7 @@ pub struct Server {
 impl Server {
     /// Creates a new HTTPS server.
     pub async fn new(
-        session_store: impl SessionStore + Clone + 'static,
-        eid_service: impl EIDService + EidService + DIDAuthenticate,
+        session_manager: SessionManager<impl SessionStore + Clone + 'static>,
         config: &Config,
         tls_config: TlsConfig,
     ) -> Result<Self> {
@@ -67,21 +55,11 @@ impl Server {
             ]);
 
         let state = AppState {
-            service: Arc::new(eid_service),
-            session_manager: Arc::new(SessionManager::new(session_store)),
+            session_manager: Arc::new(session_manager),
         };
 
         let router = Router::new()
             .route("/health", get(health_check))
-            .route("/", post(paos_handler))
-            .route("/did-authenticate", post(did_authenticate))
-            .nest(
-                "/eIDService",
-                Router::new()
-                    .route("/useID", post(use_id_handler))
-                    .route("/useID", get(use_id_handler))
-                    .route("/getServerInfo", get(get_server_info)),
-            )
             .layer(cors_layer)
             .layer(trace_layer)
             .with_state(state);
