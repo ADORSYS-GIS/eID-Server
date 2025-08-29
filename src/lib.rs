@@ -5,3 +5,4 @@ pub mod eid;
 pub mod server;
 pub mod telemetry;
 pub mod tls;
+pub mod pki;

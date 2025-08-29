@@ -101,7 +101,7 @@ impl UseidService {
     /// Generate a random PSK for secure communication
     pub fn generate_psk(&self) -> String {
         let mut bytes = [0u8; 32];
-        rand::rng().fill_bytes(&mut bytes);
+        rand::thread_rng().fill_bytes(&mut bytes);
         hex::encode(bytes)
     }
 
