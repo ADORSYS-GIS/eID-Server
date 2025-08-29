@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope 
-    xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-    xmlns:eid="http://bsi.bund.de/eID/"
-    xmlns:dss="urn:oasis:names:tc:dss:1.0:core:schema">
-  <soapenv:Header/>
+<soapenv:Envelope
+  xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:eid="http://bsi.bund.de/eID/"
+  xmlns:dss="urn:oasis:names:tc:dss:1.0:core:schema">
+  <soapenv:Header />
   <soapenv:Body>
     <eid:getResultResponse>
       <eid:PersonalData>
@@ -12,8 +12,8 @@
         <eid:DateOfExpiry>2029-10-31</eid:DateOfExpiry>
         <eid:GivenNames>ERIKA</eid:GivenNames>
         <eid:FamilyNames>MUSTERMANN</eid:FamilyNames>
-        <eid:ArtisticName/>
-        <eid:AcademicTitle/>
+        <eid:ArtisticName />
+        <eid:AcademicTitle />
         <eid:DateOfBirth>
           <eid:DateString>19640812</eid:DateString>
           <eid:DateValue>1964-08-12</eid:DateValue>
@@ -27,13 +27,13 @@
           <eid:StructuredPlace>
             <eid:Street>HEIDESTRASSE 17</eid:Street>
             <eid:City>KÖLN</eid:City>
-            <eid:State/>
+            <eid:State />
             <eid:Country>D</eid:Country>
             <eid:ZipCode>51147</eid:ZipCode>
           </eid:StructuredPlace>
         </eid:PlaceOfResidence>
-        <eid:CommunityID/>
-        <eid:ResidencePermitID/>
+        <eid:CommunityID />
+        <eid:ResidencePermitID />
         <eid:RestrictedID>
           <eid:ID>01A4FB509CEBC6595151A4FB5F9C75C6FE01A4FB59CB655A4FB5F9C75C6FEE</eid:ID>
           <eid:ID2>5C6FE01A4FB59CB655A4FB5F9C75C6FEE01A4FB509CEBC6595151A4FB5F9C7</eid:ID2>
@@ -51,8 +51,8 @@
         <eid:DateOfExpiry>ALLOWED</eid:DateOfExpiry>
         <eid:GivenNames>ALLOWED</eid:GivenNames>
         <eid:FamilyNames>ALLOWED</eid:FamilyNames>
-        <eid:ArtisticName/>
-        <eid:AcademicTitle/>
+        <eid:ArtisticName />
+        <eid:AcademicTitle />
         <eid:DateOfBirth>ALLOWED</eid:DateOfBirth>
         <eid:PlaceOfBirth>ALLOWED</eid:PlaceOfBirth>
         <eid:Nationality>ALLOWED</eid:Nationality>
@@ -66,14 +66,15 @@
       </eid:OperationsAllowedByUser>
       <eid:TransactionAttestationResponse>
         <eid:TransactionAttestationFormat>http://bsi.bund.de/eID/ExampleAttestationFormat</eid:TransactionAttestationFormat>
-        <eid:TransactionAttestationData>V6INOOUsHouL9nYaRwR6RpX5WzccQXv51bIvvpY4Lsbp/VOPvG1ozxQCjo6JOi4xAv9/6b8G2PxaVv8bwdpFR/CN05xsnzxijzfemooKwve3Fl3005OX6dwkVyNQlZxXaWb3eUcYPA\MEwHSkhzP25ZM/J+CQHHaqLih6JW6wxSvUbuD307sjzkeaMkjJr9tXI9QcUmGmpHBWEWwon56HkWKGL1Dl0XH4\YuYhKMsTj2yjUJNlLH8OAm9cEX0ptQJlVTMRvNGRk53eUESnfhtQrVSm9bS63v+A9sGPrRlUIquCpcusX1nZe6\omAzs2tY0S04+s1fNvgHXKmQi24wIdhhbtFPbB2n2j9dAB8xjfGgEcsG3wPMliP6d</eid:TransactionAttestationData>
+        <eid:TransactionAttestationData>
+          V6INOOUsHouL9nYaRwR6RpX5WzccQXv51bIvvpY4Lsbp/VOPvG1ozxQCjo6JOi4xAv9/6b8G2PxaVv8bwdpFR/CN05xsnzxijzfemooKwve3Fl3005OX6dwkVyNQlZxXaWb3eUcYPA\MEwHSkhzP25ZM/J+CQHHaqLih6JW6wxSvUbuD307sjzkeaMkjJr9tXI9QcUmGmpHBWEWwon56HkWKGL1Dl0XH4\YuYhKMsTj2yjUJNlLH8OAm9cEX0ptQJlVTMRvNGRk53eUESnfhtQrVSm9bS63v+A9sGPrRlUIquCpcusX1nZe6\omAzs2tY0S04+s1fNvgHXKmQi24wIdhhbtFPbB2n2j9dAB8xjfGgEcsG3wPMliP6d</eid:TransactionAttestationData>
       </eid:TransactionAttestationResponse>
       <eid:LevelOfAssuranceResponse>http://bsi.bund.de/eID/LoA/hoch</eid:LevelOfAssuranceResponse>
       <eid:EidTypeResponse>
         <eid:CardCertified>USED</eid:CardCertified>
-        <eid:SeCertified/>
-        <eid:SeEndorsed/>
-        <eid:HwKeystore/>
+        <eid:SeCertified />
+        <eid:SeEndorsed />
+        <eid:HwKeystore />
       </eid:EidTypeResponse>
       <dss:Result>
         <ResultMajor>http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok</ResultMajor>
