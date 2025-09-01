@@ -1,21 +1,26 @@
+mod data;
 mod errors;
 mod store;
 #[cfg(test)]
 mod tests;
 
 // Re-export public types
+pub use data::*;
 pub use errors::SessionError;
 pub use store::*;
 
 use std::{array::TryFromSliceError, result, sync::Arc};
 
-use bincode::config::standard;
+use bincode::{
+    config::standard,
+    serde::{decode_from_slice as bincode_decode, encode_to_vec as bincode_encode},
+};
 use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use time::{Duration, UtcDateTime};
 
 pub(crate) const DEFAULT_DURATION: Duration = Duration::minutes(15);
-pub(crate) const DEFAULT_MAX_SESSIONS: usize = 50_000;
+pub(crate) const DEFAULT_MAX_SESSIONS: usize = 1000;
 pub(crate) const TIMESTAMP_BYTES: usize = 16;
 
 type Result<T> = result::Result<T, SessionError>;
@@ -27,7 +32,7 @@ type Result<T> = result::Result<T, SessionError>;
 /// automatically.
 ///
 /// # Defaults
-/// By default, sessions expire after **15 minutes** with a maximum of **50,000**
+/// By default, sessions expire after **15 minutes** with a maximum of **1,000**
 /// allowed active sessions. These values can be overridden using the
 /// [`with_expiry`][we] and [`with_max_sessions`][wms] methods.
 ///
@@ -42,14 +47,14 @@ type Result<T> = result::Result<T, SessionError>;
 #[derive(Debug, Clone)]
 pub struct SessionManager<S>
 where
-    S: SessionStore + Clone,
+    S: SessionStore,
 {
     store: Arc<S>,
     expiry: Duration,
     max_sessions: usize,
 }
 
-impl<S: SessionStore + Clone> SessionManager<S> {
+impl<S: SessionStore> SessionManager<S> {
     /// Creates a new session manager with the provided store.
     ///
     /// # Examples
@@ -124,7 +129,7 @@ impl<S: SessionStore + Clone> SessionManager<S> {
     ///
     /// let key = "session_id";
     /// let value = "session_value";
-    /// manager.insert(key.into(), value).await.unwrap();
+    /// manager.insert(key, value).await.unwrap();
     /// # })
     /// ```
     pub async fn insert(&self, key: impl Into<Id>, value: impl Serialize) -> Result<()> {
@@ -134,7 +139,7 @@ impl<S: SessionStore + Clone> SessionManager<S> {
 
         let expiry_date = UtcDateTime::now().saturating_add(self.expiry);
         let expiry_bytes = expiry_date.unix_timestamp_nanos().to_le_bytes();
-        let data_bytes = bincode::serde::encode_to_vec(value, standard())?;
+        let data_bytes = bincode_encode(value, standard())?;
         let ttl = self.expiry.whole_seconds().max(0) as u64;
 
         let mut session_bytes = Vec::with_capacity(TIMESTAMP_BYTES + data_bytes.len());
@@ -161,9 +166,9 @@ impl<S: SessionStore + Clone> SessionManager<S> {
     ///
     /// let key = "session_id";
     /// let value = "session_value";
-    /// manager.insert(key.into(), value).await.unwrap();
+    /// manager.insert(key, value).await.unwrap();
     ///
-    /// let value = manager.get::<String>(key.into()).await.unwrap();
+    /// let value = manager.get::<String>(key).await.unwrap();
     /// assert_eq!(value, Some("session_value".to_string()));
     /// # })
     /// ```
@@ -173,8 +178,7 @@ impl<S: SessionStore + Clone> SessionManager<S> {
         };
 
         validate_session_data(&session_bytes)?;
-        let (data, _) =
-            bincode::serde::decode_from_slice(&session_bytes[TIMESTAMP_BYTES..], standard())?;
+        let (data, _) = bincode_decode(&session_bytes[TIMESTAMP_BYTES..], standard())?;
         Ok(Some(data))
     }
 
@@ -192,9 +196,9 @@ impl<S: SessionStore + Clone> SessionManager<S> {
     ///
     /// let key = "session_id";
     /// let value = "session_value";
-    /// manager.insert(key.into(), value).await.unwrap();
+    /// manager.insert(key, value).await.unwrap();
     ///
-    /// let exists = manager.exists(key.into()).await.unwrap();
+    /// let exists = manager.exists(key).await.unwrap();
     /// assert!(exists);
     /// assert!(!manager.exists("nonexistent_key").await.unwrap());
     /// # })
@@ -220,10 +224,10 @@ impl<S: SessionStore + Clone> SessionManager<S> {
     ///
     /// let key = "session_id";
     /// let value = "session_value";
-    /// manager.insert(key.into(), value).await.unwrap();
+    /// manager.insert(key, value).await.unwrap();
     ///
-    /// manager.remove(key.into()).await.unwrap();
-    /// assert!(manager.get::<String>(key.into()).await.unwrap().is_none());
+    /// manager.remove(key).await.unwrap();
+    /// assert!(manager.get::<String>(key).await.unwrap().is_none());
     /// # })
     /// ```
     pub async fn remove(&self, key: impl Into<Id>) -> Result<()> {
@@ -246,9 +250,9 @@ impl<S: SessionStore + Clone> SessionManager<S> {
     ///
     /// let key = "session_id";
     /// let value = "session_value";
-    /// manager.insert(key.into(), value).await.unwrap();
+    /// manager.insert(key, value).await.unwrap();
     ///
-    /// let res = manager.set_expiry(key.into(), Duration::minutes(30)).await;
+    /// let res = manager.set_expiry(key, Duration::minutes(30)).await;
     /// assert!(res.is_ok());
     /// # })
     /// ```
@@ -285,12 +289,12 @@ impl<S: SessionStore + Clone> SessionManager<S> {
     ///
     /// let key = "session_id";
     /// let value = "session_value";
-    /// manager.insert(key.into(), value).await.unwrap();
+    /// manager.insert(key, value).await.unwrap();
     ///
-    /// let res = manager.set_expiry(key.into(), Duration::minutes(30)).await;
+    /// let res = manager.set_expiry(key, Duration::minutes(30)).await;
     /// assert!(res.is_ok());
     ///
-    /// let expiry_date = manager.get_expiry_date(key.into()).await.unwrap();
+    /// let expiry_date = manager.get_expiry_date(key).await.unwrap();
     /// assert!(expiry_date.is_some());
     /// # })
     /// ```
