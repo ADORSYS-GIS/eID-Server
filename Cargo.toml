@@ -70,13 +70,8 @@ features = ["tokio-native-tls-comp", "connection-manager", "safe_iterators"]
 [package.metadata.cargo-machete]
 ignored = ["pollster"]
 
-[dependencies.clap]
-version = "4.5"
-features = ["derive"]
-
 [dev-dependencies]
 http-body-util = "0.1"
-rcgen = "0.13"
 
 [profile.dev.package.backtrace]
 opt-level = 3
