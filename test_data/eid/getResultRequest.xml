@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+	xmlns:eid="http://bsi.bund.de/eID/">
+	<soapenv:Header />
+	<soapenv:Body>
+		<eid:getResultRequest>
+			<eid:Session>
+				<eid:ID>1234567890abcdef1234567890abcdef</eid:ID>
+			</eid:Session>
+			<eid:RequestCounter>1</eid:RequestCounter>
+		</eid:getResultRequest>
+	</soapenv:Body>
+</soapenv:Envelope>

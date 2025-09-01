@@ -68,7 +68,7 @@ impl From<serde_json::Error> for SessionStoreError {
 
 /// Abstract interface for session storage backends.
 #[async_trait]
-pub trait SessionStore: Send + Sync {
+pub trait SessionStore: Send + Sync + Clone + 'static {
     /// Saves the provided session data to the store.
     ///
     /// An optional TTL can be provided to specify the time-to-live for the session.
