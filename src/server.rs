@@ -25,22 +25,19 @@ pub struct AppState<S: SessionStore> {
     pub service: EidService<S>,
 }
 
-pub struct Server {
+pub struct Server<S: SessionStore> {
     router: Router,
     listener: TcpListener,
-    tls_config: TlsConfig,
+    tls_config: TlsConfig<S>,
 }
 
-impl Server {
+impl<S: SessionStore> Server<S> {
     /// Creates a new HTTPS server.
-    pub async fn new<S>(
+    pub async fn new(
         service: EidService<S>,
         config: &Config,
-        tls_config: TlsConfig,
-    ) -> Result<Self>
-    where
-        S: SessionStore + Clone + 'static,
-    {
+        tls_config: TlsConfig<S>,
+    ) -> Result<Self> {
         let trace_layer =
             TraceLayer::new_for_http().make_span_with(|request: &'_ axum::extract::Request<_>| {
                 let uri = request.uri().to_string();

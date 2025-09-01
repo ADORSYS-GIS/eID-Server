@@ -39,22 +39,22 @@ struct TlsPskConfig {
     cipher_suites: Vec<String>,
 }
 
-struct Inner {
+struct Inner<S> {
     cert_chain: Vec<u8>,
     private_key: Vec<u8>,
     intermediate_certs: Option<Vec<u8>>,
     ca_certs: Option<Vec<Vec<u8>>>,
     psk_config: Option<TlsPskConfig>,
     is_mtls: bool,
-    session_store: Option<Arc<dyn SessionStore>>,
+    session_store: Option<Arc<S>>,
 }
 
 /// Configuration for the TLS server.
-pub struct TlsConfig {
-    inner: Inner,
+pub struct TlsConfig<S: SessionStore> {
+    inner: Inner<S>,
 }
 
-impl TlsConfig {
+impl<S: SessionStore> TlsConfig<S> {
     /// Creates a new TLS configuration.
     ///
     /// # Arguments
@@ -100,7 +100,7 @@ impl TlsConfig {
     }
 
     /// Add session store support for centralized session caching.
-    pub fn with_session_store(mut self, session_store: impl SessionStore + 'static) -> Self {
+    pub fn with_session_store(mut self, session_store: S) -> Self {
         debug!("Adding session store support to TLS configuration");
         self.inner.session_store = Some(Arc::new(session_store));
         self
@@ -283,7 +283,7 @@ impl TlsConfig {
     fn setup_session_callbacks(
         &self,
         builder: &mut SslAcceptorBuilder,
-        session_store: &Arc<dyn SessionStore>,
+        session_store: &Arc<S>,
     ) -> Result<(), TlsError> {
         debug!("Setting up session store callbacks");
 
