@@ -4,5 +4,6 @@ pub mod domain;
 pub mod eid;
 pub mod pki;
 pub mod server;
+pub mod session;
 pub mod telemetry;
 pub mod tls;

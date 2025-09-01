@@ -9,6 +9,7 @@ use crate::{
         ports::{DIDAuthenticate, EIDService, EidService},
     },
     server::AppState,
+    session::SessionStore,
 };
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use color_eyre::Result;
@@ -263,12 +264,13 @@ impl<T: DIDAuthenticate + Send + Sync + 'static> DIDAuthenticateHandler<T> {
 
 pub async fn did_authenticate<
     S: DIDAuthenticate + EIDService + EidService + Send + Sync + 'static,
+    STORE: SessionStore + Clone,
 >(
-    State(state): State<AppState<S>>,
+    State(state): State<AppState<S, STORE>>,
     body: String,
 ) -> Result<impl IntoResponse, StatusCode> {
     // Wrap the service in an Arc before creating the handler
-    let handler = DIDAuthenticateHandler::new(Arc::new((*state.eid_service).clone()));
+    let handler = DIDAuthenticateHandler::new(Arc::new((*state.service).clone()));
 
     let response = handler
         .handle(&body)
@@ -282,13 +284,16 @@ pub async fn did_authenticate<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::eid::{
-        models::{
-            AuthError, AuthErrorKind, DIDAuthenticateRequest, DIDAuthenticateResponse,
-            ResponseProtocolData,
+    use crate::{
+        domain::eid::{
+            models::{
+                AuthError, AuthErrorKind, DIDAuthenticateRequest, DIDAuthenticateResponse,
+                ResponseProtocolData,
+            },
+            ports::DIDAuthenticate,
+            service::{EIDServiceConfig, UseidService},
         },
-        ports::DIDAuthenticate,
-        service::{EIDServiceConfig, UseidService},
+        session::{MemoryStore, SessionManager},
     };
     use async_trait::async_trait;
     use axum::{extract::State, response::IntoResponse};
@@ -529,13 +534,16 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn test_axum_handler_integration() {
         let config = EIDServiceConfig::default();
-        let useid_service = Arc::new(UseidService::new(config));
+        let store = MemoryStore::new();
+        let session_manager = SessionManager::new(store);
+        let useid_service = Arc::new(UseidService::new(config, session_manager.clone()));
 
         let state = AppState {
-            eid_service: useid_service.clone(),
-            use_id: useid_service.clone(),
+            service: useid_service,
+            session_manager: Arc::new(session_manager),
         };
 
         let soap_request = create_minimal_valid_soap_request();

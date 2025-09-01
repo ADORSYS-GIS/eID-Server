@@ -1,0 +1,48 @@
+services:
+  redis:
+    image: bitnami/redis:8.0
+    container_name: redis-server
+    environment:
+      - REDIS_PASSWORD=redispassword
+
+      # Enable TLS
+      - REDIS_TLS_ENABLED=yes
+      - REDIS_TLS_AUTH_CLIENTS=no
+      - REDIS_TLS_PORT=6379
+      - REDIS_TLS_CERT_FILE=/certs/redis.crt
+      - REDIS_TLS_KEY_FILE=/certs/redis.key
+      - REDIS_TLS_CA_FILE=/certs/ca.crt
+      - REDIS_TLS_DH_PARAMS_FILE=/certs/redis.dh
+    volumes:
+      - ./test_data:/certs
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "redis-cli --tls --cert /certs/redis.crt --key /certs/redis.key --cacert /certs/ca.crt -a redispassword ping | grep PONG",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - app-network
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: eid-server
+    env_file: .env
+    ports:
+      - 3000:3000
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
