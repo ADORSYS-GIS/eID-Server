@@ -5,7 +5,6 @@ pub mod models;
 pub mod persistence;
 pub mod updater;
 
-
 use log::info;
 
 use crate::pki::trust_store::{
@@ -24,9 +23,11 @@ impl TrustStore {
     /// Creates a new `TrustStore` instance.
     /// It attempts to load existing certificates from the repository.
     /// If loading fails (e.g., file not found or corrupted), it initializes an empty store.
-    pub async fn new(repository: Box<dyn TrustStoreRepository + Send + Sync>) -> Result<Self, TrustStoreError> {
+    pub async fn new(
+        repository: Box<dyn TrustStoreRepository + Send + Sync>,
+    ) -> Result<Self, TrustStoreError> {
         let certificates = repository.load_certificates().await?; // This is the "fail hard" part
-        
+
         let certificate_manager = CertificateManager::new(certificates);
 
         Ok(Self {
@@ -36,10 +37,18 @@ impl TrustStore {
     }
 
     /// Adds a new CSCA certificate to the trust store.
-    pub async fn add_certificate(&mut self, cert_info: CSCAPublicKeyInfo) -> Result<(), TrustStoreError> {
-        info!("Attempting to add certificate with SKI: {}", cert_info.subject_key_identifier);
+    pub async fn add_certificate(
+        &mut self,
+        cert_info: CSCAPublicKeyInfo,
+    ) -> Result<(), TrustStoreError> {
+        info!(
+            "Attempting to add certificate with SKI: {}",
+            cert_info.subject_key_identifier
+        );
         self.certificate_manager.add_certificate(cert_info);
-        self.repository.save_certificates(self.certificate_manager.get_certificates()).await?;
+        self.repository
+            .save_certificates(self.certificate_manager.get_certificates())
+            .await?;
         info!("Successfully added and persisted certificate.");
         Ok(())
     }
@@ -50,8 +59,13 @@ impl TrustStore {
         self.certificate_manager
             .remove_certificate(ski)
             .ok_or(TrustStoreError::CertificateNotFound(ski.to_string()))?;
-        self.repository.save_certificates(self.certificate_manager.get_certificates()).await?;
-        info!("Successfully removed and persisted certificate with SKI: {}.", ski);
+        self.repository
+            .save_certificates(self.certificate_manager.get_certificates())
+            .await?;
+        info!(
+            "Successfully removed and persisted certificate with SKI: {}.",
+            ski
+        );
         Ok(())
     }
 
@@ -67,13 +81,17 @@ impl TrustStore {
 
     /// Triggers an update of the trust store using master lists.
     pub async fn update_from_master_list(&mut self) -> Result<(), TrustStoreError> {
-        // This will be implemented by the updater module
-        Err(TrustStoreError::Other("Master list update not yet implemented".to_string()))
+        // This have been implemented in the updater module
+        Err(TrustStoreError::Other(
+            "Master list update not yet implemented".to_string(),
+        ))
     }
 
     /// Cleans up expired certificates from the trust store.
     pub async fn cleanup_expired_certificates(&mut self) -> Result<(), TrustStoreError> {
-        // This will be implemented by the cleaner module
-        Err(TrustStoreError::Other("Certificate cleanup not yet implemented".to_string()))
+        // This have been implemented in the cleaner module
+        Err(TrustStoreError::Other(
+            "Certificate cleanup not yet implemented".to_string(),
+        ))
     }
 }

@@ -13,10 +13,7 @@ impl CertificateCleaner {
 
     /// Identifies and removes expired certificates from the `CertificateManager`.
     /// Returns a vector of the Subject Key Identifiers of the removed certificates.
-    pub fn cleanup_expired_certificates(
-        &self,
-        manager: &mut CertificateManager,
-    ) -> Vec<String> {
+    pub fn cleanup_expired_certificates(&self, manager: &mut CertificateManager) -> Vec<String> {
         let now = Utc::now();
         let mut removed_skis = Vec::new();
 
