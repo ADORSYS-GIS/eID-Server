@@ -1,6 +1,5 @@
 pub mod ecdh;
 pub mod ecdsa;
-
 mod errors;
 
 // public re-exports
@@ -37,5 +36,19 @@ impl HashAlg {
         let mut hasher = Hasher::new(self.message_digest())?;
         hasher.update(data)?;
         Ok(hasher.finish()?.to_vec())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hash_data() {
+        let data = b"test_data";
+
+        assert!(matches!(HashAlg::Sha1.hash(data), Ok(_)));
+        assert!(matches!(HashAlg::Sha256.hash(data), Ok(_)));
+        assert!(matches!(HashAlg::Sha512.hash(data), Ok(_)));
     }
 }

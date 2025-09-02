@@ -9,7 +9,7 @@ pub struct Chat {
     /// chat object identifier
     pub oid: Oid,
     /// chat template
-    #[rasn(tag(application, 0x13))]
+    #[rasn(tag(application, 0x13), size(5))]
     pub template: OctetString,
 }
 
@@ -82,5 +82,6 @@ pub struct CVCertificate {
     /// CV certificate body
     pub body: CVCertificateBody,
     /// CV certificate signature
+    #[rasn(tag(application, 0x37))]
     pub signature: OctetString,
 }

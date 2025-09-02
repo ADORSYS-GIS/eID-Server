@@ -146,3 +146,68 @@ impl std::fmt::Display for SecurityProtocol {
         write!(f, "Algorithm: {self:?}")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_security_protocol_from_oid() {
+        assert_eq!(
+            SecurityProtocol::from_oid(RSA_SHA256_OID_STR).unwrap(),
+            SecurityProtocol::RsaV1_5Sha256
+        );
+        assert_eq!(
+            SecurityProtocol::from_oid(ECDSA_SHA256_OID_STR).unwrap(),
+            SecurityProtocol::EcdsaSha256
+        );
+    }
+
+    #[test]
+    fn test_security_protocol_hash_algorithm() {
+        assert_eq!(
+            SecurityProtocol::RsaV1_5Sha256.hash_algorithm(),
+            HashAlg::Sha256
+        );
+        assert_eq!(
+            SecurityProtocol::RsaV1_5Sha512.hash_algorithm(),
+            HashAlg::Sha512
+        );
+        assert_eq!(
+            SecurityProtocol::RsaPssSha256.hash_algorithm(),
+            HashAlg::Sha256
+        );
+        assert_eq!(
+            SecurityProtocol::RsaPssSha512.hash_algorithm(),
+            HashAlg::Sha512
+        );
+        assert_eq!(
+            SecurityProtocol::EcdsaSha256.hash_algorithm(),
+            HashAlg::Sha256
+        );
+        assert_eq!(
+            SecurityProtocol::EcdsaSha384.hash_algorithm(),
+            HashAlg::Sha384
+        );
+        assert_eq!(
+            SecurityProtocol::EcdsaSha512.hash_algorithm(),
+            HashAlg::Sha512
+        );
+    }
+
+    #[test]
+    fn test_security_protocol_is_ecdsa() {
+        assert!(SecurityProtocol::EcdsaSha256.is_ecdsa());
+        assert!(SecurityProtocol::EcdsaSha384.is_ecdsa());
+        assert!(SecurityProtocol::EcdsaSha512.is_ecdsa());
+        assert!(!SecurityProtocol::RsaV1_5Sha256.is_ecdsa());
+        assert!(!SecurityProtocol::RsaPssSha256.is_ecdsa());
+    }
+
+    #[test]
+    fn test_security_protocol_is_rsa() {
+        assert!(SecurityProtocol::RsaV1_5Sha256.is_rsa());
+        assert!(SecurityProtocol::RsaPssSha256.is_rsa());
+        assert!(!SecurityProtocol::EcdsaSha256.is_rsa());
+    }
+}
