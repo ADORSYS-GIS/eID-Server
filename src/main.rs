@@ -31,7 +31,7 @@ async fn main() -> color_eyre::Result<()> {
     let key = include_bytes!("../Config/key.pem");
 
     // Build the TLS configuration
-    let tls_config = TlsConfig::new(cert, key)
+    let tls_config = TlsConfig::from_pem(cert, key)
         .with_psk(session_mgr)
         .with_session_store(tls_session_store);
 
