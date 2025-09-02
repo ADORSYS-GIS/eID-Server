@@ -20,6 +20,9 @@ use tracing::{debug, error, instrument, trace, warn};
 
 use crate::session::SessionStore;
 
+/// Redis key prefix for TLS session data stored by the TLS subsystem.
+pub const TLS_SESSION_PREFIX: &str = "tls_session";
+
 // RSA PSK Cipher suites
 // TLS_RSA_PSK_WITH_AES_256_CBC_SHA = {0x00,0x95}
 // TLS_RSA_PSK_WITH_AES_128_CBC_SHA = {0x00,0x94}

@@ -1,14 +1,12 @@
 use color_eyre::eyre::Context;
-use eid_server::{
-    config::Config,
-    domain::eid::service::EidService,
-    server::Server,
-    session::{RedisStore, SessionManager},
-    telemetry,
-    tls::{TestCertificates, TlsConfig, generate_test_certificates},
+use eid_server::config::Config;
+use eid_server::domain::eid::service::EidService;
+use eid_server::server::Server;
+use eid_server::session::{RedisStore, SessionManager};
+use eid_server::telemetry;
+use eid_server::tls::{
+    TLS_SESSION_PREFIX, TestCertificates, TlsConfig, generate_test_certificates,
 };
-
-const TLS_SESSION_PREFIX: &str = "tls_session";
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
