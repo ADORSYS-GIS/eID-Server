@@ -133,7 +133,10 @@ impl AccessRights {
 
     /// Add an access right
     pub fn add(&mut self, right: AccessRight) -> &mut Self {
-        self.rights.insert(right);
+        // ReadDG16 is reserved for future use
+        if right != AccessRight::ReadDG16 {
+            self.rights.insert(right);
+        }
         self
     }
 
@@ -170,7 +173,7 @@ impl AccessRights {
                     13 => AccessRight::ReadDG13,
                     14 => AccessRight::ReadDG14,
                     15 => AccessRight::ReadDG15,
-                    16 => AccessRight::ReadDG16,
+                    // ReadDG16 is reserved for future use
                     17 => AccessRight::ReadDG17,
                     18 => AccessRight::ReadDG18,
                     19 => AccessRight::ReadDG19,
