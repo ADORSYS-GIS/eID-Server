@@ -1,18 +1,12 @@
 use dashmap::DashMap;
-use eid_server::{
-    config::Config,
-    domain::eid::{
-        ports::{DIDAuthenticate, EIDService, EidService},
-        session_manager::SessionManager,
-    },
-    server::Server,
-    telemetry,
-    tls::{TestCertificates, TlsConfig, generate_test_certificates},
-};
+use eid_server::domain::eid::service::EidService;
+use eid_server::session::{MemoryStore, SessionManager};
+use eid_server::tls::{TestCertificates, TlsConfig, generate_test_certificates};
+use eid_server::{config::Config, server::Server, telemetry};
 
 pub async fn spawn_server(
-    eid_service: impl EIDService + EidService + DIDAuthenticate + SessionManager,
-    tls_config: TlsConfig,
+    session_store: MemoryStore,
+    tls_config: TlsConfig<MemoryStore>,
 ) -> String {
     telemetry::init_tracing();
 
@@ -23,7 +17,10 @@ pub async fn spawn_server(
         config
     };
 
-    let server = Server::new(eid_service, &config, tls_config).await.unwrap();
+    let session_manager = SessionManager::new(session_store);
+    let service = EidService::new(session_manager);
+
+    let server = Server::new(service, &config, tls_config).await.unwrap();
 
     let port = server.port();
     tokio::spawn(server.run());
@@ -32,7 +29,7 @@ pub async fn spawn_server(
 }
 
 #[allow(dead_code)]
-pub fn create_tls_config(psk_store: DashMap<String, Vec<u8>>) -> TlsConfig {
+pub fn create_tls_config(psk_store: DashMap<String, Vec<u8>>) -> TlsConfig<MemoryStore> {
     let TestCertificates {
         server_cert,
         server_key,

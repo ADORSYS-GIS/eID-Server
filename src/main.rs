@@ -1,10 +1,14 @@
+use color_eyre::eyre::Context;
 use eid_server::{
     config::Config,
-    domain::eid::service::{EIDServiceConfig, UseidService},
+    domain::eid::service::EidService,
     server::Server,
+    session::{RedisStore, SessionManager},
     telemetry,
-    tls::{self, TlsConfig},
+    tls::{TestCertificates, TlsConfig, generate_test_certificates},
 };
+
+const TLS_SESSION_PREFIX: &str = "tls_session";
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
@@ -15,26 +19,30 @@ async fn main() -> color_eyre::Result<()> {
     let config = Config::load()?;
     tracing::info!("Loaded configuration: {:?}", config);
 
-    // Create EIDService with configuration
-    let eid_service = UseidService::new(EIDServiceConfig {
-        max_sessions: 1000,
-        session_timeout_minutes: 5,
-        ecard_server_address: Some("https://localhost:3000".to_string()),
-        redis_url: config.redis_url.clone(),
-    });
-    let session_mgr = eid_service.session_manager.clone();
+    let redis_conn = config
+        .redis
+        .start()
+        .await
+        .wrap_err("Failed to start Redis")?;
+    let eid_store = RedisStore::new(redis_conn.clone());
+    let tls_store = RedisStore::new(redis_conn).with_prefix(TLS_SESSION_PREFIX);
 
-    // build the tls configuration
+    // load server certificate and key
     // TODO : Use real data to build the config
-    let tls_session_store = tls::InMemorySessionStore::new();
-    let cert = include_bytes!("../Config/cert.pem");
-    let key = include_bytes!("../Config/key.pem");
+    let TestCertificates {
+        server_cert,
+        server_key,
+        ..
+    } = generate_test_certificates();
 
+    let session_manager = SessionManager::new(eid_store);
     // Build the TLS configuration
-    let tls_config = TlsConfig::from_pem(cert, key)
-        .with_psk(session_mgr)
-        .with_session_store(tls_session_store);
+    let tls_config = TlsConfig::from_pem(server_cert, server_key)
+        .with_psk(session_manager.clone())
+        .with_session_store(tls_store);
 
-    let server = Server::new(eid_service, &config, tls_config).await?;
+    let service = EidService::new(session_manager);
+
+    let server = Server::new(service, &config, tls_config).await?;
     server.run().await
 }

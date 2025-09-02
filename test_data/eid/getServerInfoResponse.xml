@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+	xmlns:eid="http://bsi.bund.de/eID/">
+	<soapenv:Header />
+	<soapenv:Body>
+		<eid:getServerInfoResponse>
+			<eid:ServerVersion>
+				<eid:VersionString>Version 2.4.0 02.08.2021</eid:VersionString>
+				<eid:Major>2</eid:Major>
+				<eid:Minor>4</eid:Minor>
+				<eid:Bugfix>0</eid:Bugfix>
+			</eid:ServerVersion>
+			<eid:DocumentVerificationRights>
+				<eid:DocumentType>ALLOWED</eid:DocumentType>
+				<eid:IssuingState>ALLOWED</eid:IssuingState>
+				<eid:DateOfExpiry>ALLOWED</eid:DateOfExpiry>
+				<eid:GivenNames>ALLOWED</eid:GivenNames>
+				<eid:FamilyNames>ALLOWED</eid:FamilyNames>
+				<eid:ArtisticName>ALLOWED</eid:ArtisticName>
+				<eid:AcademicTitle>ALLOWED</eid:AcademicTitle>
+				<eid:DateOfBirth>ALLOWED</eid:DateOfBirth>
+				<eid:PlaceOfBirth>ALLOWED</eid:PlaceOfBirth>
+				<eid:Nationality>ALLOWED</eid:Nationality>
+				<eid:BirthName>ALLOWED</eid:BirthName>
+				<eid:PlaceOfResidence>ALLOWED</eid:PlaceOfResidence>
+				<eid:CommunityID />
+				<eid:ResidencePermitI />
+				<eid:RestrictedID>ALLOWED</eid:RestrictedID>
+				<eid:AgeVerification>ALLOWED</eid:AgeVerification>
+				<eid:PlaceVerification>ALLOWED</eid:PlaceVerification>
+			</eid:DocumentVerificationRights>
+		</eid:getServerInfoResponse>
+	</soapenv:Body>
+</soapenv:Envelope>

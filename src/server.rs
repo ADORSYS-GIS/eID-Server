@@ -7,42 +7,36 @@ use std::net::TcpListener;
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::domain::eid::session_manager::SessionManager;
-use crate::eid::get_server_info::handler::get_server_info;
-use crate::server::handlers::paos::paos_handler;
+use crate::domain::eid::service::EidService;
+use crate::server::handlers::health::health_check;
+use crate::session::SessionStore;
+use crate::tls::TlsConfig;
+use axum::http::Method;
 use axum::{Router, routing::get};
-use axum::{http::Method, routing::post};
 use axum_server::tls_openssl::{OpenSSLAcceptor, OpenSSLConfig};
 use color_eyre::eyre::{Context, Result};
-use handlers::did_auth::did_authenticate;
-use handlers::health::health_check;
-use handlers::useid::use_id_handler;
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
 
-use crate::domain::eid::ports::{DIDAuthenticate, EIDService, EidService};
-use crate::tls::TlsConfig;
-
 #[derive(Debug, Clone)]
-pub struct AppState<S: EIDService + EidService> {
-    pub use_id: Arc<S>,
-    pub eid_service: Arc<S>,
+pub struct AppState<S: SessionStore> {
+    pub service: EidService<S>,
 }
 
-pub struct Server {
+pub struct Server<S: SessionStore> {
     router: Router,
     listener: TcpListener,
-    tls_config: TlsConfig,
+    tls_config: TlsConfig<S>,
 }
 
-impl Server {
+impl<S: SessionStore> Server<S> {
     /// Creates a new HTTPS server.
     pub async fn new(
-        eid_service: impl EIDService + EidService + DIDAuthenticate + SessionManager,
+        service: EidService<S>,
         config: &Config,
-        tls_config: TlsConfig,
+        tls_config: TlsConfig<S>,
     ) -> Result<Self> {
         let trace_layer =
             TraceLayer::new_for_http().make_span_with(|request: &'_ axum::extract::Request<_>| {
@@ -61,23 +55,10 @@ impl Server {
                 Method::OPTIONS,
             ]);
 
-        let eid_service = Arc::new(eid_service);
-        let state = AppState {
-            use_id: eid_service.clone(),
-            eid_service,
-        };
+        let state = AppState { service };
 
         let router = Router::new()
             .route("/health", get(health_check))
-            .route("/", post(paos_handler))
-            .route("/did-authenticate", post(did_authenticate))
-            .nest(
-                "/eIDService",
-                Router::new()
-                    .route("/useID", post(use_id_handler))
-                    .route("/useID", get(use_id_handler))
-                    .route("/getServerInfo", get(get_server_info)),
-            )
             .layer(cors_layer)
             .layer(trace_layer)
             .with_state(state);

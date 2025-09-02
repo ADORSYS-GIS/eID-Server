@@ -1,5 +1,4 @@
-use crate::tls::psk::PskStoreError;
-use crate::tls::session::SessionStoreError;
+use crate::{session::SessionStoreError, tls::psk::PskStoreError};
 use openssl::error::ErrorStack;
 use thiserror::Error;
 
