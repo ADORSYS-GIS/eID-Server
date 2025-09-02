@@ -36,9 +36,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # Miscellaneous utilities
 async-trait = "0.1"
 dashmap = "6.1"
+hex-literal = "1"
 time = { version = "0.3", features = ["serde"] }
 
-# Cryptographic utilities
+# Cryptographic dependencies
 hex = "0.4"
 secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
