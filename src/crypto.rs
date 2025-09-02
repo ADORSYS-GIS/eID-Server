@@ -47,8 +47,8 @@ mod tests {
     fn test_hash_data() {
         let data = b"test_data";
 
-        assert!(matches!(HashAlg::Sha1.hash(data), Ok(_)));
-        assert!(matches!(HashAlg::Sha256.hash(data), Ok(_)));
-        assert!(matches!(HashAlg::Sha512.hash(data), Ok(_)));
+        assert!(HashAlg::Sha1.hash(data).is_ok());
+        assert!(HashAlg::Sha256.hash(data).is_ok());
+        assert!(HashAlg::Sha512.hash(data).is_ok());
     }
 }
