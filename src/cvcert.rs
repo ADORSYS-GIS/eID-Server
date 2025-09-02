@@ -1,11 +1,13 @@
 mod crypto;
 mod errors;
+#[cfg(test)]
+mod tests;
 mod types;
 
 // public reexports
 pub use crypto::SecurityProtocol;
 pub use errors::Error;
-pub use types::{AccessRights, AccessRole, Date};
+pub use types::{AccessRight, AccessRights, AccessRole, Date};
 
 use rasn::der::{decode as der_decode, encode as der_encode};
 use types::CvcResult;
@@ -49,6 +51,80 @@ impl CvCertificate {
     /// Get the certificate signature as byte slice
     pub fn signature(&self) -> &[u8] {
         self.inner.signature.as_ref()
+    }
+
+    /// Get the certificate profile identifier
+    pub fn profile_id(&self) -> &[u8] {
+        self.inner.body.profile_id.as_ref()
+    }
+
+    /// Get the certification authority reference string
+    pub fn car(&self) -> String {
+        self.body().car()
+    }
+
+    /// Get the certificate holder reference string
+    pub fn chr(&self) -> String {
+        self.body().chr()
+    }
+
+    /// Get the certificate public key
+    pub fn public_key(&self) -> EcdsaPublicKey {
+        self.body().public_key()
+    }
+
+    /// Get the certificate holder authorization template
+    pub fn chat(&self) -> &Chat {
+        &self.inner.body.chat
+    }
+
+    /// Get the certificate effective date
+    pub fn effective_date(&self) -> CvcResult<Date> {
+        if self.inner.body.effective_date.len() != 6 {
+            return Err(Error::InvalidData("Invalid BCD date length".to_string()));
+        }
+
+        let mut bcd = [0u8; 6];
+        bcd.copy_from_slice(&self.inner.body.effective_date);
+        Date::from_bcd(&bcd)
+    }
+
+    /// Get the certificate expiration date
+    pub fn expiration_date(&self) -> CvcResult<Date> {
+        if self.inner.body.expiration_date.len() != 6 {
+            return Err(Error::InvalidData("Invalid BCD date length".to_string()));
+        }
+
+        let mut bcd = [0u8; 6];
+        bcd.copy_from_slice(&self.inner.body.expiration_date);
+        Date::from_bcd(&bcd)
+    }
+
+    /// Check if the certificate is valid on a given date
+    pub fn is_valid_on(&self, date: &Date) -> CvcResult<bool> {
+        let effective = self.effective_date()?;
+        let expiration = self.expiration_date()?;
+        Ok(date >= &effective && date <= &expiration)
+    }
+
+    /// Check if this certificate is issued by the given certificate authority
+    pub fn is_issued_by(&self, car: impl Into<String>) -> bool {
+        self.car() == car.into()
+    }
+
+    /// Get the access role from the CHAT
+    pub fn access_role(&self) -> AccessRole {
+        self.chat().access_role()
+    }
+
+    /// Get the access rights from the CHAT
+    pub fn access_rights(&self) -> AccessRights {
+        self.chat().access_rights()
+    }
+
+    /// Check if this certificate has domain parameters (CVCA characteristic)
+    pub fn has_domain_parameters(&self) -> bool {
+        self.body().has_domain_parameters()
     }
 
     /// Get the DER representation of the certificate
