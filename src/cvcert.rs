@@ -215,7 +215,7 @@ impl Chat {
 
     /// Get the access role from the template
     pub fn access_role(&self) -> AccessRole {
-        if let Some(first_byte) = self.template.get(0) {
+        if let Some(first_byte) = self.template.first() {
             AccessRole::from_bits((first_byte >> 6) & 0b11)
         } else {
             AccessRole::Unknown

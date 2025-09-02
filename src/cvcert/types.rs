@@ -83,8 +83,8 @@ pub enum AccessRight {
     ReadDG22 = 29,
 
     // Reserved for Future Use
-    PSA = 30,
-    RFU = 31,
+    Psa = 30,
+    Rfu = 31,
 
     // Write Access
     WriteDG22 = 32,
@@ -153,7 +153,7 @@ impl AccessRights {
     /// Read access range is 1 to 22
     pub fn with_read_access(mut self, dg_range: RangeInclusive<u8>) -> Self {
         for dg in dg_range {
-            if dg >= 1 && dg <= 22 {
+            if (1..=22).contains(&dg) {
                 let right = match dg {
                     1 => AccessRight::ReadDG01,
                     2 => AccessRight::ReadDG02,
@@ -190,7 +190,7 @@ impl AccessRights {
     /// Write access range is 17 to 22
     pub fn with_write_access(mut self, dg_range: RangeInclusive<u8>) -> Self {
         for dg in dg_range {
-            if dg >= 17 && dg <= 22 {
+            if (17..=22).contains(&dg) {
                 let right = match dg {
                     17 => AccessRight::WriteDG17,
                     18 => AccessRight::WriteDG18,
@@ -255,9 +255,9 @@ impl AccessRights {
         // Extract role (bits 38-39, highest bits of template[0])
         let role = AccessRole::from_bits((template[0] >> 6) & 0b11);
         // Extract access rights
-        for byte_index in 0..5 {
+        for (byte_index, byte) in template.iter().enumerate() {
             for bit_index in 0..8 {
-                if template[byte_index] & (1 << bit_index) != 0 {
+                if byte & (1 << bit_index) != 0 {
                     let bit_pos = (4 - byte_index) * 8 + bit_index;
                     if let Some(right) = Self::bit_pos_to_right(bit_pos as u8) {
                         rights.rights.insert(right);
@@ -301,8 +301,8 @@ impl AccessRights {
             27 => Some(AccessRight::ReadDG20),
             28 => Some(AccessRight::ReadDG21),
             29 => Some(AccessRight::ReadDG22),
-            30 => Some(AccessRight::RFU),
-            31 => Some(AccessRight::PSA),
+            30 => Some(AccessRight::Rfu),
+            31 => Some(AccessRight::Psa),
             32 => Some(AccessRight::WriteDG22),
             33 => Some(AccessRight::WriteDG21),
             34 => Some(AccessRight::WriteDG20),
@@ -340,15 +340,15 @@ impl Date {
     /// Month must be in range 1-12.
     /// Day must be in range 1-31.
     pub fn new(year: u16, month: u8, day: u8) -> Result<Self, Error> {
-        if year < 2000 || year > 2099 {
+        if !(2000..=2099).contains(&year) {
             return Err(Error::InvalidData(format!(
                 "Year out of range [2000-2099]: {year}",
             )));
         }
-        if month < 1 || month > 12 {
+        if !(1..=12).contains(&month) {
             return Err(Error::InvalidData(format!("Invalid month: {month}")));
         }
-        if day < 1 || day > 31 {
+        if !(1..=31).contains(&day) {
             return Err(Error::InvalidData(format!("Invalid day: {day}")));
         }
         let max_days = match month {
@@ -376,7 +376,7 @@ impl Date {
         Self {
             year: dt.year() as u16,
             month: dt.month() as u8,
-            day: dt.day() as u8,
+            day: dt.day(),
         }
     }
 
@@ -385,7 +385,7 @@ impl Date {
         Self {
             year: date.year() as u16,
             month: date.month() as u8,
-            day: date.day() as u8,
+            day: date.day(),
         }
     }
 
@@ -462,7 +462,7 @@ impl Date {
 
         // Safety: this is safe because the constructor ensures that the month is in range 1-12.
         let month = Month::try_from(self.month).unwrap();
-        let date = Date::from_calendar_date(self.year as i32, month, self.day as u8).unwrap();
+        let date = Date::from_calendar_date(self.year as i32, month, self.day).unwrap();
         let time = Time::from_hms(0, 0, 0).unwrap();
         PrimitiveDateTime::new(date, time)
     }

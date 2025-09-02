@@ -15,7 +15,7 @@ async fn test_health_check_works() {
     } = generate_test_certificates();
 
     // build the tls configuration
-    let tls_config = TlsConfig::new(server_cert, server_key);
+    let tls_config = TlsConfig::from_pem(server_cert, server_key);
     let eid_service = UseidService::new(EIDServiceConfig::default());
     let addr = utils::spawn_server(eid_service, tls_config).await;
 

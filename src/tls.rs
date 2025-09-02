@@ -41,8 +41,8 @@ struct TlsPskConfig {
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Format {
-    PEM,
-    DER,
+    Pem,
+    Der,
 }
 
 struct Inner {
@@ -71,7 +71,7 @@ impl TlsConfig {
     pub fn from_pem(cert_chain: impl Into<Vec<u8>>, key: impl Into<Vec<u8>>) -> Self {
         Self {
             inner: Inner {
-                format: Format::PEM,
+                format: Format::Pem,
                 psk_config: None,
                 cert_chain: cert_chain.into(),
                 private_key: key.into(),
@@ -92,7 +92,7 @@ impl TlsConfig {
     pub fn from_der(cert_chain: impl Into<Vec<u8>>, key: impl Into<Vec<u8>>) -> Self {
         Self {
             inner: Inner {
-                format: Format::DER,
+                format: Format::Der,
                 psk_config: None,
                 cert_chain: cert_chain.into(),
                 private_key: key.into(),
@@ -208,7 +208,7 @@ impl TlsConfig {
         // Load server certificate chain and private key
         let cert: X509;
         let key: PKey<Private>;
-        if self.inner.format == Format::PEM {
+        if self.inner.format == Format::Pem {
             trace!("Loading server certificate chain from PEM...");
             cert = X509::from_pem(&self.inner.cert_chain)?;
             trace!("Loading server private key from PEM...");

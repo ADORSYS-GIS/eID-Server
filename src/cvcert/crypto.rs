@@ -143,6 +143,6 @@ impl SecurityProtocol {
 
 impl std::fmt::Display for SecurityProtocol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Algorithm: {:?}", self)
+        write!(f, "Algorithm: {self:?}")
     }
 }
