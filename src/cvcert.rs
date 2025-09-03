@@ -13,11 +13,11 @@ use rasn::der::{decode as der_decode, encode as der_encode};
 use types::CvcResult;
 
 use crate::asn1::cvcert::{
-    CVCertificate as Asn1CVCertificate, CVCertificateBody as Asn1CVCertificateBody, Chat,
+    CvCertificate as Asn1CVCertificate, CvCertificateBody as Asn1CVCertificateBody, Chat,
     EcdsaPublicKey,
 };
 
-/// Card Verifiable Certificate according to TR-03110-3
+/// A Card Verifiable Certificate according to TR-03110-3
 #[derive(Debug, Clone)]
 pub struct CvCertificate {
     inner: Asn1CVCertificate,
@@ -41,44 +41,44 @@ impl CvCertificate {
         Self::from_der(&data)
     }
 
-    /// Get the certificate body
+    /// Returns this certificate body
     pub fn body(&self) -> CvCertificateBody {
         CvCertificateBody {
             inner: self.inner.body.clone(),
         }
     }
 
-    /// Get the certificate signature as byte slice
+    /// Returns the signature of this certificate as byte slice
     pub fn signature(&self) -> &[u8] {
         self.inner.signature.as_ref()
     }
 
-    /// Get the certificate profile identifier
+    /// Returns the certificate profile identifier
     pub fn profile_id(&self) -> &[u8] {
         self.inner.body.profile_id.as_ref()
     }
 
-    /// Get the certification authority reference string
+    /// Returns the certificate authority reference string
     pub fn car(&self) -> String {
         self.body().car()
     }
 
-    /// Get the certificate holder reference string
+    /// Returns the certificate holder reference string
     pub fn chr(&self) -> String {
         self.body().chr()
     }
 
-    /// Get the certificate public key
+    /// Returns the public key of this certificate
     pub fn public_key(&self) -> EcdsaPublicKey {
         self.body().public_key()
     }
 
-    /// Get the certificate holder authorization template
+    /// Returns the certificate holder authorization template
     pub fn chat(&self) -> &Chat {
         &self.inner.body.chat
     }
 
-    /// Get the certificate effective date
+    /// Get the date from which this certificate is effective
     pub fn effective_date(&self) -> CvcResult<Date> {
         if self.inner.body.effective_date.len() != 6 {
             return Err(Error::InvalidData("Invalid BCD date length".to_string()));
@@ -89,7 +89,7 @@ impl CvCertificate {
         Date::from_bcd(&bcd)
     }
 
-    /// Get the certificate expiration date
+    /// Returns the expiration date of this certificate
     pub fn expiration_date(&self) -> CvcResult<Date> {
         if self.inner.body.expiration_date.len() != 6 {
             return Err(Error::InvalidData("Invalid BCD date length".to_string()));
@@ -112,12 +112,19 @@ impl CvCertificate {
         self.car() == car.into()
     }
 
-    /// Get the access role from the CHAT
+    /// Get the access role of this certificate
+    /// 
+    /// Possible values:
+    /// - **CVCA**: Root CVCA or linked CVCA
+    /// - **DVOD**: Document Verifier Official Domestic
+    /// - **DVNoF**: Document Verifier Non Official/Foreign
+    /// - **AT**: Authentication Terminal
+    /// - **Unknown**: Unknown access role
     pub fn access_role(&self) -> AccessRole {
         self.chat().access_role()
     }
 
-    /// Get the access rights from the CHAT
+    /// Returns the access rights of this certificate
     pub fn access_rights(&self) -> AccessRights {
         self.chat().access_rights()
     }
@@ -127,12 +134,12 @@ impl CvCertificate {
         self.body().has_domain_parameters()
     }
 
-    /// Get the DER representation of the certificate
+    /// Returns the DER representation of the certificate
     pub fn to_der(&self) -> CvcResult<Vec<u8>> {
         Ok(der_encode(&self.inner)?)
     }
 
-    /// Get the hex representation of the certificate
+    /// Returns the hex representation of the certificate
     pub fn to_hex(&self) -> CvcResult<String> {
         let der = self.to_der()?;
         Ok(hex::encode(der))
@@ -144,11 +151,15 @@ impl CvCertificate {
     }
 
     /// Validate the certificate structure according to rules defined in TR-03110-3
+    /// 
+    /// - Self-signed CVCA certificates SHALL contain domain parameters
+    /// - Linked CVCA certificates MAY contain domain parameters
+    /// - DV and Terminal certificates MUST NOT contain domain parameters
     pub fn validate_structure(&self) -> CvcResult<()> {
         self.body().validate_structure()
     }
 
-    /// Get the raw body bytes for signature verification
+    /// Returns the raw body bytes of this certificate
     pub fn raw_body(&self) -> CvcResult<Vec<u8>> {
         Ok(der_encode(&self.inner.body)?)
     }
@@ -286,10 +297,12 @@ impl CvCertificateBody {
 }
 
 impl Chat {
+    /// Certificate Holder Authorization Template (CHAT) object identifier
     pub const CHAT_OID: &[u32] = &[0, 4, 0, 127, 0, 7, 3, 1, 2, 2];
+    /// Certificate Holder Authorization Template (CHAT) object identifier
     pub const CHAT_OID_STR: &str = "0.4.0.127.0.7.3.1.2.2";
 
-    /// Get the access role from the template
+    /// Get the access role of this CHAT
     pub fn access_role(&self) -> AccessRole {
         if let Some(first_byte) = self.template.first() {
             AccessRole::from_bits((first_byte >> 6) & 0b11)
@@ -298,7 +311,7 @@ impl Chat {
         }
     }
 
-    /// Get the access rights from the template
+    /// Get the access rights of this CHAT
     pub fn access_rights(&self) -> AccessRights {
         if self.template.len() >= 5 {
             let mut template = [0u8; 5];
@@ -319,7 +332,7 @@ impl EcdsaPublicKey {
         SecurityProtocol::from_oid(&self.oid.to_string()).ok()
     }
 
-    /// Get the uncompressed public point
+    /// Returns the uncompressed public point of this public key as byte slice
     pub fn public_point(&self) -> &[u8] {
         &self.public_point
     }

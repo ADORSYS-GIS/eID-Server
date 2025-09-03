@@ -48,10 +48,10 @@ pub struct EcdsaPublicKey {
 #[rasn(delegate)]
 pub struct CertificateExtensions(pub SequenceOf<Any>);
 
-/// CV Certificate Body
+/// Card Verifiable Certificate Body
 #[derive(Debug, Clone, Decode, Encode, AsnType)]
 #[rasn(tag(application, 0x4E))]
-pub struct CVCertificateBody {
+pub struct CvCertificateBody {
     /// certificate profile identifier
     #[rasn(tag(application, 0x29))]
     pub profile_id: OctetString,
@@ -75,12 +75,12 @@ pub struct CVCertificateBody {
     pub extensions: Option<CertificateExtensions>,
 }
 
-/// CV Certificate
+/// Card Verifiable Certificate
 #[derive(Debug, Clone, Decode, Encode, AsnType)]
 #[rasn(tag(application, 0x21))]
-pub struct CVCertificate {
+pub struct CvCertificate {
     /// CV certificate body
-    pub body: CVCertificateBody,
+    pub body: CvCertificateBody,
     /// CV certificate signature
     #[rasn(tag(application, 0x37))]
     pub signature: OctetString,
