@@ -13,7 +13,7 @@ use rasn::der::{decode as der_decode, encode as der_encode};
 use types::CvcResult;
 
 use crate::asn1::cvcert::{
-    CvCertificate as Asn1CVCertificate, CvCertificateBody as Asn1CVCertificateBody, Chat,
+    Chat, CvCertificate as Asn1CVCertificate, CvCertificateBody as Asn1CVCertificateBody,
     EcdsaPublicKey,
 };
 
@@ -113,7 +113,7 @@ impl CvCertificate {
     }
 
     /// Get the access role of this certificate
-    /// 
+    ///
     /// Possible values:
     /// - **CVCA**: Root CVCA or linked CVCA
     /// - **DVOD**: Document Verifier Official Domestic
@@ -151,7 +151,7 @@ impl CvCertificate {
     }
 
     /// Validate the certificate structure according to rules defined in TR-03110-3
-    /// 
+    ///
     /// - Self-signed CVCA certificates SHALL contain domain parameters
     /// - Linked CVCA certificates MAY contain domain parameters
     /// - DV and Terminal certificates MUST NOT contain domain parameters
