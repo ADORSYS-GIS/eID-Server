@@ -17,14 +17,8 @@ pub enum Error {
     #[error("Cryptographic error: {0}")]
     Crypto(#[from] ErrorStack),
 
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-
     #[error("Invalid data: {0}")]
     InvalidData(String),
-
-    #[error("Signature verification failed")]
-    SignatureError,
 
     #[error("Unsupported security protocol: {0}")]
     UnsupportedProtocol(String),
