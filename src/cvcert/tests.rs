@@ -7,7 +7,7 @@ fn test_decode_cvca() {
     let result = CvCertificate::from_hex(cert_hex);
     assert!(result.is_ok());
 
-    // Should be CVCA, self-signed and  domain parameters
+    // Should be CVCA, self-signed and contain domain parameters
     let cert = result.unwrap();
     assert_eq!(cert.access_role(), AccessRole::CVCA);
     assert!(cert.is_self_signed());
@@ -78,7 +78,7 @@ fn test_decode_link_cvca() {
         cert.expiration_date().unwrap(),
         Date::from_bcd(&hex!("010501020003")).unwrap()
     );
-    // Signature should be 64 bytes long (brainpoolP256r1 curve)
+    // Signature should be 64 bytes long (EcdsaSha256)
     assert_eq!(cert.signature().len(), 64);
     // Security protocol should be EcdsaSha256 (brainpoolP256r1 curve)
     assert_eq!(
@@ -116,7 +116,7 @@ fn test_dv_cert() {
         cert.expiration_date().unwrap(),
         Date::from_bcd(&hex!("020700090002")).unwrap()
     );
-    // Signature should be 64 bytes long (brainpoolP256r1 curve)
+    // Signature should be 64 bytes long (EcdsaSha256)
     assert_eq!(cert.signature().len(), 64);
 }
 
@@ -148,7 +148,7 @@ fn test_terminal_cert() {
         cert.expiration_date().unwrap(),
         Date::from_bcd(&hex!("020700090002")).unwrap()
     );
-    // Signature should be 64 bytes long (brainpoolP256r1 curve)
+    // Signature should be 64 bytes long (EcdsaSha256)
     assert_eq!(cert.signature().len(), 64);
 }
 
@@ -236,7 +236,8 @@ fn test_access_rights_with_read_access_full_range() {
 
     assert!(rights.has(AccessRight::ReadDG01));
     assert!(rights.has(AccessRight::ReadDG22));
-    // Should have exactly 22 read rights
+    // Should have exactly 21 read rights
+    // DG16 is reserved for future use, thus not included
     assert_eq!(rights.rights().len(), 21);
 }
 
@@ -248,6 +249,7 @@ fn test_access_rights_with_read_access_invalid_range() {
     assert!(!rights.has(AccessRight::AgeVerification));
     assert!(rights.has(AccessRight::ReadDG01));
     assert!(rights.has(AccessRight::ReadDG22));
+    // DG16 is reserved for future use, thus not included
     assert_eq!(rights.rights().len(), 21);
 }
 
@@ -326,9 +328,9 @@ fn test_chat_template_from_conversion() {
     template[0] |= 0b11 << 6;
 
     // Set some access rights
-    template[4] |= 0b00000001; // bit 0 - AgeVerification
-    template[3] |= 0b00000001; // bit 8 - ReadDG01
-    template[0] |= 0b00000001; // bit 32 - WriteDG22
+    template[4] |= 0b00000001; // bit 0 byte 4 - AgeVerification
+    template[3] |= 0b00000001; // bit 8 byte 3 - ReadDG01
+    template[0] |= 0b00000001; // bit 32 byte 0 - WriteDG22
 
     let (role, rights) = AccessRights::from_chat_template(template);
 
@@ -415,10 +417,12 @@ fn test_date_from_bcd_invalid_length() {
 
 #[test]
 fn test_date_from_bcd_invalid_unpacked() {
-    let bcd = [2, 3, 1, 2, 2, 0x15]; // Last byte has high nibble set
+    // Last byte has high nibble set
+    let bcd = [2, 3, 1, 2, 2, 0x15];
     assert!(Date::from_bcd(&bcd).is_err());
 
-    let bcd2 = [2, 3, 1, 2, 2, 0x0A]; // Last byte has invalid digit (A)
+    // Last byte has invalid digit (A)
+    let bcd2 = [2, 3, 1, 2, 2, 0x0A];
     assert!(Date::from_bcd(&bcd2).is_err());
 }
 
