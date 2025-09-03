@@ -80,31 +80,17 @@ impl CvCertificate {
 
     /// Get the date from which this certificate is effective
     pub fn effective_date(&self) -> CvcResult<Date> {
-        if self.inner.body.effective_date.len() != 6 {
-            return Err(Error::InvalidData("Invalid BCD date length".to_string()));
-        }
-
-        let mut bcd = [0u8; 6];
-        bcd.copy_from_slice(&self.inner.body.effective_date);
-        Date::from_bcd(&bcd)
+        self.body().effective_date()
     }
 
     /// Returns the expiration date of this certificate
     pub fn expiration_date(&self) -> CvcResult<Date> {
-        if self.inner.body.expiration_date.len() != 6 {
-            return Err(Error::InvalidData("Invalid BCD date length".to_string()));
-        }
-
-        let mut bcd = [0u8; 6];
-        bcd.copy_from_slice(&self.inner.body.expiration_date);
-        Date::from_bcd(&bcd)
+        self.body().expiration_date()
     }
 
     /// Check if the certificate is valid on a given date
     pub fn is_valid_on(&self, date: &Date) -> CvcResult<bool> {
-        let effective = self.effective_date()?;
-        let expiration = self.expiration_date()?;
-        Ok(date >= &effective && date <= &expiration)
+        self.body().is_valid_on(date)
     }
 
     /// Check if this certificate is issued by the given certificate authority
