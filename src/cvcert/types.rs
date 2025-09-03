@@ -345,7 +345,7 @@ impl Date {
     pub fn new(year: u16, month: u8, day: u8) -> Result<Self, Error> {
         if !(2000..=2099).contains(&year) {
             return Err(Error::InvalidData(format!(
-                "Year out of range [2000-2099]: {year}",
+                "Year out of range [2000-2099]: got {year}",
             )));
         }
         if !(1..=12).contains(&month) {
@@ -374,7 +374,7 @@ impl Date {
         Ok(Self { year, month, day })
     }
 
-    /// Create from chrono DateTime
+    /// Create from time UtcDateTime
     pub fn from_datetime(dt: UtcDateTime) -> Self {
         Self {
             year: dt.year() as u16,
@@ -383,7 +383,7 @@ impl Date {
         }
     }
 
-    /// Create from chrono NaiveDate
+    /// Create from time PrimitiveDateTime
     pub fn from_primitive_date(date: PrimitiveDateTime) -> Self {
         Self {
             year: date.year() as u16,
@@ -444,26 +444,27 @@ impl Date {
         Date::new(year, month, day)
     }
 
-    /// Get year
+    /// Get the year of this date
     pub fn year(&self) -> u16 {
         self.year
     }
 
-    /// Get month
+    /// Get the month of this date
     pub fn month(&self) -> u8 {
         self.month
     }
 
-    /// Get day
+    /// Get the day of this date
     pub fn day(&self) -> u8 {
         self.day
     }
 
-    /// Convert to chrono PrimitiveDateTime
+    /// Convert to time PrimitiveDateTime
     pub fn to_primitive_date(&self) -> PrimitiveDateTime {
         use time::{Date, Month, Time};
 
-        // Safety: this is safe because the constructor ensures that the month is in range 1-12.
+        // Safety: the constructors ensure that the values are valid.
+        // So it is safe to unwrap the values directly.
         let month = Month::try_from(self.month).unwrap();
         let date = Date::from_calendar_date(self.year as i32, month, self.day).unwrap();
         let time = Time::from_hms(0, 0, 0).unwrap();
