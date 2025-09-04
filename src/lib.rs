@@ -1,6 +1,7 @@
 pub mod adapters;
 pub mod config;
 pub mod domain;
+pub mod pki;
 pub mod server;
 pub mod session;
 pub mod telemetry;
