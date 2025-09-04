@@ -1,5 +1,5 @@
-use crate::crypto::HashAlg;
 use crate::asn1::oid::*;
+use crate::crypto::HashAlg;
 
 use super::Error;
 use super::types::CvcResult;
