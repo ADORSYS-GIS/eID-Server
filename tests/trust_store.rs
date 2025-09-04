@@ -97,7 +97,8 @@ async fn create_test_cert_info(path: &str, days_offset: i64, unique_id: &str) ->
     cert_info.not_before = now + Duration::days(days_offset - 1);
     cert_info.not_after = now + Duration::days(days_offset);
     // Ensure unique SKI for test certificates if they originate from the same file
-    cert_info.subject_key_identifier = format!("{}-{}", cert_info.subject_key_identifier, unique_id);
+    cert_info.subject_key_identifier =
+        format!("{}-{}", cert_info.subject_key_identifier, unique_id);
     cert_info.serial_number = format!("{}-{}", cert_info.serial_number, unique_id);
     cert_info
 }
@@ -126,47 +127,79 @@ async fn test_certificate_manager_new() {
 #[tokio::test]
 async fn test_certificate_manager_add_and_get() {
     let mut manager = CertificateManager::new(HashMap::new());
-    let cert1_info = create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "cert1").await;
+    let cert1_info =
+        create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "cert1").await;
     manager.add_certificate(cert1_info.clone()).unwrap();
 
-    assert_eq!(manager.get_certificate_by_ski(&cert1_info.subject_key_identifier), Some(cert1_info.clone()));
+    assert_eq!(
+        manager.get_certificate_by_ski(&cert1_info.subject_key_identifier),
+        Some(cert1_info.clone())
+    );
     assert!(manager.get_certificate_by_ski("nonexistent").is_none());
 
-    let cert2_info = create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 20, "cert1").await; // Overwrites cert1
+    let cert2_info =
+        create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 20, "cert1").await; // Overwrites cert1
     manager.add_certificate(cert2_info.clone()).unwrap();
     // When adding a certificate with the same SKI, it should replace the old one
-    assert_eq!(manager.get_certificate_by_ski(&cert2_info.subject_key_identifier), Some(cert2_info));
+    assert_eq!(
+        manager.get_certificate_by_ski(&cert2_info.subject_key_identifier),
+        Some(cert2_info)
+    );
 }
 
 #[tokio::test]
 async fn test_certificate_manager_remove() {
     let mut manager = CertificateManager::new(HashMap::new());
-    let cert1_info = create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "cert1").await;
+    let cert1_info =
+        create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "cert1").await;
     manager.add_certificate(cert1_info.clone()).unwrap();
 
-    assert!(manager.remove_certificate(&cert1_info.subject_key_identifier).is_some());
-    assert!(manager.get_certificate_by_ski(&cert1_info.subject_key_identifier).is_none());
+    assert!(
+        manager
+            .remove_certificate(&cert1_info.subject_key_identifier)
+            .is_some()
+    );
+    assert!(
+        manager
+            .get_certificate_by_ski(&cert1_info.subject_key_identifier)
+            .is_none()
+    );
     assert!(manager.remove_certificate("nonexistent").is_none());
 }
 
 #[tokio::test]
 async fn test_certificate_manager_list() {
     let mut manager = CertificateManager::new(HashMap::new());
-    let cert1_info = create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "cert1").await;
-    let cert2_info = create_test_cert_info("test_data/Link-[CA]_TEST_csca-germany-0008-04f0.cer", 20, "cert2").await;
+    let cert1_info =
+        create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "cert1").await;
+    let cert2_info = create_test_cert_info(
+        "test_data/Link-[CA]_TEST_csca-germany-0008-04f0.cer",
+        20,
+        "cert2",
+    )
+    .await;
     manager.add_certificate(cert1_info.clone()).unwrap();
     manager.add_certificate(cert2_info.clone()).unwrap();
 
     let listed_certs = manager.list_certificates();
     assert_eq!(listed_certs.len(), 2);
-    assert!(listed_certs.iter().any(|c| c.subject_key_identifier == cert1_info.subject_key_identifier));
-    assert!(listed_certs.iter().any(|c| c.subject_key_identifier == cert2_info.subject_key_identifier));
+    assert!(
+        listed_certs
+            .iter()
+            .any(|c| c.subject_key_identifier == cert1_info.subject_key_identifier)
+    );
+    assert!(
+        listed_certs
+            .iter()
+            .any(|c| c.subject_key_identifier == cert2_info.subject_key_identifier)
+    );
 }
 
 #[tokio::test]
 async fn test_certificate_manager_clear() {
     let mut manager = CertificateManager::new(HashMap::new());
-    let cert1_info = create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "cert1").await;
+    let cert1_info =
+        create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "cert1").await;
     manager.add_certificate(cert1_info).unwrap();
     // To clear certificates, we would iterate and remove or reinitialize the manager.
     // For this test, we can simulate clearing by creating a new manager.
@@ -236,7 +269,8 @@ async fn test_master_list_updater_fetch_failure() {
 #[tokio::test]
 async fn test_certificate_cleaner_no_expired() {
     let mut manager = CertificateManager::new(HashMap::new());
-    let cert1_info = create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "cert1").await; // Valid for 10 more days
+    let cert1_info =
+        create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "cert1").await; // Valid for 10 more days
     manager.add_certificate(cert1_info).unwrap();
 
     let cleaner = CertificateCleaner::new();
@@ -250,8 +284,14 @@ async fn test_certificate_cleaner_some_expired() {
     let mut manager = CertificateManager::new(HashMap::new());
 
     // Add some certificates: one expired, one valid
-    let cert1_valid = create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "valid").await; // Valid
-    let cert2_expired = create_test_cert_info("test_data/Link-[CA]_TEST_csca-germany-0008-04f0.cer", -1, "expired").await; // Expired
+    let cert1_valid =
+        create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "valid").await; // Valid
+    let cert2_expired = create_test_cert_info(
+        "test_data/Link-[CA]_TEST_csca-germany-0008-04f0.cer",
+        -1,
+        "expired",
+    )
+    .await; // Expired
     manager.add_certificate(cert1_valid.clone()).unwrap();
     manager.add_certificate(cert2_expired.clone()).unwrap();
 
@@ -260,8 +300,16 @@ async fn test_certificate_cleaner_some_expired() {
     assert_eq!(removed.len(), 1);
     assert!(removed.contains(&cert2_expired.subject_key_identifier));
     assert_eq!(manager.list_certificates().len(), 1); // One valid cert remains
-    assert!(manager.get_certificate_by_ski(&cert1_valid.subject_key_identifier).is_some());
-    assert!(manager.get_certificate_by_ski(&cert2_expired.subject_key_identifier).is_none()); // Expired cert is removed
+    assert!(
+        manager
+            .get_certificate_by_ski(&cert1_valid.subject_key_identifier)
+            .is_some()
+    );
+    assert!(
+        manager
+            .get_certificate_by_ski(&cert2_expired.subject_key_identifier)
+            .is_none()
+    ); // Expired cert is removed
 }
 
 #[tokio::test]
@@ -269,8 +317,14 @@ async fn test_certificate_cleaner_all_expired() {
     let mut manager = CertificateManager::new(HashMap::new());
 
     // Add only expired certificates
-    let cert1_expired = create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", -10, "expired1").await; // Expired
-    let cert2_expired = create_test_cert_info("test_data/Link-[CA]_TEST_csca-germany-0008-04f0.cer", -5, "expired2").await; // Expired
+    let cert1_expired =
+        create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", -10, "expired1").await; // Expired
+    let cert2_expired = create_test_cert_info(
+        "test_data/Link-[CA]_TEST_csca-germany-0008-04f0.cer",
+        -5,
+        "expired2",
+    )
+    .await; // Expired
     manager.add_certificate(cert1_expired.clone()).unwrap();
     manager.add_certificate(cert2_expired.clone()).unwrap();
 
