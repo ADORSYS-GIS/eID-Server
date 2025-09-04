@@ -3,7 +3,9 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum TrustStoreError {
     #[error("Certificate parsing error: {0}")]
-    CertificateParsingError(#[from] x509_parser::error::X509Error),
+    CertificateParsingError(String),
+    #[error("Persistence error: {0}")]
+    PersistenceError(String),
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
     #[error("Serialization error: {0}")]

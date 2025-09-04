@@ -1,97 +1,67 @@
 pub mod certificate_manager;
-pub mod cleaner;
 pub mod error;
 pub mod models;
-pub mod persistence;
-pub mod updater;
 
-use log::info;
+use std::collections::HashMap;
 
 use crate::pki::trust_store::{
     certificate_manager::CertificateManager, error::TrustStoreError, models::CSCAPublicKeyInfo,
-    persistence::TrustStoreRepository,
 };
 
 /// The main TrustStore struct that orchestrates certificate management,
 /// persistence, updates, and cleanup.
 pub struct TrustStore {
     certificate_manager: CertificateManager,
-    repository: Box<dyn TrustStoreRepository + Send + Sync>,
+}
+
+impl Default for TrustStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TrustStore {
-    /// Creates a new `TrustStore` instance.
-    /// It attempts to load existing certificates from the repository.
-    /// If loading fails (e.g., file not found or corrupted), it initializes an empty store.
-    pub async fn new(
-        repository: Box<dyn TrustStoreRepository + Send + Sync>,
-    ) -> Result<Self, TrustStoreError> {
-        let certificates = repository.load_certificates().await?; // This is the "fail hard" part
-
+    pub fn new() -> Self {
+        let certificates = HashMap::new();
         let certificate_manager = CertificateManager::new(certificates);
-
-        Ok(Self {
+        Self {
             certificate_manager,
-            repository,
-        })
+        }
     }
 
     /// Adds a new CSCA certificate to the trust store.
-    pub async fn add_certificate(
-        &mut self,
-        cert_info: CSCAPublicKeyInfo,
-    ) -> Result<(), TrustStoreError> {
-        info!(
-            "Attempting to add certificate with SKI: {}",
-            cert_info.subject_key_identifier
-        );
-        self.certificate_manager.add_certificate(cert_info);
-        self.repository
-            .save_certificates(self.certificate_manager.get_certificates())
-            .await?;
-        info!("Successfully added and persisted certificate.");
-        Ok(())
+    pub fn add_certificate_der(&mut self, cert_der: Vec<u8>) -> Result<(), TrustStoreError> {
+        let cert_info = CSCAPublicKeyInfo::try_from_der_single(&cert_der)?;
+        self.certificate_manager.add_certificate(cert_info)
+    }
+
+    pub fn add_certificate_pem(&mut self, cert_pem: &[u8]) -> Result<(), TrustStoreError> {
+        let cert_der = crate::pki::trust_store::certificate_manager::parse_cert_pem(cert_pem)?;
+        let cert_info = CSCAPublicKeyInfo::try_from_der_single(&cert_der)?;
+        self.certificate_manager.add_certificate(cert_info)
     }
 
     /// Removes a CSCA certificate from the trust store by its subject key identifier.
-    pub async fn remove_certificate(&mut self, ski: &str) -> Result<(), TrustStoreError> {
-        info!("Attempting to remove certificate with SKI: {}", ski);
+    pub fn remove_certificate(&mut self, ski: &str) -> Result<(), TrustStoreError> {
         self.certificate_manager
             .remove_certificate(ski)
-            .ok_or(TrustStoreError::CertificateNotFound(ski.to_string()))?;
-        self.repository
-            .save_certificates(self.certificate_manager.get_certificates())
-            .await?;
-        info!(
-            "Successfully removed and persisted certificate with SKI: {}.",
-            ski
-        );
-        Ok(())
+            .ok_or(TrustStoreError::CertificateNotFound(ski.to_string()))
+            .map(|_| ())
     }
 
-    /// Retrieves a CSCA certificate by its subject key identifier.
-    pub fn get_certificate(&self, ski: &str) -> Option<CSCAPublicKeyInfo> {
-        self.certificate_manager.get_certificate(ski)
+    pub fn get_certificate_by_ski(&self, ski: &str) -> Option<CSCAPublicKeyInfo> {
+        self.certificate_manager.get_certificate_by_ski(ski)
     }
 
-    /// Returns a list of all current CSCA certificates in the trust store.
+    pub fn get_certificate_by_serial_number(
+        &self,
+        serial_number: &str,
+    ) -> Option<CSCAPublicKeyInfo> {
+        self.certificate_manager
+            .get_certificate_by_serial_number(serial_number)
+    }
+
     pub fn list_certificates(&self) -> Vec<CSCAPublicKeyInfo> {
         self.certificate_manager.list_certificates()
-    }
-
-    /// Triggers an update of the trust store using master lists.
-    pub async fn update_from_master_list(&mut self) -> Result<(), TrustStoreError> {
-        // This have been implemented in the updater module
-        Err(TrustStoreError::Other(
-            "Master list update not yet implemented".to_string(),
-        ))
-    }
-
-    /// Cleans up expired certificates from the trust store.
-    pub async fn cleanup_expired_certificates(&mut self) -> Result<(), TrustStoreError> {
-        // This have been implemented in the cleaner module
-        Err(TrustStoreError::Other(
-            "Certificate cleanup not yet implemented".to_string(),
-        ))
     }
 }
