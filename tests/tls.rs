@@ -12,8 +12,7 @@ async fn test_mutual_tls_works() {
     let (server_cert, server_key) = generate_leaf_certificate(&ca_cert, &ca_key);
 
     let session_store = MemoryStore::new();
-
-    let tls_config = TlsConfig::new(server_cert, server_key)
+    let tls_config = TlsConfig::from_pem(server_cert, server_key)
         .with_client_auth(&[ca_cert.to_pem().unwrap()], None::<&[u8]>)
         .with_session_store(session_store.clone());
 

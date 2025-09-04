@@ -7,7 +7,7 @@ pub use errors::TlsError;
 pub use psk::{PskStore, PskStoreError};
 
 use openssl::error::ErrorStack;
-use openssl::pkey::PKey;
+use openssl::pkey::{PKey, Private};
 use openssl::ssl::{
     ClientHelloResponse, SslAcceptor, SslAcceptorBuilder, SslContext, SslMethod, SslSession,
     SslSessionCacheMode, SslVerifyMode, SslVersion,
@@ -39,7 +39,14 @@ struct TlsPskConfig {
     cipher_suites: Vec<String>,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Format {
+    Pem,
+    Der,
+}
+
 struct Inner<S> {
+    format: Format,
     cert_chain: Vec<u8>,
     private_key: Vec<u8>,
     intermediate_certs: Option<Vec<u8>>,
@@ -55,18 +62,19 @@ pub struct TlsConfig<S: SessionStore> {
 }
 
 impl<S: SessionStore> TlsConfig<S> {
-    /// Creates a new TLS configuration.
+    /// Creates a new TLS configuration from PEM encoded data
     ///
     /// # Arguments
     ///
-    /// * `cert_chain_pem` - Server certificate chain in PEM format.
-    /// * `private_key_pem` - Server private key in PEM format.
-    pub fn new(cert_chain_pem: impl Into<Vec<u8>>, private_key_pem: impl Into<Vec<u8>>) -> Self {
+    /// * `cert_chain` - Server certificate chain in PEM format.
+    /// * `key` - Server private key in PEM format.
+    pub fn from_pem(cert_chain: impl Into<Vec<u8>>, key: impl Into<Vec<u8>>) -> Self {
         Self {
             inner: Inner {
+                format: Format::Pem,
                 psk_config: None,
-                cert_chain: cert_chain_pem.into(),
-                private_key: private_key_pem.into(),
+                cert_chain: cert_chain.into(),
+                private_key: key.into(),
                 intermediate_certs: None,
                 ca_certs: None,
                 is_mtls: false,
@@ -75,7 +83,29 @@ impl<S: SessionStore> TlsConfig<S> {
         }
     }
 
-    /// Enable client authentication by providing root CA certificates in PEM format.
+    /// Creates a new TLS configuration from DER encoded data
+    ///
+    /// # Arguments
+    ///
+    /// * `cert_chain` - Server certificate chain in DER format.
+    /// * `key` - Server private key in DER format.
+    pub fn from_der(cert_chain: impl Into<Vec<u8>>, key: impl Into<Vec<u8>>) -> Self {
+        Self {
+            inner: Inner {
+                format: Format::Der,
+                psk_config: None,
+                cert_chain: cert_chain.into(),
+                private_key: key.into(),
+                intermediate_certs: None,
+                ca_certs: None,
+                is_mtls: false,
+                session_store: None,
+            },
+        }
+    }
+
+    /// Enable client authentication by providing root CA certificates.
+    ///
     /// Optional intermediate certificates can also be provided.
     pub fn with_client_auth(
         mut self,
@@ -176,10 +206,19 @@ impl<S: SessionStore> TlsConfig<S> {
         let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls_server())?;
 
         // Load server certificate chain and private key
-        trace!("Loading server certificate chain from PEM...");
-        let cert = X509::from_pem(&self.inner.cert_chain)?;
-        trace!("Loading server private key from PEM...");
-        let key = PKey::private_key_from_pem(&self.inner.private_key)?;
+        let cert: X509;
+        let key: PKey<Private>;
+        if self.inner.format == Format::Pem {
+            trace!("Loading server certificate chain from PEM...");
+            cert = X509::from_pem(&self.inner.cert_chain)?;
+            trace!("Loading server private key from PEM...");
+            key = PKey::private_key_from_pem(&self.inner.private_key)?;
+        } else {
+            trace!("Loading server certificate chain from DER...");
+            cert = X509::from_der(&self.inner.cert_chain)?;
+            trace!("Loading server private key from DER...");
+            key = PKey::private_key_from_der(&self.inner.private_key)?;
+        }
 
         // Configure server certificate and private key
         builder.set_certificate(&cert)?;
