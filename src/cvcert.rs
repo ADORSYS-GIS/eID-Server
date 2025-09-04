@@ -283,11 +283,6 @@ impl CvCertificateBody {
 }
 
 impl Chat {
-    /// Certificate Holder Authorization Template (CHAT) object identifier
-    pub const CHAT_OID: &[u32] = &[0, 4, 0, 127, 0, 7, 3, 1, 2, 2];
-    /// Certificate Holder Authorization Template (CHAT) object identifier
-    pub const CHAT_OID_STR: &str = "0.4.0.127.0.7.3.1.2.2";
-
     /// Get the access role of this CHAT
     pub fn access_role(&self) -> AccessRole {
         if let Some(first_byte) = self.template.first() {

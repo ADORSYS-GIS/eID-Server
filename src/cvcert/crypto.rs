@@ -1,35 +1,10 @@
 use crate::crypto::HashAlg;
+use crate::asn1::oid::*;
 
 use super::Error;
 use super::types::CvcResult;
 
 use rasn::types::ObjectIdentifier as Oid;
-
-// OIDs vectors for security protocols
-const RSA_SHA1_OID: &[u32] = &[0, 4, 0, 127, 0, 7, 2, 2, 2, 1, 1];
-const RSA_SHA256_OID: &[u32] = &[0, 4, 0, 127, 0, 7, 2, 2, 2, 1, 2];
-const RSA_SHA512_OID: &[u32] = &[0, 4, 0, 127, 0, 7, 2, 2, 2, 1, 5];
-const RSA_PSS_SHA1_OID: &[u32] = &[0, 4, 0, 127, 0, 7, 2, 2, 2, 1, 3];
-const RSA_PSS_SHA256_OID: &[u32] = &[0, 4, 0, 127, 0, 7, 2, 2, 2, 1, 4];
-const RSA_PSS_SHA512_OID: &[u32] = &[0, 4, 0, 127, 0, 7, 2, 2, 2, 1, 6];
-const ECDSA_SHA1_OID: &[u32] = &[0, 4, 0, 127, 0, 7, 2, 2, 2, 2, 1];
-const ECDSA_SHA224_OID: &[u32] = &[0, 4, 0, 127, 0, 7, 2, 2, 2, 2, 2];
-const ECDSA_SHA256_OID: &[u32] = &[0, 4, 0, 127, 0, 7, 2, 2, 2, 2, 3];
-const ECDSA_SHA384_OID: &[u32] = &[0, 4, 0, 127, 0, 7, 2, 2, 2, 2, 4];
-const ECDSA_SHA512_OID: &[u32] = &[0, 4, 0, 127, 0, 7, 2, 2, 2, 2, 5];
-
-// OIDs strings for security protocols
-const RSA_SHA1_OID_STR: &str = "0.4.0.127.0.7.2.2.2.1.1";
-const RSA_SHA256_OID_STR: &str = "0.4.0.127.0.7.2.2.2.1.2";
-const RSA_SHA512_OID_STR: &str = "0.4.0.127.0.7.2.2.2.1.5";
-const RSA_PSS_SHA1_OID_STR: &str = "0.4.0.127.0.7.2.2.2.1.3";
-const RSA_PSS_SHA256_OID_STR: &str = "0.4.0.127.0.7.2.2.2.1.4";
-const RSA_PSS_SHA512_OID_STR: &str = "0.4.0.127.0.7.2.2.2.1.6";
-const ECDSA_SHA1_OID_STR: &str = "0.4.0.127.0.7.2.2.2.2.1";
-const ECDSA_SHA224_OID_STR: &str = "0.4.0.127.0.7.2.2.2.2.2";
-const ECDSA_SHA256_OID_STR: &str = "0.4.0.127.0.7.2.2.2.2.3";
-const ECDSA_SHA384_OID_STR: &str = "0.4.0.127.0.7.2.2.2.2.4";
-const ECDSA_SHA512_OID_STR: &str = "0.4.0.127.0.7.2.2.2.2.5";
 
 /// Security protocols supported by CV certificates
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
