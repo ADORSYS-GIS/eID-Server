@@ -4,7 +4,6 @@ use std::fmt;
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use time::format_description;
 use x509_parser::oid_registry::Oid;
 use x509_parser::prelude::{ASN1Time, FromDer, ParsedExtension, X509Certificate};
 use x509_parser::x509::AttributeTypeAndValue;
@@ -23,42 +22,12 @@ pub struct CSCAPublicKeyInfo {
 pub fn asn1_time_to_chrono(
     asn1_time: ASN1Time,
 ) -> Result<DateTime<Utc>, crate::pki::trust_store::error::TrustStoreError> {
-    let time_str = asn1_time.to_string();
-
-    // Try parsing as RFC3339 (YYYY-MM-DDTHH:MM:SSZ) first, as GeneralizedTime can be this format
-    let rfc3339_format = format_description::parse(
-        "[year]-[month]-[day]T[hour]:[minute]:[second]Z",
-    )
-    .map_err(|e| {
+    let timestamp = asn1_time.timestamp();
+    DateTime::<Utc>::from_timestamp(timestamp, 0).ok_or_else(|| {
         crate::pki::trust_store::error::TrustStoreError::InvalidCertificate(format!(
-            "Failed to parse RFC3339 format description: {}",
-            e
+            "Failed to convert ASN1Time timestamp {} to chrono::DateTime<Utc>",
+            timestamp
         ))
-    })?;
-
-    // Try parsing as UTCTime (YYMMDDHHMMSSZ)
-    let utc_time_format =
-        format_description::parse("[year repr:last_two]:[month]:[day]:[hour]:[minute]:[second]Z")
-            .map_err(|e| {
-            crate::pki::trust_store::error::TrustStoreError::InvalidCertificate(format!(
-                "Failed to parse UTCTime format description: {}",
-                e
-            ))
-        })?;
-
-    let offset_dt = time::OffsetDateTime::parse(&time_str, &rfc3339_format)
-        .or_else(|_| time::OffsetDateTime::parse(&time_str, &utc_time_format))
-        .map_err(|e| {
-            crate::pki::trust_store::error::TrustStoreError::InvalidCertificate(format!(
-                "Invalid ASN1Time conversion to OffsetDateTime for '{}': {}",
-                time_str, e
-            ))
-        })?;
-
-    DateTime::<Utc>::from_timestamp(offset_dt.unix_timestamp(), 0).ok_or_else(|| {
-        crate::pki::trust_store::error::TrustStoreError::InvalidCertificate(
-            "Failed to convert OffsetDateTime to chrono::DateTime<Utc>".to_string(),
-        )
     })
 }
 
