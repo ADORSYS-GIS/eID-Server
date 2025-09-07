@@ -1,4 +1,4 @@
-use crate::crypto::errors::{CryptoResult, Error};
+use crate::crypto::errors::CryptoResult;
 use openssl::ec::EcGroup;
 use openssl::nid::Nid;
 use std::fmt;
@@ -86,31 +86,6 @@ impl Curve {
         }
     }
 
-    /// Get the OID (Object Identifier) for this curve as specified in TR-03110
-    pub fn oid(self) -> &'static str {
-        match self {
-            Curve::NistP256 => "1.2.840.10045.3.1.7",
-            Curve::NistP384 => "1.3.132.0.34",
-            Curve::NistP521 => "1.3.132.0.35",
-            Curve::BrainpoolP256r1 => "1.3.36.3.3.2.8.1.1.7",
-            Curve::BrainpoolP384r1 => "1.3.36.3.3.2.8.1.1.11",
-            Curve::BrainpoolP512r1 => "1.3.36.3.3.2.8.1.1.13",
-        }
-    }
-
-    /// Parse curve from OID string
-    pub fn from_oid(oid: &str) -> CryptoResult<Self> {
-        match oid {
-            "1.2.840.10045.3.1.7" => Ok(Curve::NistP256),
-            "1.3.132.0.34" => Ok(Curve::NistP384),
-            "1.3.132.0.35" => Ok(Curve::NistP521),
-            "1.3.36.3.3.2.8.1.1.7" => Ok(Curve::BrainpoolP256r1),
-            "1.3.36.3.3.2.8.1.1.11" => Ok(Curve::BrainpoolP384r1),
-            "1.3.36.3.3.2.8.1.1.13" => Ok(Curve::BrainpoolP512r1),
-            _ => Err(Error::UnsupportedCurve(format!("Unknown OID: {oid}"))),
-        }
-    }
-
     /// Get all supported curves
     pub fn all() -> &'static [Curve] {
         &[
@@ -154,10 +129,6 @@ mod tests {
 
             // Test security levels
             assert!(curve.security_level_bits() >= 128);
-
-            // Test OID parsing round-trip
-            let oid = curve.oid();
-            assert_eq!(Curve::from_oid(oid).unwrap(), curve);
         }
     }
 
