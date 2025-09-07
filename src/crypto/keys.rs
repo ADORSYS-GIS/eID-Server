@@ -318,7 +318,7 @@ impl PublicKey {
     pub fn x_coordinate(&self) -> CryptoResult<Vec<u8>> {
         let coord_size = self.curve.coordinate_size();
         if self.point_data.len() < 1 + coord_size {
-            return Err(Error::InvalidKey("Invalid point data".to_string()));
+            return Err(Error::Invalid("Point data is too short".to_string()));
         }
         Ok(self.point_data[1..1 + coord_size].to_vec())
     }
@@ -327,7 +327,7 @@ impl PublicKey {
     pub fn y_coordinate(&self) -> CryptoResult<Vec<u8>> {
         let coord_size = self.curve.coordinate_size();
         if self.point_data.len() < 1 + 2 * coord_size {
-            return Err(Error::InvalidKey("Invalid point data".to_string()));
+            return Err(Error::Invalid("Point data is too short".to_string()));
         }
         Ok(self.point_data[1 + coord_size..1 + 2 * coord_size].to_vec())
     }
