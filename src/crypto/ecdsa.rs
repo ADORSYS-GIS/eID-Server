@@ -64,16 +64,22 @@ impl EcdsaSig {
         &self.der_data
     }
 
-    /// Get raw signature components (r, s)
-    pub fn components(&self) -> CryptoResult<(Vec<u8>, Vec<u8>)> {
+    /// Get raw concatenated signature components r || s
+    pub fn raw_signature(&self) -> CryptoResult<Vec<u8>> {
         if let Some(ref components) = self.raw_components {
-            Ok(components.clone())
+            let mut combined = Vec::with_capacity(components.0.len() + components.1.len());
+            combined.extend_from_slice(&components.0);
+            combined.extend_from_slice(&components.1);
+            Ok(combined)
         } else {
             // Parse from DER if not cached
             let ecdsa_sig = OpenSslEcdsaSig::from_der(&self.der_data)?;
             let r = ecdsa_sig.r().to_vec();
             let s = ecdsa_sig.s().to_vec();
-            Ok((r, s))
+            let mut combined = Vec::with_capacity(r.len() + s.len());
+            combined.extend_from_slice(&r);
+            combined.extend_from_slice(&s);
+            Ok(combined)
         }
     }
 
@@ -84,10 +90,7 @@ impl EcdsaSig {
 
     /// Returns the hex representation of the raw signature components r || s
     pub fn raw_to_hex(&self) -> CryptoResult<String> {
-        let (r, s) = self.components()?;
-        let mut combined = Vec::with_capacity(r.len() + s.len());
-        combined.extend_from_slice(r.as_ref());
-        combined.extend_from_slice(s.as_ref());
+        let combined = self.raw_signature()?;
         Ok(hex::encode(&combined))
     }
 
@@ -293,8 +296,9 @@ mod tests {
         assert!(is_valid);
 
         // Test component extraction
-        let (r, s) = signature.components().unwrap();
-        let reconstructed = EcdsaSig::from_components(curve, &r, &s).unwrap();
+        let raw_signature = signature.raw_signature().unwrap();
+        let (r, s) = raw_signature.split_at(raw_signature.len() / 2);
+        let reconstructed = EcdsaSig::from_components(curve, r, s).unwrap();
 
         let is_valid_reconstructed = key_pair.verify(data, &reconstructed, hash_alg).unwrap();
         assert!(is_valid_reconstructed);
