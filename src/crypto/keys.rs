@@ -472,7 +472,7 @@ mod tests {
         let expected_compressed_odd =
             hex!("0319d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f");
 
-        let public_key = PublicKey::from_bytes(curve, &key_bytes).unwrap();
+        let public_key = PublicKey::from_bytes(curve, key_bytes).unwrap();
         assert_eq!(public_key.curve(), curve);
         assert_eq!(public_key.x_coordinate().unwrap(), expected_x);
         assert_eq!(public_key.y_coordinate().unwrap(), expected_y);
