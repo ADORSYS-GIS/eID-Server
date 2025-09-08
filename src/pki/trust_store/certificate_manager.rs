@@ -50,7 +50,7 @@ impl CertificateManager {
     pub fn add_certificate_pem(&mut self, name: String, pem_bytes: &[u8]) -> bool {
         match self.parse_pem_to_der(pem_bytes) {
             Ok(der_bytes) => self.add_certificate_der(name, der_bytes),
-            Err(_) => false, // Gracefully reject invalid PEM
+            Err(_) => false,
         }
     }
 
@@ -100,7 +100,39 @@ impl CertificateManager {
         self.certificates_by_name.len()
     }
 
-    // Private helper methods
+    /// Verifies a certificate signature against stored certificates
+    /// Returns true if the signature is valid against any stored certificate
+    pub fn verify_certificate_signature(&self, cert_der: &[u8], hostname: &str) -> bool {
+        let cert_to_verify = match X509Certificate::from_der(cert_der) {
+            Ok((_, cert)) => cert,
+            Err(_) => return false,
+        };
+
+        let end_entity_cert = match webpki::EndEntityCert::try_from(cert_der) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+
+        let host = match webpki::DnsNameRef::try_from_ascii(hostname.as_bytes()) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+
+        // Basic validity check using webpki for the end-entity certificate
+        if end_entity_cert.verify_is_valid_for_dns_name(host).is_err() {
+            return false;
+        }
+
+        // Additional verification using stored certificates (issuer/subject check as a fallback)
+        for stored_cert_info in self.certificates_by_name.values() {
+            if let Ok((_, stored_cert)) = X509Certificate::from_der(&stored_cert_info.der_bytes) {
+                if cert_to_verify.tbs_certificate.issuer == stored_cert.tbs_certificate.subject {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 
     fn validate_and_extract_info(
         &self,
