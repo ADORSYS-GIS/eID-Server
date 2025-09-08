@@ -230,9 +230,9 @@ impl PublicKey {
             let mut ctx = BigNumContext::new()?;
             point.to_bytes(&group, Form::UNCOMPRESSED, &mut ctx)?
         } else {
-            return Err(Error::Invalid(format!(
-                "Point must be in correct uncompressed or compressed format"
-            )));
+            return Err(Error::Invalid(
+                "Point must be in correct uncompressed or compressed format".to_string(),
+            ));
         };
 
         let point = EcPoint::from_bytes(&group, &uncompressed, &mut ctx)?;

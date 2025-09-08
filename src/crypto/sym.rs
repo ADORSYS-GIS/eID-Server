@@ -273,7 +273,7 @@ mod tests {
         let encryptor = AesEncryptor::new();
         let key = SecureBytes::new(AES128_KEY.to_vec());
 
-        let ciphertext = encryptor.encrypt(&key, TEST_IV, &[])?;
+        let ciphertext = encryptor.encrypt(&key, TEST_IV, [])?;
         assert!(ciphertext.is_empty());
 
         Ok(())
@@ -284,7 +284,7 @@ mod tests {
         let encryptor = AesEncryptor::new();
         let key = SecureBytes::new(AES128_KEY.to_vec());
 
-        let plaintext = encryptor.decrypt(&key, TEST_IV, &[])?;
+        let plaintext = encryptor.decrypt(&key, TEST_IV, [])?;
         assert!(plaintext.is_empty());
 
         Ok(())
@@ -296,7 +296,7 @@ mod tests {
         let key = SecureBytes::new(AES128_KEY.to_vec());
         let single_byte = [0x42];
 
-        let ciphertext = encryptor.encrypt(&key, TEST_IV, &single_byte)?;
+        let ciphertext = encryptor.encrypt(&key, TEST_IV, single_byte)?;
         let decrypted = encryptor.decrypt(&key, TEST_IV, &ciphertext)?;
 
         assert_eq!(decrypted, single_byte);
@@ -399,7 +399,7 @@ mod tests {
         let wrong_iv = [0u8; 8]; // Wrong IV size (should be 16)
 
         // OpenSSL panics when the IV size is wrong so we expect a panic
-        let _ = encryptor.encrypt(&key, &wrong_iv, TEST_PLAINTEXT);
+        let _ = encryptor.encrypt(&key, wrong_iv, TEST_PLAINTEXT);
     }
 
     #[test]
@@ -436,7 +436,7 @@ mod tests {
             let ciphertext = encryptor.encrypt(&key, TEST_IV, &test_data)?;
             let decrypted = encryptor.decrypt(&key, TEST_IV, &ciphertext)?;
 
-            assert_eq!(decrypted, test_data, "Failed for data size: {}", size);
+            assert_eq!(decrypted, test_data, "Failed for data size: {size}");
         }
 
         Ok(())
