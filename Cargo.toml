@@ -53,6 +53,7 @@ features = ["tokio-native-tls-comp", "connection-manager", "safe_iterators"]
 ignored = ["pollster"]
 
 [dev-dependencies]
+hex-literal = "1"
 pollster = "0.4"
 
 [profile.dev.package.backtrace]
