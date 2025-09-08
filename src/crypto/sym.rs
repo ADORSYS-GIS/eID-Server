@@ -70,10 +70,10 @@ impl AesEncryptor {
         self
     }
 
-    /// Encrypt the data using AES-CBC with the given key and IV
+    /// Encrypt the plaintext using AES-CBC with the given key and IV
     pub fn encrypt(
         &self,
-        kenc: &SecureBytes,
+        kenc: impl Into<SecureBytes>,
         iv: impl AsRef<[u8]>,
         plaintext: impl AsRef<[u8]>,
     ) -> CryptoResult<Vec<u8>> {
@@ -88,7 +88,7 @@ impl AesEncryptor {
         let mut encrypter = Crypter::new(
             self.cipher.to_openssl_cipher(),
             Mode::Encrypt,
-            kenc.expose_secret(),
+            kenc.into().expose_secret(),
             Some(iv.as_ref()),
         )?;
         encrypter.pad(false);
@@ -101,10 +101,10 @@ impl AesEncryptor {
         Ok(ciphertext)
     }
 
-    /// Decrypt the data using AES-CBC with the given key and IV
+    /// Decrypt the ciphertext using AES-CBC with the given key and IV
     pub fn decrypt(
         &self,
-        kdec: &SecureBytes,
+        kdec: impl Into<SecureBytes>,
         iv: impl AsRef<[u8]>,
         ciphertext: impl AsRef<[u8]>,
     ) -> CryptoResult<Vec<u8>> {
@@ -116,7 +116,7 @@ impl AesEncryptor {
         let mut decrypter = Crypter::new(
             self.cipher.to_openssl_cipher(),
             Mode::Decrypt,
-            kdec.expose_secret(),
+            kdec.into().expose_secret(),
             Some(iv.as_ref()),
         )?;
         decrypter.pad(false);
@@ -132,10 +132,11 @@ impl AesEncryptor {
     /// Calculate CMAC authentication code for the given data
     pub fn calculate_mac(
         &self,
-        kmac: &SecureBytes,
+        kmac: impl Into<SecureBytes>,
         data: impl AsRef<[u8]>,
     ) -> CryptoResult<Vec<u8>> {
-        let key_bytes = kmac.expose_secret();
+        let secure_bytes = kmac.into();
+        let key_bytes = secure_bytes.expose_secret();
 
         let mac_result = match self.cipher {
             Cipher::Aes128Cbc => {
@@ -171,7 +172,6 @@ impl Default for AesEncryptor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::SecureBytes;
 
     // Test vectors for AES-128-CBC
     const AES128_KEY: &[u8] = &[
@@ -226,13 +226,12 @@ mod tests {
     #[test]
     fn test_aes128_encrypt_decrypt() -> CryptoResult<()> {
         let encryptor = AesEncryptor::new().with_cipher(Cipher::Aes128Cbc);
-        let key = SecureBytes::new(AES128_KEY.to_vec());
 
-        let ciphertext = encryptor.encrypt(&key, TEST_IV, TEST_PLAINTEXT)?;
+        let ciphertext = encryptor.encrypt(AES128_KEY, TEST_IV, TEST_PLAINTEXT)?;
         assert!(!ciphertext.is_empty());
         assert_ne!(ciphertext, TEST_PLAINTEXT);
 
-        let decrypted = encryptor.decrypt(&key, TEST_IV, &ciphertext)?;
+        let decrypted = encryptor.decrypt(AES128_KEY, TEST_IV, &ciphertext)?;
         assert_eq!(decrypted, TEST_PLAINTEXT);
 
         Ok(())
@@ -241,13 +240,12 @@ mod tests {
     #[test]
     fn test_aes192_encrypt_decrypt() -> CryptoResult<()> {
         let encryptor = AesEncryptor::new().with_cipher(Cipher::Aes192Cbc);
-        let key = SecureBytes::new(AES192_KEY.to_vec());
 
-        let ciphertext = encryptor.encrypt(&key, TEST_IV, TEST_PLAINTEXT)?;
+        let ciphertext = encryptor.encrypt(AES192_KEY, TEST_IV, TEST_PLAINTEXT)?;
         assert!(!ciphertext.is_empty());
         assert_ne!(ciphertext, TEST_PLAINTEXT);
 
-        let decrypted = encryptor.decrypt(&key, TEST_IV, &ciphertext)?;
+        let decrypted = encryptor.decrypt(AES192_KEY, TEST_IV, &ciphertext)?;
         assert_eq!(decrypted, TEST_PLAINTEXT);
 
         Ok(())
@@ -256,13 +254,12 @@ mod tests {
     #[test]
     fn test_aes256_encrypt_decrypt() -> CryptoResult<()> {
         let encryptor = AesEncryptor::new().with_cipher(Cipher::Aes256Cbc);
-        let key = SecureBytes::new(AES256_KEY.to_vec());
 
-        let ciphertext = encryptor.encrypt(&key, TEST_IV, TEST_PLAINTEXT)?;
+        let ciphertext = encryptor.encrypt(AES256_KEY, TEST_IV, TEST_PLAINTEXT)?;
         assert!(!ciphertext.is_empty());
         assert_ne!(ciphertext, TEST_PLAINTEXT);
 
-        let decrypted = encryptor.decrypt(&key, TEST_IV, &ciphertext)?;
+        let decrypted = encryptor.decrypt(AES256_KEY, TEST_IV, &ciphertext)?;
         assert_eq!(decrypted, TEST_PLAINTEXT);
 
         Ok(())
@@ -271,9 +268,8 @@ mod tests {
     #[test]
     fn test_encrypt_empty_data() -> CryptoResult<()> {
         let encryptor = AesEncryptor::new();
-        let key = SecureBytes::new(AES128_KEY.to_vec());
 
-        let ciphertext = encryptor.encrypt(&key, TEST_IV, [])?;
+        let ciphertext = encryptor.encrypt(AES128_KEY, TEST_IV, [])?;
         assert!(ciphertext.is_empty());
 
         Ok(())
@@ -282,9 +278,8 @@ mod tests {
     #[test]
     fn test_decrypt_empty_data() -> CryptoResult<()> {
         let encryptor = AesEncryptor::new();
-        let key = SecureBytes::new(AES128_KEY.to_vec());
 
-        let plaintext = encryptor.decrypt(&key, TEST_IV, [])?;
+        let plaintext = encryptor.decrypt(AES128_KEY, TEST_IV, [])?;
         assert!(plaintext.is_empty());
 
         Ok(())
@@ -293,11 +288,10 @@ mod tests {
     #[test]
     fn test_encrypt_single_byte() -> CryptoResult<()> {
         let encryptor = AesEncryptor::new();
-        let key = SecureBytes::new(AES128_KEY.to_vec());
         let single_byte = [0x42];
 
-        let ciphertext = encryptor.encrypt(&key, TEST_IV, single_byte)?;
-        let decrypted = encryptor.decrypt(&key, TEST_IV, &ciphertext)?;
+        let ciphertext = encryptor.encrypt(AES128_KEY, TEST_IV, single_byte)?;
+        let decrypted = encryptor.decrypt(AES128_KEY, TEST_IV, &ciphertext)?;
 
         assert_eq!(decrypted, single_byte);
         Ok(())
@@ -306,18 +300,17 @@ mod tests {
     #[test]
     fn test_different_ivs_produce_different_ciphertexts() -> CryptoResult<()> {
         let encryptor = AesEncryptor::new();
-        let key = SecureBytes::new(AES128_KEY.to_vec());
         let iv1 = TEST_IV;
         let iv2 = [0xff; 16];
 
-        let ciphertext1 = encryptor.encrypt(&key, iv1, TEST_PLAINTEXT)?;
-        let ciphertext2 = encryptor.encrypt(&key, iv2, TEST_PLAINTEXT)?;
+        let ciphertext1 = encryptor.encrypt(AES128_KEY, iv1, TEST_PLAINTEXT)?;
+        let ciphertext2 = encryptor.encrypt(AES128_KEY, iv2, TEST_PLAINTEXT)?;
 
         assert_ne!(ciphertext1, ciphertext2);
 
         // Both should decrypt to the same plaintext
-        let decrypted1 = encryptor.decrypt(&key, iv1, &ciphertext1)?;
-        let decrypted2 = encryptor.decrypt(&key, iv2, &ciphertext2)?;
+        let decrypted1 = encryptor.decrypt(AES128_KEY, iv1, &ciphertext1)?;
+        let decrypted2 = encryptor.decrypt(AES128_KEY, iv2, &ciphertext2)?;
 
         assert_eq!(decrypted1, TEST_PLAINTEXT);
         assert_eq!(decrypted2, TEST_PLAINTEXT);
@@ -330,16 +323,13 @@ mod tests {
         let data = b"test data for MAC calculation";
 
         let mut encryptor = AesEncryptor::new().with_cipher(Cipher::Aes128Cbc);
-        let key_aes128 = SecureBytes::new(AES128_KEY.to_vec());
-        let mac_aes128 = encryptor.calculate_mac(&key_aes128, data)?;
+        let mac_aes128 = encryptor.calculate_mac(AES128_KEY, data)?;
 
         encryptor = encryptor.with_cipher(Cipher::Aes192Cbc);
-        let key_aes192 = SecureBytes::new(AES192_KEY.to_vec());
-        let mac_aes192 = encryptor.calculate_mac(&key_aes192, data)?;
+        let mac_aes192 = encryptor.calculate_mac(AES192_KEY, data)?;
 
         encryptor = encryptor.with_cipher(Cipher::Aes256Cbc);
-        let key_aes256 = SecureBytes::new(AES256_KEY.to_vec());
-        let mac_aes256 = encryptor.calculate_mac(&key_aes256, data)?;
+        let mac_aes256 = encryptor.calculate_mac(AES256_KEY, data)?;
 
         // Mac output lenght is always 16 bytes for AES
         assert_eq!(mac_aes128.len(), 16);
@@ -355,11 +345,10 @@ mod tests {
     #[test]
     fn test_calculate_mac_deterministic() -> CryptoResult<()> {
         let encryptor = AesEncryptor::new();
-        let key = SecureBytes::new(AES128_KEY.to_vec());
         let data = b"consistent test data";
 
-        let mac1 = encryptor.calculate_mac(&key, data)?;
-        let mac2 = encryptor.calculate_mac(&key, data)?;
+        let mac1 = encryptor.calculate_mac(AES128_KEY, data)?;
+        let mac2 = encryptor.calculate_mac(AES128_KEY, data)?;
 
         assert_eq!(mac1, mac2);
 
@@ -369,12 +358,11 @@ mod tests {
     #[test]
     fn test_calculate_mac_different_data() -> CryptoResult<()> {
         let encryptor = AesEncryptor::new();
-        let key = SecureBytes::new(AES128_KEY.to_vec());
         let data1 = b"first test data";
         let data2 = b"second test data";
 
-        let mac1 = encryptor.calculate_mac(&key, data1)?;
-        let mac2 = encryptor.calculate_mac(&key, data2)?;
+        let mac1 = encryptor.calculate_mac(AES128_KEY, data1)?;
+        let mac2 = encryptor.calculate_mac(AES128_KEY, data2)?;
 
         assert_ne!(mac1, mac2);
 
@@ -384,10 +372,9 @@ mod tests {
     #[test]
     fn test_wrong_key_size_for_cipher() {
         let encryptor = AesEncryptor::new().with_cipher(Cipher::Aes256Cbc);
-        // 128-bit key for 256-bit cipher
-        let wrong_key = SecureBytes::new(AES128_KEY.to_vec());
 
-        let result = encryptor.encrypt(&wrong_key, TEST_IV, TEST_PLAINTEXT);
+        // 128-bit key for 256-bit cipher
+        let result = encryptor.encrypt(AES128_KEY, TEST_IV, TEST_PLAINTEXT);
         assert!(result.is_err());
     }
 
@@ -395,26 +382,24 @@ mod tests {
     #[should_panic]
     fn test_wrong_iv_size() {
         let encryptor = AesEncryptor::new();
-        let key = SecureBytes::new(AES128_KEY.to_vec());
         let wrong_iv = [0u8; 8]; // Wrong IV size (should be 16)
 
         // OpenSSL panics when the IV size is wrong so we expect a panic
-        let _ = encryptor.encrypt(&key, wrong_iv, TEST_PLAINTEXT);
+        let _ = encryptor.encrypt(AES128_KEY, wrong_iv, TEST_PLAINTEXT);
     }
 
     #[test]
     fn test_decrypt_corrupted_ciphertext() -> CryptoResult<()> {
         let encryptor = AesEncryptor::new();
-        let key = SecureBytes::new(AES128_KEY.to_vec());
 
-        let mut ciphertext = encryptor.encrypt(&key, TEST_IV, TEST_PLAINTEXT)?;
+        let mut ciphertext = encryptor.encrypt(AES128_KEY, TEST_IV, TEST_PLAINTEXT)?;
 
         // Corrupt the ciphertext
         if !ciphertext.is_empty() {
             ciphertext[0] ^= 0xFF;
         }
 
-        let decrypted = encryptor.decrypt(&key, TEST_IV, &ciphertext)?;
+        let decrypted = encryptor.decrypt(AES128_KEY, TEST_IV, &ciphertext)?;
 
         // Decryption should succeed but produce different plaintext
         assert_ne!(decrypted, TEST_PLAINTEXT);
@@ -425,7 +410,6 @@ mod tests {
     #[test]
     fn test_roundtrip_with_various_data_sizes() -> CryptoResult<()> {
         let encryptor = AesEncryptor::new();
-        let key = SecureBytes::new(AES128_KEY.to_vec());
 
         // Test various data sizes
         let test_sizes = [1, 15, 16, 17, 31, 32, 33, 64, 100];
@@ -433,8 +417,8 @@ mod tests {
         for size in test_sizes {
             let test_data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
 
-            let ciphertext = encryptor.encrypt(&key, TEST_IV, &test_data)?;
-            let decrypted = encryptor.decrypt(&key, TEST_IV, &ciphertext)?;
+            let ciphertext = encryptor.encrypt(AES128_KEY, TEST_IV, &test_data)?;
+            let decrypted = encryptor.decrypt(AES128_KEY, TEST_IV, &ciphertext)?;
 
             assert_eq!(decrypted, test_data, "Failed for data size: {size}");
         }
