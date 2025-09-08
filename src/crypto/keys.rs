@@ -1,6 +1,6 @@
 use crate::crypto::curves::Curve;
 use crate::crypto::errors::{CryptoResult, Error};
-use openssl::bn::{BigNum, BigNumContext};
+use openssl::bn::BigNumContext;
 use openssl::ec::{EcKey, EcPoint, PointConversionForm as Form};
 use openssl::pkey::{PKey, Private, Public};
 use secrecy::{ExposeSecret, SecretSlice};
@@ -43,6 +43,42 @@ impl SecureBytes {
     }
 }
 
+impl From<&[u8]> for SecureBytes {
+    fn from(value: &[u8]) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<Vec<u8>> for SecureBytes {
+    fn from(value: Vec<u8>) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<&Vec<u8>> for SecureBytes {
+    fn from(value: &Vec<u8>) -> Self {
+        Self::new(value.clone())
+    }
+}
+
+impl From<&str> for SecureBytes {
+    fn from(value: &str) -> Self {
+        Self::new(value.as_bytes())
+    }
+}
+
+impl From<String> for SecureBytes {
+    fn from(value: String) -> Self {
+        Self::new(value.as_bytes())
+    }
+}
+
+impl From<&String> for SecureBytes {
+    fn from(value: &String) -> Self {
+        Self::new(value.as_bytes())
+    }
+}
+
 /// Represents a private key
 #[derive(Clone)]
 pub struct PrivateKey {
@@ -72,32 +108,9 @@ impl PrivateKey {
         })
     }
 
-    /// Create a new private key from bytes components
-    pub fn from_bytes(
-        curve: Curve,
-        key_bytes: impl AsRef<[u8]>,
-        public_point: impl AsRef<[u8]>,
-    ) -> CryptoResult<Self> {
-        if key_bytes.as_ref().len() != curve.key_size() {
-            return Err(Error::Invalid(format!(
-                "Invalid key size: expected {} bytes, got {}",
-                curve.key_size(),
-                key_bytes.as_ref().len()
-            )));
-        }
-
-        let group = curve.to_ec_group()?;
-        let d = BigNum::from_slice(key_bytes.as_ref())?;
-        let mut ctx = BigNumContext::new()?;
-        let point = EcPoint::from_bytes(&group, public_point.as_ref(), &mut ctx)?;
-        let ec_key = EcKey::from_private_components(&group, &d, &point)?;
-        let pkey = PKey::from_ec_key(ec_key)?;
-
-        Ok(Self {
-            curve,
-            key_data: SecureBytes::new(key_bytes.as_ref().to_vec()),
-            openssl_key: pkey,
-        })
+    /// Create a new private key from DER encoded bytes
+    pub fn from_bytes(key_bytes: impl AsRef<[u8]>) -> CryptoResult<Self> {
+        Self::from_pkcs8_der(key_bytes)
     }
 
     /// Import key from PKCS#8 PEM format
@@ -208,7 +221,7 @@ impl PartialEq for PublicKey {
 impl Eq for PublicKey {}
 
 impl PublicKey {
-    /// Create a public key from uncompressed point bytes
+    /// Create a public key from point bytes (uncompressed or compressed format)
     pub fn from_bytes(curve: Curve, point_bytes: impl AsRef<[u8]>) -> CryptoResult<Self> {
         let len = point_bytes.as_ref().len();
         if len != curve.uncompressed_point_size() && len != curve.coordinate_size() + 1 {
@@ -252,6 +265,7 @@ impl PublicKey {
         Self::pk_to_public(pkey)
     }
 
+    /// Import key from SubjectPublicKeyInfo PEM format
     pub fn from_pem(pem_bytes: impl AsRef<[u8]>) -> CryptoResult<Self> {
         let pkey = PKey::public_key_from_pem(pem_bytes.as_ref())?;
         Self::pk_to_public(pkey)
@@ -352,6 +366,7 @@ impl PublicKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hex_literal::hex;
 
     #[test]
     fn test_private_key_generation() {
@@ -376,6 +391,7 @@ mod tests {
         let private_der = private_key.to_pkcs8_der().unwrap();
         let recovered_private = PrivateKey::from_pkcs8_der(&private_der).unwrap();
         assert_eq!(recovered_private.curve(), curve);
+        assert_eq!(recovered_private.as_bytes(), private_key.as_bytes());
 
         let public_der = public_key.to_der().unwrap();
         let recovered_public = PublicKey::from_der(&public_der).unwrap();
@@ -385,6 +401,7 @@ mod tests {
         let private_pem = private_key.to_pkcs8_pem().unwrap();
         let recovered_private_pem = PrivateKey::from_pkcs8_pem(&private_pem).unwrap();
         assert_eq!(recovered_private_pem.curve(), curve);
+        assert_eq!(recovered_private_pem.as_bytes(), private_key.as_bytes());
 
         let public_pem = public_key.to_pem().unwrap();
         let recovered_public_pem = PublicKey::from_pem(&public_pem).unwrap();
@@ -438,5 +455,30 @@ mod tests {
         let y_coord = public_key.y_coordinate().unwrap();
         assert_eq!(x_coord.len(), curve.coordinate_size());
         assert_eq!(y_coord.len(), curve.coordinate_size());
+    }
+
+    #[test]
+    fn test_public_key_components() {
+        let curve = Curve::BrainpoolP256r1;
+        let key_bytes = hex!(
+            "04"
+            "19d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f"
+            "17758d7a3aa6943ef23e5e2909b3e8b31bfaa4544c2cbf1fb487f31ff239c8f8"
+        );
+        let expected_x = hex!("19d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f");
+        let expected_y = hex!("17758d7a3aa6943ef23e5e2909b3e8b31bfaa4544c2cbf1fb487f31ff239c8f8");
+        let expected_compressed_even =
+            hex!("0219d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f");
+        let expected_compressed_odd =
+            hex!("0319d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f");
+
+        let public_key = PublicKey::from_bytes(curve, &key_bytes).unwrap();
+        assert_eq!(public_key.curve(), curve);
+        assert_eq!(public_key.x_coordinate().unwrap(), expected_x);
+        assert_eq!(public_key.y_coordinate().unwrap(), expected_y);
+        assert!(
+            (public_key.compressed_bytes().unwrap() == expected_compressed_even)
+                || (public_key.compressed_bytes().unwrap() == expected_compressed_odd)
+        );
     }
 }
