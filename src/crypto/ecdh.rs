@@ -160,9 +160,7 @@ fn validate_public_key(public_key: &PublicKey) -> CryptoResult<()> {
 
     // Check if the point is on the curve
     let mut ctx = BigNumContext::new()?;
-    let is_on_curve = point.is_on_curve(group, &mut ctx)?;
-
-    if !is_on_curve {
+    if !point.is_on_curve(group, &mut ctx)? {
         return Err(Error::Invalid(
             "Public key point is not on the curve".to_string(),
         ));
