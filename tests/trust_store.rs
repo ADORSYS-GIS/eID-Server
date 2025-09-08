@@ -1,337 +1,256 @@
-use chrono::{Duration, Utc};
-use eid_server::pki::trust_store::{
-    certificate_manager::CertificateManager, error::TrustStoreError, models::CSCAPublicKeyInfo,
-};
-use mockall::predicate::*;
-use std::collections::HashMap;
-use tokio::fs::File;
-use tokio::io::AsyncReadExt;
+use eid_server::pki::trust_store::TrustStore;
 
-// Trait for fetching the master list (e.g., from a URL)
-#[async_trait::async_trait]
-pub trait MasterListFetcher: Send + Sync {
-    async fn fetch_master_list(&self, url: &str) -> Result<Vec<u8>, TrustStoreError>;
+#[test]
+fn test_new_trust_store() {
+    let trust_store = TrustStore::new();
+    assert_eq!(trust_store.count(), 0);
+    assert!(trust_store.list_certificate_names().is_empty());
 }
 
-// Mock implementation of MasterListFetcher for testing
-mockall::mock! {
-    pub MasterListFetcher {}
+#[test]
+fn test_add_invalid_certificate_graceful_rejection() {
+    let mut trust_store = TrustStore::new();
+    let invalid_der = vec![0x01, 0x02, 0x03];
 
-    #[async_trait::async_trait]
-    impl MasterListFetcher for MasterListFetcher {
-        async fn fetch_master_list(&self, url: &str) -> Result<Vec<u8>, TrustStoreError>;
-    }
+    // Should gracefully reject invalid certificate
+    assert!(!trust_store.add_certificate_der("invalid_cert".to_string(), invalid_der));
+    assert_eq!(trust_store.count(), 0);
 }
 
-pub struct MasterListUpdater {
-    fetcher: Box<dyn MasterListFetcher>,
+#[test]
+fn test_add_invalid_pem_graceful_rejection() {
+    let mut trust_store = TrustStore::new();
+    let invalid_pem = b"-----BEGIN CERTIFICATE-----\nInvalid PEM data\n-----END CERTIFICATE-----";
+
+    // Should gracefully reject invalid PEM
+    assert!(!trust_store.add_certificate_pem("invalid_cert".to_string(), invalid_pem));
+    assert_eq!(trust_store.count(), 0);
 }
 
-impl MasterListUpdater {
-    pub fn new(fetcher: Box<dyn MasterListFetcher>) -> Self {
-        Self { fetcher }
-    }
+#[test]
+fn test_remove_nonexistent_certificate() {
+    let mut trust_store = TrustStore::new();
 
-    pub async fn update_from_master_list(
-        &self,
-        manager: &mut CertificateManager,
-        master_list_url: &str,
-    ) -> Result<(), TrustStoreError> {
-        let master_list_content = self.fetcher.fetch_master_list(master_list_url).await?;
-
-        let certificates = CSCAPublicKeyInfo::parse_der_certificates_from_bytes(
-            &master_list_content,
-        )
-        .map_err(|e| {
-            TrustStoreError::UpdateError(format!("Failed to parse master list content: {}", e))
-        })?;
-
-        if certificates.is_empty() {
-            return Err(TrustStoreError::UpdateError(
-                "No certificates found in master list".to_string(),
-            ));
-        }
-
-        for cert_info in certificates {
-            manager.add_certificate(cert_info)?;
-        }
-        Ok(())
-    }
+    // Should return false for non-existent certificates
+    assert!(!trust_store.remove_certificate_by_name("nonexistent"));
+    assert!(!trust_store.remove_certificate_by_serial("nonexistent"));
 }
 
-pub struct CertificateCleaner;
+#[test]
+fn test_get_nonexistent_certificate() {
+    let trust_store = TrustStore::new();
 
-impl Default for CertificateCleaner {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl CertificateCleaner {
-    pub fn new() -> Self {
-        Self
-    }
-
-    pub fn cleanup_expired_certificates(&self, manager: &mut CertificateManager) -> Vec<String> {
-        let now = Utc::now();
-        let expired_skis: Vec<String> = manager
-            .list_certificates()
-            .into_iter()
-            .filter(|cert| cert.not_after < now)
-            .map(|cert| cert.subject_key_identifier)
-            .collect();
-
-        for ski in &expired_skis {
-            let _ = manager.remove_certificate(ski);
-        }
-        expired_skis
-    }
-}
-
-// Helper function to create a CSCAPublicKeyInfo from a test file,
-// optionally modifying its validity period and ensuring unique SKI for testing.
-async fn create_test_cert_info(path: &str, days_offset: i64, unique_id: &str) -> CSCAPublicKeyInfo {
-    let mut cert_info = read_and_parse_cert(path).await;
-    // Adjust validity for testing purposes
-    let now = Utc::now();
-    cert_info.not_before = now + Duration::days(days_offset - 1);
-    cert_info.not_after = now + Duration::days(days_offset);
-    // Ensure unique SKI for test certificates if they originate from the same file
-    cert_info.subject_key_identifier =
-        format!("{}-{}", cert_info.subject_key_identifier, unique_id);
-    cert_info.serial_number = format!("{}-{}", cert_info.serial_number, unique_id);
-    cert_info
-}
-
-// This simplified version extracts only the necessary parts for persistence testing.
-async fn read_and_parse_cert(path: &str) -> CSCAPublicKeyInfo {
-    let mut file = File::open(path)
-        .await
-        .expect("Failed to open certificate file");
-    let mut der_bytes = Vec::new();
-    file.read_to_end(&mut der_bytes)
-        .await
-        .expect("Failed to read certificate file");
-
-    CSCAPublicKeyInfo::try_from_der_single(&der_bytes)
-        .expect("Failed to parse X.509 certificate from file")
-}
-
-#[tokio::test]
-async fn test_certificate_manager_new() {
-    let certificates = HashMap::new();
-    let manager = CertificateManager::new(certificates);
-    assert!(manager.list_certificates().is_empty());
-}
-
-#[tokio::test]
-async fn test_certificate_manager_add_and_get() {
-    let mut manager = CertificateManager::new(HashMap::new());
-    let cert1_info =
-        create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "cert1").await;
-    manager.add_certificate(cert1_info.clone()).unwrap();
-
-    assert_eq!(
-        manager.get_certificate_by_ski(&cert1_info.subject_key_identifier),
-        Some(cert1_info.clone())
-    );
-    assert!(manager.get_certificate_by_ski("nonexistent").is_none());
-
-    let cert2_info =
-        create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 20, "cert1").await; // Overwrites cert1
-    manager.add_certificate(cert2_info.clone()).unwrap();
-    // When adding a certificate with the same SKI, it should replace the old one
-    assert_eq!(
-        manager.get_certificate_by_ski(&cert2_info.subject_key_identifier),
-        Some(cert2_info)
-    );
-}
-
-#[tokio::test]
-async fn test_certificate_manager_remove() {
-    let mut manager = CertificateManager::new(HashMap::new());
-    let cert1_info =
-        create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "cert1").await;
-    manager.add_certificate(cert1_info.clone()).unwrap();
-
+    // Should return None for non-existent certificates
     assert!(
-        manager
-            .remove_certificate(&cert1_info.subject_key_identifier)
-            .is_some()
-    );
-    assert!(
-        manager
-            .get_certificate_by_ski(&cert1_info.subject_key_identifier)
+        trust_store
+            .get_certificate_der_by_name("nonexistent")
             .is_none()
     );
-    assert!(manager.remove_certificate("nonexistent").is_none());
-}
-
-#[tokio::test]
-async fn test_certificate_manager_list() {
-    let mut manager = CertificateManager::new(HashMap::new());
-    let cert1_info =
-        create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "cert1").await;
-    let cert2_info = create_test_cert_info(
-        "test_data/Link-[CA]_TEST_csca-germany-0008-04f0.cer",
-        20,
-        "cert2",
-    )
-    .await;
-    manager.add_certificate(cert1_info.clone()).unwrap();
-    manager.add_certificate(cert2_info.clone()).unwrap();
-
-    let listed_certs = manager.list_certificates();
-    assert_eq!(listed_certs.len(), 2);
     assert!(
-        listed_certs
-            .iter()
-            .any(|c| c.subject_key_identifier == cert1_info.subject_key_identifier)
-    );
-    assert!(
-        listed_certs
-            .iter()
-            .any(|c| c.subject_key_identifier == cert2_info.subject_key_identifier)
+        trust_store
+            .get_certificate_der_by_serial("nonexistent")
+            .is_none()
     );
 }
 
-#[tokio::test]
-async fn test_certificate_manager_clear() {
-    let mut manager = CertificateManager::new(HashMap::new());
-    let cert1_info =
-        create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "cert1").await;
-    manager.add_certificate(cert1_info).unwrap();
-    // To clear certificates, we would iterate and remove or reinitialize the manager.
-    // For this test, we can simulate clearing by creating a new manager.
-    let manager = CertificateManager::new(HashMap::new());
-    assert!(manager.list_certificates().is_empty());
+#[test]
+fn test_empty_trust_store_operations() {
+    let mut trust_store = TrustStore::new();
+
+    // All operations on empty trust store should work without panicking
+    assert_eq!(trust_store.count(), 0);
+    assert!(trust_store.list_certificate_names().is_empty());
+    assert!(!trust_store.remove_certificate_by_name("test"));
+    assert!(!trust_store.remove_certificate_by_serial("123"));
+    assert!(trust_store.get_certificate_der_by_name("test").is_none());
+    assert!(trust_store.get_certificate_der_by_serial("123").is_none());
 }
 
+// Integration tests with real test certificates
 #[tokio::test]
-async fn test_master_list_updater_success() {
-    let mut mock_fetcher = MockMasterListFetcher::new();
+async fn test_add_valid_certificate_der() {
+    use tokio::fs::File;
+    use tokio::io::AsyncReadExt;
 
-    // Use a real certificate from test_data that should have an SKI
-    let real_cert_info = read_and_parse_cert("test_data/[ROOT-CA]_Test-CSCA08.cer").await;
-    let master_list_content = real_cert_info.certificate_der.clone();
+    let mut trust_store = TrustStore::new();
 
-    mock_fetcher
-        .expect_fetch_master_list()
-        .times(1)
-        .returning(move |_| Ok(master_list_content.clone()));
-
-    let updater = MasterListUpdater::new(Box::new(mock_fetcher));
-    let mut manager = CertificateManager::new(HashMap::new());
-    let master_list_url = "http://example.com/masterlist.pem";
-
-    updater
-        .update_from_master_list(&mut manager, master_list_url)
+    // Read a real test certificate
+    let mut file = File::open("test_data/pki/certificates/[ROOT-CA]_Test-CSCA08.cer")
         .await
         .unwrap();
+    let mut der_bytes = Vec::new();
+    file.read_to_end(&mut der_bytes).await.unwrap();
 
-    // Check if the real certificate is added
-    let listed_certs = manager.list_certificates();
-    assert_eq!(listed_certs.len(), 1);
-    assert_eq!(
-        listed_certs[0].subject_key_identifier,
-        real_cert_info.subject_key_identifier
-    );
-    assert_eq!(
-        listed_certs[0].certificate_der,
-        real_cert_info.certificate_der
-    );
-}
-
-#[tokio::test]
-async fn test_master_list_updater_fetch_failure() {
-    let mut mock_fetcher = MockMasterListFetcher::new();
-    mock_fetcher
-        .expect_fetch_master_list()
-        .times(1)
-        .returning(|_| Err(TrustStoreError::UpdateError("Network error".to_string())));
-
-    let updater = MasterListUpdater::new(Box::new(mock_fetcher));
-    let mut manager = CertificateManager::new(HashMap::new());
-    let master_list_url = "http://example.com/masterlist.pem";
-
-    let result = updater
-        .update_from_master_list(&mut manager, master_list_url)
-        .await;
-    assert!(result.is_err());
-    if let Err(TrustStoreError::UpdateError(msg)) = result {
-        assert!(msg.contains("Network error"));
-    } else {
-        panic!("Expected UpdateError, got {:?}", result);
-    }
-    assert!(manager.list_certificates().is_empty());
-}
-
-#[tokio::test]
-async fn test_certificate_cleaner_no_expired() {
-    let mut manager = CertificateManager::new(HashMap::new());
-    let cert1_info =
-        create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "cert1").await; // Valid for 10 more days
-    manager.add_certificate(cert1_info).unwrap();
-
-    let cleaner = CertificateCleaner::new();
-    let removed = cleaner.cleanup_expired_certificates(&mut manager);
-    assert!(removed.is_empty());
-    assert_eq!(manager.list_certificates().len(), 1); // Only 1 non-expired cert
-}
-
-#[tokio::test]
-async fn test_certificate_cleaner_some_expired() {
-    let mut manager = CertificateManager::new(HashMap::new());
-
-    // Add some certificates: one expired, one valid
-    let cert1_valid =
-        create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", 10, "valid").await; // Valid
-    let cert2_expired = create_test_cert_info(
-        "test_data/Link-[CA]_TEST_csca-germany-0008-04f0.cer",
-        -1,
-        "expired",
-    )
-    .await; // Expired
-    manager.add_certificate(cert1_valid.clone()).unwrap();
-    manager.add_certificate(cert2_expired.clone()).unwrap();
-
-    let cleaner = CertificateCleaner::new();
-    let removed = cleaner.cleanup_expired_certificates(&mut manager);
-    assert_eq!(removed.len(), 1);
-    assert!(removed.contains(&cert2_expired.subject_key_identifier));
-    assert_eq!(manager.list_certificates().len(), 1); // One valid cert remains
+    // Should successfully add valid certificate
+    assert!(trust_store.add_certificate_der("test_cert".to_string(), der_bytes.clone()));
+    assert_eq!(trust_store.count(), 1);
     assert!(
-        manager
-            .get_certificate_by_ski(&cert1_valid.subject_key_identifier)
-            .is_some()
+        trust_store
+            .list_certificate_names()
+            .contains(&"test_cert".to_string())
     );
+
+    // Should be able to retrieve the certificate
+    let retrieved = trust_store
+        .get_certificate_der_by_name("test_cert")
+        .unwrap();
+    assert_eq!(retrieved, der_bytes.as_slice());
+}
+
+#[tokio::test]
+async fn test_add_multiple_certificates() {
+    use tokio::fs::File;
+    use tokio::io::AsyncReadExt;
+
+    let mut trust_store = TrustStore::new();
+
+    // Read first certificate
+    let mut file1 = File::open("test_data/pki/certificates/[ROOT-CA]_Test-CSCA08.cer")
+        .await
+        .unwrap();
+    let mut der_bytes1 = Vec::new();
+    file1.read_to_end(&mut der_bytes1).await.unwrap();
+
+    // Read second certificate
+    let mut file2 =
+        File::open("test_data/pki/certificates/Link-[CA]_TEST_csca-germany-0008-04f0.cer")
+            .await
+            .unwrap();
+    let mut der_bytes2 = Vec::new();
+    file2.read_to_end(&mut der_bytes2).await.unwrap();
+
+    // Add both certificates
+    assert!(trust_store.add_certificate_der("cert1".to_string(), der_bytes1.clone()));
+    assert!(trust_store.add_certificate_der("cert2".to_string(), der_bytes2.clone()));
+
+    assert_eq!(trust_store.count(), 2);
+    let cert_names = trust_store.list_certificate_names();
+    assert!(cert_names.contains(&"cert1".to_string()));
+    assert!(cert_names.contains(&"cert2".to_string()));
+
+    // Verify both can be retrieved
+    assert!(trust_store.get_certificate_der_by_name("cert1").is_some());
+    assert!(trust_store.get_certificate_der_by_name("cert2").is_some());
+}
+
+#[tokio::test]
+async fn test_remove_certificate_by_name() {
+    use tokio::fs::File;
+    use tokio::io::AsyncReadExt;
+
+    let mut trust_store = TrustStore::new();
+
+    // Add a certificate
+    let mut file = File::open("test_data/pki/certificates/[ROOT-CA]_Test-CSCA08.cer")
+        .await
+        .unwrap();
+    let mut der_bytes = Vec::new();
+    file.read_to_end(&mut der_bytes).await.unwrap();
+
+    assert!(trust_store.add_certificate_der("test_cert".to_string(), der_bytes));
+    assert_eq!(trust_store.count(), 1);
+
+    // Remove the certificate
+    assert!(trust_store.remove_certificate_by_name("test_cert"));
+    assert_eq!(trust_store.count(), 0);
     assert!(
-        manager
-            .get_certificate_by_ski(&cert2_expired.subject_key_identifier)
+        trust_store
+            .get_certificate_der_by_name("test_cert")
             .is_none()
-    ); // Expired cert is removed
+    );
 }
 
 #[tokio::test]
-async fn test_certificate_cleaner_all_expired() {
-    let mut manager = CertificateManager::new(HashMap::new());
+async fn test_get_certificate_by_serial_number() {
+    use tokio::fs::File;
+    use tokio::io::AsyncReadExt;
 
-    // Add only expired certificates
-    let cert1_expired =
-        create_test_cert_info("test_data/[ROOT-CA]_Test-CSCA08.cer", -10, "expired1").await; // Expired
-    let cert2_expired = create_test_cert_info(
-        "test_data/Link-[CA]_TEST_csca-germany-0008-04f0.cer",
-        -5,
-        "expired2",
-    )
-    .await; // Expired
-    manager.add_certificate(cert1_expired.clone()).unwrap();
-    manager.add_certificate(cert2_expired.clone()).unwrap();
+    let mut trust_store = TrustStore::new();
 
-    let cleaner = CertificateCleaner::new();
-    let removed = cleaner.cleanup_expired_certificates(&mut manager);
-    assert_eq!(removed.len(), 2);
-    assert!(removed.contains(&cert1_expired.subject_key_identifier));
-    assert!(removed.contains(&cert2_expired.subject_key_identifier));
-    assert!(manager.list_certificates().is_empty());
+    // Add a certificate
+    let mut file = File::open("test_data/pki/certificates/[ROOT-CA]_Test-CSCA08.cer")
+        .await
+        .unwrap();
+    let mut der_bytes = Vec::new();
+    file.read_to_end(&mut der_bytes).await.unwrap();
+
+    assert!(trust_store.add_certificate_der("test_cert".to_string(), der_bytes.clone()));
+
+    // Parse the certificate to get its serial number
+    use x509_parser::prelude::{FromDer, X509Certificate};
+    let (_, x509_cert) = X509Certificate::from_der(&der_bytes).unwrap();
+    let serial_number = x509_cert.tbs_certificate.serial.to_string();
+
+    // Should be able to retrieve by serial number
+    let retrieved = trust_store
+        .get_certificate_der_by_serial(&serial_number)
+        .unwrap();
+    assert_eq!(retrieved, der_bytes.as_slice());
+}
+
+#[tokio::test]
+async fn test_remove_certificate_by_serial() {
+    use tokio::fs::File;
+    use tokio::io::AsyncReadExt;
+
+    let mut trust_store = TrustStore::new();
+
+    // Add a certificate
+    let mut file = File::open("test_data/pki/certificates/[ROOT-CA]_Test-CSCA08.cer")
+        .await
+        .unwrap();
+    let mut der_bytes = Vec::new();
+    file.read_to_end(&mut der_bytes).await.unwrap();
+
+    assert!(trust_store.add_certificate_der("test_cert".to_string(), der_bytes.clone()));
+
+    // Parse the certificate to get its serial number
+    use x509_parser::prelude::{FromDer, X509Certificate};
+    let (_, x509_cert) = X509Certificate::from_der(&der_bytes).unwrap();
+    let serial_number = x509_cert.tbs_certificate.serial.to_string();
+
+    // Remove by serial number
+    assert!(trust_store.remove_certificate_by_serial(&serial_number));
+    assert_eq!(trust_store.count(), 0);
+    assert!(
+        trust_store
+            .get_certificate_der_by_name("test_cert")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn test_duplicate_certificate_names() {
+    use tokio::fs::File;
+    use tokio::io::AsyncReadExt;
+
+    let mut trust_store = TrustStore::new();
+
+    // Add first certificate
+    let mut file1 = File::open("test_data/pki/certificates/[ROOT-CA]_Test-CSCA08.cer")
+        .await
+        .unwrap();
+    let mut der_bytes1 = Vec::new();
+    file1.read_to_end(&mut der_bytes1).await.unwrap();
+
+    // Add second certificate
+    let mut file2 =
+        File::open("test_data/pki/certificates/Link-[CA]_TEST_csca-germany-0008-04f0.cer")
+            .await
+            .unwrap();
+    let mut der_bytes2 = Vec::new();
+    file2.read_to_end(&mut der_bytes2).await.unwrap();
+
+    // Add both with same name - second should overwrite first
+    assert!(trust_store.add_certificate_der("same_name".to_string(), der_bytes1));
+    assert!(trust_store.add_certificate_der("same_name".to_string(), der_bytes2.clone()));
+
+    // Should still have only 1 certificate (the second one)
+    assert_eq!(trust_store.count(), 1);
+
+    // Retrieved certificate should be the second one
+    let retrieved = trust_store
+        .get_certificate_der_by_name("same_name")
+        .unwrap();
+    assert_eq!(retrieved, der_bytes2.as_slice());
 }

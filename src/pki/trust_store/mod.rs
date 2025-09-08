@@ -1,15 +1,9 @@
 pub mod certificate_manager;
 pub mod error;
-pub mod models;
 
-use std::collections::HashMap;
+use crate::pki::trust_store::certificate_manager::CertificateManager;
 
-use crate::pki::trust_store::{
-    certificate_manager::CertificateManager, error::TrustStoreError, models::CSCAPublicKeyInfo,
-};
-
-/// The main TrustStore struct that orchestrates certificate management,
-/// persistence, updates, and cleanup.
+/// Simple in-memory trust store for certificate management
 pub struct TrustStore {
     certificate_manager: CertificateManager,
 }
@@ -21,47 +15,58 @@ impl Default for TrustStore {
 }
 
 impl TrustStore {
+    /// Creates a new empty trust store
     pub fn new() -> Self {
-        let certificates = HashMap::new();
-        let certificate_manager = CertificateManager::new(certificates);
         Self {
-            certificate_manager,
+            certificate_manager: CertificateManager::new(),
         }
     }
 
-    /// Adds a new CSCA certificate to the trust store.
-    pub fn add_certificate_der(&mut self, cert_der: Vec<u8>) -> Result<(), TrustStoreError> {
-        let cert_info = CSCAPublicKeyInfo::try_from_der_single(&cert_der)?;
-        self.certificate_manager.add_certificate(cert_info)
-    }
-
-    pub fn add_certificate_pem(&mut self, cert_pem: &[u8]) -> Result<(), TrustStoreError> {
-        let cert_der = crate::pki::trust_store::certificate_manager::parse_cert_pem(cert_pem)?;
-        let cert_info = CSCAPublicKeyInfo::try_from_der_single(&cert_der)?;
-        self.certificate_manager.add_certificate(cert_info)
-    }
-
-    /// Removes a CSCA certificate from the trust store by its subject key identifier.
-    pub fn remove_certificate(&mut self, ski: &str) -> Result<(), TrustStoreError> {
+    /// Adds a certificate from DER bytes
+    /// Returns true if successfully added, false if certificate is invalid (graceful rejection)
+    pub fn add_certificate_der(&mut self, name: String, der_bytes: Vec<u8>) -> bool {
         self.certificate_manager
-            .remove_certificate(ski)
-            .ok_or(TrustStoreError::CertificateNotFound(ski.to_string()))
-            .map(|_| ())
+            .add_certificate_der(name, der_bytes)
     }
 
-    pub fn get_certificate_by_ski(&self, ski: &str) -> Option<CSCAPublicKeyInfo> {
-        self.certificate_manager.get_certificate_by_ski(ski)
-    }
-
-    pub fn get_certificate_by_serial_number(
-        &self,
-        serial_number: &str,
-    ) -> Option<CSCAPublicKeyInfo> {
+    /// Adds a certificate from PEM bytes
+    /// Returns true if successfully added, false if certificate is invalid (graceful rejection)
+    pub fn add_certificate_pem(&mut self, name: String, pem_bytes: &[u8]) -> bool {
         self.certificate_manager
-            .get_certificate_by_serial_number(serial_number)
+            .add_certificate_pem(name, pem_bytes)
     }
 
-    pub fn list_certificates(&self) -> Vec<CSCAPublicKeyInfo> {
-        self.certificate_manager.list_certificates()
+    /// Removes a certificate by name
+    /// Returns true if certificate was found and removed, false otherwise
+    pub fn remove_certificate_by_name(&mut self, name: &str) -> bool {
+        self.certificate_manager.remove_certificate_by_name(name)
+    }
+
+    /// Removes a certificate by serial number
+    /// Returns true if certificate was found and removed, false otherwise
+    pub fn remove_certificate_by_serial(&mut self, serial_number: &str) -> bool {
+        self.certificate_manager
+            .remove_certificate_by_serial(serial_number)
+    }
+
+    /// Retrieves a certificate in DER form by name
+    pub fn get_certificate_der_by_name(&self, name: &str) -> Option<&[u8]> {
+        self.certificate_manager.get_certificate_der_by_name(name)
+    }
+
+    /// Retrieves a certificate in DER form by serial number
+    pub fn get_certificate_der_by_serial(&self, serial_number: &str) -> Option<&[u8]> {
+        self.certificate_manager
+            .get_certificate_der_by_serial(serial_number)
+    }
+
+    /// Lists all certificate names currently stored
+    pub fn list_certificate_names(&self) -> Vec<String> {
+        self.certificate_manager.list_certificate_names()
+    }
+
+    /// Returns the number of certificates stored
+    pub fn count(&self) -> usize {
+        self.certificate_manager.count()
     }
 }
