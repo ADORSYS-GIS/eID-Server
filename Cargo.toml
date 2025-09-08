@@ -48,8 +48,6 @@ x509-parser = "0.14"
 
 # Certificate Validation
 webpki = "0.22"
-webpki-roots = "0.26"
-rustls = "0.22"
 
 [dependencies.redis]
 version = "0.32"
