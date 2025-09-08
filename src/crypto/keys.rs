@@ -329,21 +329,16 @@ impl PublicKey {
     }
 
     /// Get the X coordinate of the point
-    pub fn x_coordinate(&self) -> CryptoResult<Vec<u8>> {
-        let coord_size = self.curve.coordinate_size();
-        if self.point_data.len() < 1 + coord_size {
-            return Err(Error::Invalid("Point data is too short".to_string()));
-        }
-        Ok(self.point_data[1..1 + coord_size].to_vec())
+    pub fn x_coordinate(&self) -> Vec<u8> {
+        // This is safe because the point data is always in uncompressed format
+        self.point_data[1..1 + self.curve.coordinate_size()].to_vec()
     }
 
     /// Get the Y coordinate of the point
-    pub fn y_coordinate(&self) -> CryptoResult<Vec<u8>> {
+    pub fn y_coordinate(&self) -> Vec<u8> {
+        // This is safe because the point data is always in uncompressed format
         let coord_size = self.curve.coordinate_size();
-        if self.point_data.len() < 1 + 2 * coord_size {
-            return Err(Error::Invalid("Point data is too short".to_string()));
-        }
-        Ok(self.point_data[1 + coord_size..1 + 2 * coord_size].to_vec())
+        self.point_data[1 + coord_size..1 + 2 * coord_size].to_vec()
     }
 
     /// Export key in SubjectPublicKeyInfo DER format
@@ -451,8 +446,8 @@ mod tests {
         assert_eq!(recovered, public_key);
 
         // Test coordinate extraction
-        let x_coord = public_key.x_coordinate().unwrap();
-        let y_coord = public_key.y_coordinate().unwrap();
+        let x_coord = public_key.x_coordinate();
+        let y_coord = public_key.y_coordinate();
         assert_eq!(x_coord.len(), curve.coordinate_size());
         assert_eq!(y_coord.len(), curve.coordinate_size());
     }
@@ -468,17 +463,18 @@ mod tests {
         let expected_x = hex!("19d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f");
         let expected_y = hex!("17758d7a3aa6943ef23e5e2909b3e8b31bfaa4544c2cbf1fb487f31ff239c8f8");
         let expected_compressed_even =
-            hex!("0219d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f");
+            hex!("02 19d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f");
         let expected_compressed_odd =
-            hex!("0319d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f");
+            hex!("03 19d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f");
 
         let public_key = PublicKey::from_bytes(curve, key_bytes).unwrap();
+        let compressed = public_key.compressed_bytes().unwrap();
+
         assert_eq!(public_key.curve(), curve);
-        assert_eq!(public_key.x_coordinate().unwrap(), expected_x);
-        assert_eq!(public_key.y_coordinate().unwrap(), expected_y);
+        assert_eq!(public_key.x_coordinate(), expected_x);
+        assert_eq!(public_key.y_coordinate(), expected_y);
         assert!(
-            (public_key.compressed_bytes().unwrap() == expected_compressed_even)
-                || (public_key.compressed_bytes().unwrap() == expected_compressed_odd)
+            (compressed == expected_compressed_even) || (compressed == expected_compressed_odd)
         );
     }
 }
