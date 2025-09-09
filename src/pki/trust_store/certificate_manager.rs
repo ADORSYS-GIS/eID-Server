@@ -125,10 +125,10 @@ impl CertificateManager {
 
         // Additional verification using stored certificates (issuer/subject check as a fallback)
         for stored_cert_info in self.certificates_by_name.values() {
-            if let Ok((_, stored_cert)) = X509Certificate::from_der(&stored_cert_info.der_bytes) {
-                if cert_to_verify.tbs_certificate.issuer == stored_cert.tbs_certificate.subject {
-                    return true;
-                }
+            if let Ok((_, stored_cert)) = X509Certificate::from_der(&stored_cert_info.der_bytes)
+                && cert_to_verify.tbs_certificate.issuer == stored_cert.tbs_certificate.subject
+            {
+                return true;
             }
         }
         false
