@@ -14,12 +14,9 @@ async fn test_health_check_works() {
         ..
     } = generate_test_certificates();
 
-    let session_store = MemoryStore::new();
-
     // build the tls configuration
-    let tls_config = TlsConfig::new(server_cert, server_key);
-
-    let addr = utils::spawn_server(session_store, tls_config).await;
+    let tls_config = TlsConfig::from_pem(server_cert, server_key);
+    let addr = utils::spawn_server(MemoryStore::new(), tls_config).await;
 
     // Create a custom client that ignores invalid certificates
     let client = Client::builder()

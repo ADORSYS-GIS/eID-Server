@@ -37,7 +37,7 @@ pub fn create_tls_config(psk_store: DashMap<String, Vec<u8>>) -> TlsConfig<Memor
     } = generate_test_certificates();
 
     // build the tls configuration
-    TlsConfig::new(server_cert, server_key)
+    TlsConfig::from_pem(server_cert, server_key)
         .with_client_auth(&[ca_cert], None::<&[u8]>)
         .with_psk(psk_store)
 }

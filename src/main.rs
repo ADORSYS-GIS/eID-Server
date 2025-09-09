@@ -35,7 +35,7 @@ async fn main() -> color_eyre::Result<()> {
 
     let session_manager = SessionManager::new(eid_store);
     // Build the TLS configuration
-    let tls_config = TlsConfig::new(server_cert, server_key)
+    let tls_config = TlsConfig::from_pem(server_cert, server_key)
         .with_psk(session_manager.clone())
         .with_session_store(tls_store);
 
