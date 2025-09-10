@@ -555,6 +555,7 @@ dependencies = [
  "dashmap",
  "hex",
  "hex-literal",
+ "num-integer",
  "openssl",
  "pem",
  "pollster",
