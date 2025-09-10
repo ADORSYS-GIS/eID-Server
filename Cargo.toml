@@ -25,6 +25,7 @@ rasn = "0.27"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 bincode = { version = "2.0", features = ["serde"] }
+pem = "3.0"
 
 # Configuration
 config = "0.15"
@@ -43,12 +44,7 @@ time = { version = "0.3", features = ["serde"] }
 hex = "0.4"
 secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
-
-# Certificate and PKI utilities
-pem = "3.0"
 x509-parser = "0.14"
-
-# Certificate Validation
 webpki = "0.22"
 
 [dependencies.redis]
