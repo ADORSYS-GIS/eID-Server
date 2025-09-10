@@ -1,4 +1,4 @@
-#![allow(unused_imports)] 
+#![allow(unused_imports)]
 use super::TrustStore;
 use super::in_memory::InMemoryTrustStore;
 

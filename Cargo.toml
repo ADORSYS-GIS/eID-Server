@@ -39,14 +39,12 @@ async-trait = "0.1"
 dashmap = "6.1"
 hex-literal = "1"
 time = { version = "0.3", features = ["serde"] }
-num-integer = "0.1"
 
 # Cryptographic dependencies
 hex = "0.4"
 secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
 x509-parser = "0.14"
-webpki = "0.22"
 
 [dependencies.redis]
 version = "0.32"
