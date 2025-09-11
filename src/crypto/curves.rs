@@ -1,5 +1,5 @@
-use crate::crypto::errors::CryptoResult;
-use openssl::ec::EcGroup;
+use crate::crypto::errors::Error;
+use openssl::ec::{EcGroup, EcGroupRef};
 use openssl::nid::Nid;
 use std::fmt;
 
@@ -22,23 +22,6 @@ pub enum Curve {
 }
 
 impl Curve {
-    /// Get the OpenSSL NID for this curve
-    pub fn to_nid(self) -> Nid {
-        match self {
-            Curve::NistP256 => Nid::X9_62_PRIME256V1,
-            Curve::NistP384 => Nid::SECP384R1,
-            Curve::NistP521 => Nid::SECP521R1,
-            Curve::BrainpoolP256r1 => Nid::BRAINPOOL_P256R1,
-            Curve::BrainpoolP384r1 => Nid::BRAINPOOL_P384R1,
-            Curve::BrainpoolP512r1 => Nid::BRAINPOOL_P512R1,
-        }
-    }
-
-    /// Create an OpenSSL EcGroup for this curve
-    pub fn to_ec_group(self) -> CryptoResult<EcGroup> {
-        Ok(EcGroup::from_curve_name(self.to_nid())?)
-    }
-
     /// Get the key size in bytes for this curve
     pub fn key_size(self) -> usize {
         match self {
@@ -99,6 +82,46 @@ impl Curve {
     }
 }
 
+impl From<Curve> for Nid {
+    fn from(curve: Curve) -> Self {
+        match curve {
+            Curve::NistP256 => Nid::X9_62_PRIME256V1,
+            Curve::NistP384 => Nid::SECP384R1,
+            Curve::NistP521 => Nid::SECP521R1,
+            Curve::BrainpoolP256r1 => Nid::BRAINPOOL_P256R1,
+            Curve::BrainpoolP384r1 => Nid::BRAINPOOL_P384R1,
+            Curve::BrainpoolP512r1 => Nid::BRAINPOOL_P512R1,
+        }
+    }
+}
+
+impl TryFrom<Curve> for EcGroup {
+    type Error = Error;
+
+    fn try_from(curve: Curve) -> Result<Self, Self::Error> {
+        Ok(EcGroup::from_curve_name(curve.into())?)
+    }
+}
+
+impl TryFrom<&EcGroupRef> for Curve {
+    type Error = Error;
+
+    fn try_from(group: &EcGroupRef) -> Result<Self, Self::Error> {
+        let ec_group = group.curve_name();
+        match ec_group {
+            Some(Nid::X9_62_PRIME256V1) => Ok(Curve::NistP256),
+            Some(Nid::SECP384R1) => Ok(Curve::NistP384),
+            Some(Nid::SECP521R1) => Ok(Curve::NistP521),
+            Some(Nid::BRAINPOOL_P256R1) => Ok(Curve::BrainpoolP256r1),
+            Some(Nid::BRAINPOOL_P384R1) => Ok(Curve::BrainpoolP384r1),
+            Some(Nid::BRAINPOOL_P512R1) => Ok(Curve::BrainpoolP512r1),
+            _ => Err(Error::UnsupportedCurve(
+                "Unknown curve in group".to_string(),
+            )),
+        }
+    }
+}
+
 impl fmt::Display for Curve {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {
@@ -118,18 +141,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_curve_properties() {
-        for &curve in Curve::all() {
-            // Test that we can create an EC group
-            assert!(curve.to_ec_group().is_ok());
+    fn test_curve_key_size() {
+        let nist_p256 = Curve::NistP256;
+        let brainpool_p256r1 = Curve::BrainpoolP256r1;
+        let nist_p384 = Curve::NistP384;
+        let brainpool_p384r1 = Curve::BrainpoolP384r1;
+        let nist_p521 = Curve::NistP521;
+        let brainpool_p512r1 = Curve::BrainpoolP512r1;
 
-            // Test key sizes are reasonable
-            assert!(curve.key_size() >= 32);
-            assert!(curve.key_size() <= 66);
-
-            // Test security levels
-            assert!(curve.security_level_bits() >= 128);
-        }
+        assert_eq!(nist_p256.key_size(), 32);
+        assert_eq!(brainpool_p256r1.key_size(), 32);
+        assert_eq!(nist_p384.key_size(), 48);
+        assert_eq!(brainpool_p384r1.key_size(), 48);
+        assert_eq!(nist_p521.key_size(), 66);
+        assert_eq!(brainpool_p512r1.key_size(), 64);
     }
 
     #[test]
