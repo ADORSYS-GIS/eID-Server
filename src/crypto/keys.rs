@@ -1,7 +1,7 @@
 use crate::crypto::curves::Curve;
 use crate::crypto::errors::{CryptoResult, Error};
 use openssl::bn::BigNumContext;
-use openssl::ec::{EcKey, EcPoint, PointConversionForm as Form};
+use openssl::ec::{EcGroup, EcKey, EcPoint, PointConversionForm as Form};
 use openssl::pkey::{PKey, Private, Public};
 use secrecy::{ExposeSecret, SecretSlice};
 use std::fmt;
@@ -55,12 +55,6 @@ impl From<Vec<u8>> for SecureBytes {
     }
 }
 
-impl From<&Vec<u8>> for SecureBytes {
-    fn from(value: &Vec<u8>) -> Self {
-        Self::new(value.clone())
-    }
-}
-
 impl From<&str> for SecureBytes {
     fn from(value: &str) -> Self {
         Self::new(value.as_bytes())
@@ -69,12 +63,6 @@ impl From<&str> for SecureBytes {
 
 impl From<String> for SecureBytes {
     fn from(value: String) -> Self {
-        Self::new(value.as_bytes())
-    }
-}
-
-impl From<&String> for SecureBytes {
-    fn from(value: &String) -> Self {
         Self::new(value.as_bytes())
     }
 }
@@ -90,7 +78,7 @@ pub struct PrivateKey {
 impl PrivateKey {
     /// Generate a new random private key with the given curve
     pub fn generate(curve: Curve) -> CryptoResult<Self> {
-        let group = curve.to_ec_group()?;
+        let group: EcGroup = curve.try_into()?;
         let ec_key = EcKey::generate(&group)?;
         let private_key_bn = ec_key.private_key();
         let key_bytes = private_key_bn.to_vec();
@@ -130,15 +118,7 @@ impl PrivateKey {
         let group = ec_key.group();
 
         // Determine curve from the group
-        let curve = Curve::all()
-            .iter()
-            .find(|&&c| {
-                c.to_ec_group()
-                    .map(|g| g.curve_name() == group.curve_name())
-                    .unwrap_or(false)
-            })
-            .copied()
-            .ok_or_else(|| Error::UnsupportedCurve("Unknown curve in key".to_string()))?;
+        let curve: Curve = group.try_into()?;
 
         let private_key_bn = ec_key.private_key();
         let key_bytes = private_key_bn.to_vec();
@@ -185,7 +165,7 @@ impl PrivateKey {
 
     /// Export key in PKCS#8 DER format
     pub fn to_pkcs8_der(&self) -> CryptoResult<Vec<u8>> {
-        Ok(self.openssl_key.private_key_to_der()?)
+        Ok(self.openssl_key.private_key_to_pkcs8()?)
     }
 
     /// Export key in PKCS#8 PEM format
@@ -232,7 +212,7 @@ impl PublicKey {
             )));
         }
 
-        let group = curve.to_ec_group()?;
+        let group: EcGroup = curve.try_into()?;
         let mut ctx = BigNumContext::new()?;
 
         let uncompressed = if point_bytes.as_ref()[0] == 0x04 {
@@ -276,15 +256,7 @@ impl PublicKey {
         let group = ec_key.group();
 
         // Determine curve from the group
-        let curve = Curve::all()
-            .iter()
-            .find(|&&c| {
-                c.to_ec_group()
-                    .map(|g| g.curve_name() == group.curve_name())
-                    .unwrap_or(false)
-            })
-            .copied()
-            .ok_or_else(|| Error::UnsupportedCurve("Unknown curve in key".to_string()))?;
+        let curve: Curve = group.try_into()?;
 
         let point = ec_key.public_key();
         let mut ctx = BigNumContext::new()?;
@@ -409,17 +381,73 @@ mod tests {
     }
 
     #[test]
-    fn pem_serialization() {
-        let curve = Curve::NistP256;
-        let private_key = PrivateKey::generate(curve).unwrap();
-        let private_pem = private_key.to_pkcs8_pem().unwrap().trim().to_string();
-        assert!(private_pem.starts_with("-----BEGIN PRIVATE KEY-----"));
-        assert!(private_pem.ends_with("-----END PRIVATE KEY-----"));
+    fn priv_pem_serialization() {
+        let original_pem = include_str!("../../test_data/ec_keys/brainpoolp256r1.pem");
 
-        let public_key = private_key.public_key().unwrap();
-        let public_pem = public_key.to_pem().unwrap().trim().to_string();
-        assert!(public_pem.starts_with("-----BEGIN PUBLIC KEY-----"));
-        assert!(public_pem.ends_with("-----END PUBLIC KEY-----"));
+        let result = PrivateKey::from_pkcs8_pem(original_pem);
+        assert!(result.is_ok());
+        let private_key = result.unwrap();
+        assert!(private_key.curve() == Curve::BrainpoolP256r1);
+        assert_eq!(
+            private_key.as_bytes().len(),
+            Curve::BrainpoolP256r1.key_size()
+        );
+
+        let serialized = private_key.to_pkcs8_pem();
+        assert!(serialized.is_ok());
+        let serialized = serialized.unwrap();
+        assert_eq!(serialized, original_pem);
+    }
+
+    #[test]
+    fn private_key_der_serialization() {
+        let original_der = include_bytes!("../../test_data/ec_keys/brainpoolp256r1.der");
+
+        let result = PrivateKey::from_pkcs8_der(original_der);
+        assert!(result.is_ok());
+        let private_key = result.unwrap();
+        assert!(private_key.curve() == Curve::BrainpoolP256r1);
+        assert_eq!(
+            private_key.as_bytes().len(),
+            Curve::BrainpoolP256r1.key_size()
+        );
+
+        let serialized = private_key.to_pkcs8_der();
+        assert!(serialized.is_ok());
+        let serialized = serialized.unwrap();
+        assert_eq!(serialized, original_der);
+    }
+
+    #[test]
+    fn test_public_key_serialization() {
+        let brainpoolp256_der = hex!(
+            "308201333081EC06072A8648CE3D02013081E0020101302C06072A8648CE3D01"
+            "01022100A9FB57DBA1EEA9BC3E660A909D838D726E3BF623D52620282013481D"
+            "1F6E5377304404207D5A0975FC2C3057EEF67530417AFFE7FB8055C126DC5C6C"
+            "E94A4B44F330B5D9042026DC5C6CE94A4B44F330B5D9BBD77CBF958416295CF7"
+            "E1CE6BCCDC18FF8C07B60441048BD2AEB9CB7E57CB2C4B482FFC81B7AFB9DE27"
+            "E1E3BD23C23A4453BD9ACE3262547EF835C3DAC4FD97F8461A14611DC9C27745"
+            "132DED8E545C1D54C72F046997022100A9FB57DBA1EEA9BC3E660A909D838D71"
+            "8C397AA3B561A6F7901E0E82974856A7020101034200049F6E760D63B67A3059"
+            "1172DB8662C52EAFEA4B26EF7CD3EFA68B310680847D1D2816930F1FD28D9BF9"
+            "F8803DD7DD0C4DFBB93D9D2B152DB24ACB22D37908F521"
+        );
+        let expected_uncompressed = hex!(
+            "04"
+            "9F6E760D63B67A30591172DB8662C52EAFEA4B26EF7CD3EFA68B310680847D1D"
+            "2816930F1FD28D9BF9F8803DD7DD0C4DFBB93D9D2B152DB24ACB22D37908F521"
+        );
+
+        let result = PublicKey::from_der(&brainpoolp256_der);
+        assert!(result.is_ok());
+        let public_key = result.unwrap();
+        assert_eq!(public_key.curve(), Curve::BrainpoolP256r1);
+        assert_eq!(public_key.uncompressed_bytes(), expected_uncompressed);
+
+        let serialized = public_key.to_der();
+        assert!(serialized.is_ok());
+        let serialized = serialized.unwrap();
+        assert_eq!(serialized, brainpoolp256_der);
     }
 
     #[test]
@@ -462,10 +490,8 @@ mod tests {
         );
         let expected_x = hex!("19d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f");
         let expected_y = hex!("17758d7a3aa6943ef23e5e2909b3e8b31bfaa4544c2cbf1fb487f31ff239c8f8");
-        let expected_compressed_even =
+        let expected_compressed =
             hex!("02 19d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f");
-        let expected_compressed_odd =
-            hex!("03 19d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f");
 
         let public_key = PublicKey::from_bytes(curve, key_bytes).unwrap();
         let compressed = public_key.compressed_bytes().unwrap();
@@ -473,8 +499,54 @@ mod tests {
         assert_eq!(public_key.curve(), curve);
         assert_eq!(public_key.x_coordinate(), expected_x);
         assert_eq!(public_key.y_coordinate(), expected_y);
-        assert!(
-            (compressed == expected_compressed_even) || (compressed == expected_compressed_odd)
+        assert!(compressed == expected_compressed);
+    }
+
+    #[test]
+    fn test_public_key_validation() {
+        let nist_p256 = Curve::NistP256;
+        let private_key = PrivateKey::generate(nist_p256).unwrap();
+        let public_key = private_key.public_key();
+        assert!(public_key.is_ok());
+
+        let nist_p256_bytes = hex!(
+            "04"
+            "73039e0c42c496afb3f287ca7ef6b90bea2ab166696fb57b12b1bde7a7434fd6"
+            "b41c9550b5a58040784d87816cda1c9d485edeab4c6931f947323554db382a5c"
         );
+        let public_key = PublicKey::from_bytes(nist_p256, nist_p256_bytes);
+        assert!(public_key.is_ok());
+
+        let brainpool_p256r1_bytes = hex!(
+            "04"
+            "19d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f"
+            "17758d7a3aa6943ef23e5e2909b3e8b31bfaa4544c2cbf1fb487f31ff239c8f8"
+        );
+        let public_key = PublicKey::from_bytes(nist_p256, brainpool_p256r1_bytes);
+        assert!(public_key.is_err());
+    }
+
+    #[test]
+    fn test_invalid_public_key() {
+        let nist_p256_bytes = hex!(
+            "04"
+            "73039e0c42c496afb3f287ca7ef6b90bea2ab166696fb57b12b1bde7a7434fd6"
+            "b41c9550b5a58040784d87816cda1c9d485edeab4c6931f947323554db382a5c"
+        );
+        // Should fail because the curve is wrong
+        let brainpool_p256r1 = Curve::BrainpoolP256r1;
+        let public_key = PublicKey::from_bytes(brainpool_p256r1, nist_p256_bytes);
+        assert!(public_key.is_err());
+
+        // BrainpoolP256r1 public key
+        let brainpool_p256r1_bytes = hex!(
+            "04"
+            "19d4b7447788b0e1993db35500999627e739a4e5e35f02d8fb07d6122e76567f"
+            "17758d7a3aa6943ef23e5e2909b3e8b31bfaa4544c2cbf1fb487f31ff239c8f8"
+        );
+        // Should fail because the curve is wrong
+        let nist_p256 = Curve::NistP256;
+        let result = PublicKey::from_bytes(nist_p256, brainpool_p256r1_bytes);
+        assert!(result.is_err());
     }
 }
