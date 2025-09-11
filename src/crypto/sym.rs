@@ -244,7 +244,7 @@ mod tests {
             "d27867cb00d9486723e159978fb9a5f9"
             "88cab121422a8391fea815de83222b16"
         );
-        let decrypted = encryptor.decrypt(aes128_key.to_vec(), &iv, &ciphertext)?;
+        let decrypted = encryptor.decrypt(aes128_key.to_vec(), iv, ciphertext)?;
         assert_eq!(decrypted, plaintext);
 
         Ok(())

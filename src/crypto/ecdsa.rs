@@ -291,6 +291,11 @@ mod tests {
         // This should fail because curves don't match
         let result = key_pair_384.verify(data, &signature_256, HashAlg::Sha256);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Signature curve does not match key curve"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Signature curve does not match key curve")
+        );
     }
 }

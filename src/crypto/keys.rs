@@ -438,7 +438,7 @@ mod tests {
             "2816930F1FD28D9BF9F8803DD7DD0C4DFBB93D9D2B152DB24ACB22D37908F521"
         );
 
-        let result = PublicKey::from_der(&brainpoolp256_der);
+        let result = PublicKey::from_der(brainpoolp256_der);
         assert!(result.is_ok());
         let public_key = result.unwrap();
         assert_eq!(public_key.curve(), Curve::BrainpoolP256r1);
