@@ -43,8 +43,9 @@ secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
 base64 = "0.22"
 regex = "1.10"
-parking_lot = "0.12.4"
 log = "0.4.27"
+quick-xml = { version = "0.34", features = ["serialize"] }
+zip = "2.2"
 
 [dependencies.redis]
 version = "0.32"

@@ -1,9 +1,11 @@
 use super::{CscaInfo, CscaLinkCertificate, CscaValidationError, MasterList};
 use base64::Engine;
 use openssl::x509::X509;
+use quick_xml::de::from_str as xml_from_str;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use time::OffsetDateTime;
+use tracing::{info, warn};
 
 /// Master List parser for different formats
 pub struct MasterListParser;
@@ -39,7 +41,8 @@ pub struct JsonMasterList {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JsonCountryInfo {
-    pub country_code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub country_code: Option<String>,
     pub csca_certificates: Vec<JsonCertificate>,
 }
 
@@ -60,6 +63,74 @@ pub struct JsonLinkCertificate {
     pub certificate: JsonCertificate,
 }
 
+/// Master List in XML format - common ICAO format for BSI and other authorities
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename = "MasterList")]
+pub struct XmlMasterList {
+    #[serde(rename = "Version")]
+    pub version: String,
+    #[serde(rename = "IssueDate")]
+    pub issue_date: String,
+    #[serde(rename = "NextUpdate")]
+    pub next_update: String,
+    #[serde(rename = "Countries")]
+    pub countries: XmlCountries,
+    #[serde(rename = "LinkCertificates", default)]
+    pub link_certificates: Option<XmlLinkCertificates>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct XmlCountries {
+    #[serde(rename = "Country", default)]
+    pub country: Vec<XmlCountryInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct XmlCountryInfo {
+    #[serde(rename = "CountryCode")]
+    pub country_code: String,
+    #[serde(rename = "CSCACertificates")]
+    pub csca_certificates: XmlCscaCertificates,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct XmlCscaCertificates {
+    #[serde(rename = "Certificate", default)]
+    pub certificate: Vec<XmlCertificate>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct XmlCertificate {
+    #[serde(rename = "CertificateData")]
+    pub certificate_data: String, // Base64 encoded DER
+    #[serde(rename = "Fingerprint", default)]
+    pub fingerprint: Option<String>,
+    #[serde(rename = "Subject", default)]
+    pub subject: Option<String>,
+    #[serde(rename = "Issuer", default)]
+    pub issuer: Option<String>,
+    #[serde(rename = "NotBefore", default)]
+    pub not_before: Option<String>,
+    #[serde(rename = "NotAfter", default)]
+    pub not_after: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct XmlLinkCertificates {
+    #[serde(rename = "LinkCertificate", default)]
+    pub link_certificate: Vec<XmlLinkCertificate>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct XmlLinkCertificate {
+    #[serde(rename = "SourceCountry")]
+    pub source_country: String,
+    #[serde(rename = "TargetCountry")]
+    pub target_country: String,
+    #[serde(rename = "Certificate")]
+    pub certificate: XmlCertificate,
+}
+
 impl MasterListParser {
     /// Parse Master List from JSON format
     pub fn parse_json(json_data: &str) -> Result<MasterList, CscaValidationError> {
@@ -73,8 +144,13 @@ impl MasterListParser {
 
         // Parse CSCA certificates by country
         for (country_code, country_info) in json_ml.countries {
+            // Use the country_code from the field if present, otherwise use the HashMap key
+            let actual_country_code = country_info
+                .country_code
+                .as_deref()
+                .unwrap_or(&country_code);
             for json_cert in country_info.csca_certificates {
-                let csca_info = Self::parse_json_certificate(&json_cert, &country_code)?;
+                let csca_info = Self::parse_json_certificate(&json_cert, actual_country_code)?;
                 master_list.add_csca(country_code.clone(), csca_info);
             }
         }
@@ -113,11 +189,23 @@ impl MasterListParser {
             }
 
             if line.starts_with("version:") {
-                master_list_version = line.split(':').nth(1).unwrap_or("").trim().to_string();
+                master_list_version = line
+                    .strip_prefix("version:")
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
             } else if line.starts_with("issueDate:") {
-                issue_date = line.split(':').nth(1).unwrap_or("").trim().to_string();
+                issue_date = line
+                    .strip_prefix("issueDate:")
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
             } else if line.starts_with("nextUpdate:") {
-                next_update = line.split(':').nth(1).unwrap_or("").trim().to_string();
+                next_update = line
+                    .strip_prefix("nextUpdate:")
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
             } else if line.starts_with("c:") {
                 // Start new entry
                 if let Some(entry) = current_entry.take() {
@@ -175,11 +263,168 @@ impl MasterListParser {
         Ok(master_list)
     }
 
+    /// Parse Master List from XML format
+    pub fn parse_xml(xml_data: &str) -> Result<MasterList, CscaValidationError> {
+        let xml_ml: XmlMasterList = xml_from_str(xml_data)
+            .map_err(|e| CscaValidationError::MasterListParse(format!("XML parse error: {e}")))?;
+
+        let issue_date = Self::parse_date(&xml_ml.issue_date)?;
+        let next_update = Self::parse_date(&xml_ml.next_update)?;
+
+        let mut master_list = MasterList::new(xml_ml.version, issue_date, next_update);
+
+        // Parse CSCA certificates by country
+        for country_info in xml_ml.countries.country {
+            for xml_cert in country_info.csca_certificates.certificate {
+                let csca_info = Self::parse_xml_certificate(&xml_cert, &country_info.country_code)?;
+                master_list.add_csca(country_info.country_code.clone(), csca_info);
+            }
+        }
+
+        // Parse link certificates if present
+        if let Some(link_certs) = xml_ml.link_certificates {
+            for xml_link in link_certs.link_certificate {
+                let cert_info =
+                    Self::parse_xml_certificate(&xml_link.certificate, &xml_link.source_country)?;
+                let link_cert = CscaLinkCertificate {
+                    source_country: xml_link.source_country,
+                    target_country: xml_link.target_country,
+                    certificate_info: cert_info,
+                };
+                master_list.add_link_certificate(link_cert);
+            }
+        }
+
+        Ok(master_list)
+    }
+
     /// Parse Master List from binary DER format
-    pub fn parse_der(_der_data: &[u8]) -> Result<MasterList, CscaValidationError> {
+    pub fn parse_der(der_data: &[u8]) -> Result<MasterList, CscaValidationError> {
+        // The .ml files from BSI contain ASN.1/DER encoded certificates
+        // We need to parse the binary structure and extract individual certificates
+
+        info!(
+            "Attempting to parse binary DER format master list ({} bytes)",
+            der_data.len()
+        );
+
+        // Create a basic master list with current date
+        let now = OffsetDateTime::now_utc();
+        let mut master_list = MasterList::new(
+            "Binary-DER".to_string(),
+            now,
+            now + time::Duration::days(365), // Assume 1 year validity
+        );
+
+        // Try to find and parse X.509 certificates in the binary data
+        let mut offset = 0;
+        let mut cert_count = 0;
+
+        while offset < der_data.len() {
+            // Look for ASN.1 SEQUENCE tag (0x30) followed by length
+            if offset + 1 >= der_data.len() || der_data[offset] != 0x30 {
+                offset += 1;
+                continue;
+            }
+
+            // Try to parse certificate at this offset
+            match Self::try_parse_certificate_at_offset(der_data, offset) {
+                Ok((cert_info, cert_size)) => {
+                    // Add certificate to master list
+                    // Use a generic country code since we can't determine it from binary data alone
+                    let country_code = cert_info.country_code.clone();
+                    master_list.add_csca(country_code, cert_info);
+                    cert_count += 1;
+                    offset += cert_size;
+
+                    info!(
+                        "Successfully parsed certificate #{} at offset {}",
+                        cert_count,
+                        offset - cert_size
+                    );
+                }
+                Err(_) => {
+                    offset += 1;
+                }
+            }
+
+            // Safety check to prevent infinite loops
+            if cert_count > 1000 {
+                warn!("Reached maximum certificate limit (1000), stopping parsing");
+                break;
+            }
+        }
+
+        if cert_count == 0 {
+            return Err(CscaValidationError::MasterListParse(
+                "No valid certificates found in binary DER data".to_string(),
+            ));
+        }
+
+        info!(
+            "Successfully parsed {} certificates from binary DER format",
+            cert_count
+        );
+        Ok(master_list)
+    }
+
+    /// Try to parse a certificate at the given offset in DER data
+    fn try_parse_certificate_at_offset(
+        der_data: &[u8],
+        offset: usize,
+    ) -> Result<(CscaInfo, usize), CscaValidationError> {
+        if offset >= der_data.len() {
+            return Err(CscaValidationError::MasterListParse(
+                "Offset out of bounds".to_string(),
+            ));
+        }
+
+        // Try different certificate sizes starting from a reasonable minimum
+        let min_cert_size = 100;
+        let max_cert_size = std::cmp::min(4096, der_data.len() - offset);
+
+        for size in min_cert_size..=max_cert_size {
+            if offset + size > der_data.len() {
+                break;
+            }
+
+            let cert_bytes = &der_data[offset..offset + size];
+
+            // Try to parse as X.509 certificate
+            if let Ok(x509_cert) = X509::from_der(cert_bytes) {
+                // Extract country code from certificate subject or use "XX" as default
+                let country_code =
+                    Self::extract_country_from_cert(&x509_cert).unwrap_or_else(|| "XX".to_string());
+
+                match CscaInfo::from_x509(&x509_cert, country_code) {
+                    Ok(cert_info) => {
+                        return Ok((cert_info, size));
+                    }
+                    Err(_) => continue,
+                }
+            }
+        }
+
         Err(CscaValidationError::MasterListParse(
-            "DER format parsing not implemented - use JSON or LDIF format".to_string(),
+            "No valid certificate found at offset".to_string(),
         ))
+    }
+
+    /// Extract country code from X.509 certificate subject
+    fn extract_country_from_cert(cert: &X509) -> Option<String> {
+        let subject = cert.subject_name();
+
+        // Try to find country (C=) entry in subject
+        for entry in subject.entries() {
+            let nid = entry.object().nid();
+            if nid == openssl::nid::Nid::COUNTRYNAME {
+                if let Ok(country) = entry.data().as_utf8() {
+                    return Some(country.to_string());
+                }
+            }
+        }
+
+        None
     }
 
     /// Parse a certificate from JSON format
@@ -209,8 +454,33 @@ impl MasterListParser {
         CscaInfo::from_x509(&x509_cert, entry.country_code.clone())
     }
 
+    /// Parse a certificate from XML format
+    fn parse_xml_certificate(
+        xml_cert: &XmlCertificate,
+        country_code: &str,
+    ) -> Result<CscaInfo, CscaValidationError> {
+        let cert_der = base64::engine::general_purpose::STANDARD
+            .decode(&xml_cert.certificate_data)
+            .map_err(|e| {
+                CscaValidationError::MasterListParse(format!("Base64 decode error: {e}"))
+            })?;
+
+        let x509_cert = X509::from_der(&cert_der)?;
+        CscaInfo::from_x509(&x509_cert, country_code.to_string())
+    }
+
     /// Parse date string in various formats
     fn parse_date(date_str: &str) -> Result<OffsetDateTime, CscaValidationError> {
+        // Try parsing ISO 8601 with Z suffix first
+        if date_str.ends_with('Z') {
+            if let Ok(date) = OffsetDateTime::parse(
+                date_str,
+                &time::format_description::well_known::Iso8601::DEFAULT,
+            ) {
+                return Ok(date);
+            }
+        }
+
         // Try different date formats commonly used in Master Lists
         let formats = [
             "%Y-%m-%dT%H:%M:%SZ",
@@ -235,9 +505,26 @@ impl MasterListParser {
 
     /// Auto-detect format and parse Master List
     pub fn parse_auto(data: &str) -> Result<MasterList, CscaValidationError> {
+        let trimmed_data = data.trim_start();
+
         // Try JSON first
-        if data.trim_start().starts_with('{') {
+        if trimmed_data.starts_with('{') {
             return Self::parse_json(data);
+        }
+
+        // Check if it's HTML (not XML) - HTML typically starts with DOCTYPE or <html>
+        if trimmed_data.starts_with('<') {
+            // Check for HTML indicators
+            if trimmed_data.to_lowercase().contains("<!doctype html")
+                || trimmed_data.to_lowercase().contains("<html")
+                || trimmed_data.to_lowercase().contains("<head>")
+            {
+                return Err(CscaValidationError::MasterListParse(
+                    "Received HTML content instead of Master List - this suggests the download URL extraction failed".to_string(),
+                ));
+            }
+            // It's likely XML, try parsing it
+            return Self::parse_xml(data);
         }
 
         // Try LDIF
@@ -246,7 +533,7 @@ impl MasterListParser {
         }
 
         Err(CscaValidationError::MasterListParse(
-            "Unable to detect Master List format - supported formats: JSON, LDIF".to_string(),
+            "Unable to detect Master List format - supported formats: JSON, XML, LDIF".to_string(),
         ))
     }
 }

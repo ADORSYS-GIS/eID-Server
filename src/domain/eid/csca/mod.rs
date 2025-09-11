@@ -1,8 +1,16 @@
+mod master_list_fetcher;
 mod parser;
+mod periodic_updater;
 mod service;
+mod trust_store_manager;
+mod validator;
 
+pub use master_list_fetcher::MasterListFetcher;
 pub use parser::MasterListParser;
-pub use service::{CscaValidationService, CscaValidator, TrustStoreStats, ValidationResult};
+pub use periodic_updater::{MasterListUpdateStatus, PeriodicUpdater};
+pub use service::{CscaValidationService, CscaValidator};
+pub use trust_store_manager::{TrustStoreManager, TrustStoreStats};
+pub use validator::{CertificateValidator, ValidationResult};
 
 use openssl::{
     asn1::Asn1TimeRef,
