@@ -32,20 +32,9 @@ pub enum HashAlg {
 }
 
 impl HashAlg {
-    /// Get the OpenSSL MessageDigest for this hash algorithm
-    pub fn message_digest(self) -> Digest {
-        match self {
-            HashAlg::Sha1 => Digest::sha1(),
-            HashAlg::Sha224 => Digest::sha224(),
-            HashAlg::Sha256 => Digest::sha256(),
-            HashAlg::Sha384 => Digest::sha384(),
-            HashAlg::Sha512 => Digest::sha512(),
-        }
-    }
-
     /// Hash the given data with this hash algorithm
     pub fn hash(&self, data: impl AsRef<[u8]>) -> CryptoResult<Vec<u8>> {
-        let mut hasher = Hasher::new(self.message_digest())?;
+        let mut hasher = Hasher::new(self.into())?;
         hasher.update(data.as_ref())?;
         Ok(hasher.finish()?.to_vec())
     }
@@ -58,6 +47,18 @@ impl HashAlg {
             HashAlg::Sha256 => 32,
             HashAlg::Sha384 => 48,
             HashAlg::Sha512 => 64,
+        }
+    }
+}
+
+impl From<&HashAlg> for Digest {
+    fn from(hash_alg: &HashAlg) -> Self {
+        match hash_alg {
+            HashAlg::Sha1 => Digest::sha1(),
+            HashAlg::Sha224 => Digest::sha224(),
+            HashAlg::Sha256 => Digest::sha256(),
+            HashAlg::Sha384 => Digest::sha384(),
+            HashAlg::Sha512 => Digest::sha512(),
         }
     }
 }
