@@ -1,7 +1,6 @@
 use crate::crypto::curves::Curve;
 use crate::crypto::errors::{CryptoResult, Error};
 use crate::crypto::keys::{PrivateKey, PublicKey, SecureBytes};
-use openssl::bn::BigNumContext;
 use openssl::derive::Deriver;
 use std::fmt;
 
@@ -40,18 +39,7 @@ impl EcdhKeyPair {
 
     /// Perform ECDH key agreement with a peer's public key
     pub fn key_agreement(&self, peer_public_key: &PublicKey) -> CryptoResult<SharedSecret> {
-        // Validate curve compatibility
-        if self.curve() != peer_public_key.curve() {
-            return Err(Error::Invalid("Key curves do not match".to_string()));
-        }
-        // Validate peer public key
-        validate_public_key(peer_public_key)?;
-        // Perform ECDH key agreement
-        let mut deriver = Deriver::new(self.private_key.as_openssl_pkey())?;
-        deriver.set_peer(peer_public_key.as_openssl_pkey())?;
-
-        let shared_secret_bytes = deriver.derive_to_vec()?;
-        Ok(SharedSecret::new(self.curve(), shared_secret_bytes))
+        key_agreement(&self.private_key, peer_public_key)
     }
 
     /// Get the private key
@@ -141,38 +129,12 @@ pub fn key_agreement(
     if private_key.curve() != peer_public_key.curve() {
         return Err(Error::Invalid("Key curves do not match".to_string()));
     }
-    // Validate peer public key
-    validate_public_key(peer_public_key)?;
     // Perform ECDH key agreement
     let mut deriver = Deriver::new(private_key.as_openssl_pkey())?;
     deriver.set_peer(peer_public_key.as_openssl_pkey())?;
 
     let shared_secret_bytes = deriver.derive_to_vec()?;
     Ok(SharedSecret::new(private_key.curve(), shared_secret_bytes))
-}
-
-/// Validate that a public key is valid for ECDH operations
-fn validate_public_key(public_key: &PublicKey) -> CryptoResult<()> {
-    let ec_key = public_key.as_openssl_pkey().ec_key()?;
-
-    let group = ec_key.group();
-    let point = ec_key.public_key();
-
-    // Check if the point is on the curve
-    let mut ctx = BigNumContext::new()?;
-    if !point.is_on_curve(group, &mut ctx)? {
-        return Err(Error::Invalid(
-            "Public key point is not on the curve".to_string(),
-        ));
-    }
-
-    // Check if the point is infinity
-    if point.is_infinity(group) {
-        return Err(Error::Invalid(
-            "Public key is the identity element".to_string(),
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -232,14 +194,11 @@ mod tests {
         // This should fail because curves don't match
         let result = alice_keypair.key_agreement(bob_keypair.public_key());
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_public_key_validation() {
-        let curve = Curve::BrainpoolP256r1;
-        let keypair = EcdhKeyPair::generate(curve).unwrap();
-
-        // Valid public key should pass validation
-        assert!(validate_public_key(keypair.public_key()).is_ok());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Key curves do not match")
+        );
     }
 }
