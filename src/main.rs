@@ -41,7 +41,8 @@ async fn main() -> color_eyre::Result<()> {
         .with_psk(session_manager.clone())
         .with_session_store(tls_store);
 
-    let service = EidService::new(session_manager);
+    let service = EidService::new(session_manager)
+        .wrap_err("Failed to create EID service with CSCA validation")?;
 
     let server = Server::new(service, &config, tls_config).await?;
     server.run().await
