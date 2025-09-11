@@ -15,7 +15,7 @@ pub struct EcdsaSig {
     // DER-encoded signature data
     der_data: Vec<u8>,
     // Raw signature components (r, s)
-    raw_components: Option<(Vec<u8>, Vec<u8>)>,
+    raw_components: (Vec<u8>, Vec<u8>),
 }
 
 impl EcdsaSig {
@@ -30,7 +30,7 @@ impl EcdsaSig {
         Ok(Self {
             curve,
             der_data: der_data.as_ref().to_vec(),
-            raw_components: Some((r, s)),
+            raw_components: (r, s),
         })
     }
 
@@ -50,7 +50,7 @@ impl EcdsaSig {
         Ok(Self {
             curve,
             der_data,
-            raw_components: Some((r.to_vec(), s.to_vec())),
+            raw_components: (r.to_vec(), s.to_vec()),
         })
     }
 
@@ -66,21 +66,11 @@ impl EcdsaSig {
 
     /// Get raw concatenated signature components r || s
     pub fn raw_signature(&self) -> CryptoResult<Vec<u8>> {
-        if let Some(ref components) = self.raw_components {
-            let mut combined = Vec::with_capacity(components.0.len() + components.1.len());
-            combined.extend_from_slice(&components.0);
-            combined.extend_from_slice(&components.1);
-            Ok(combined)
-        } else {
-            // Parse from DER if not cached
-            let ecdsa_sig = OpenSslEcdsaSig::from_der(&self.der_data)?;
-            let r = ecdsa_sig.r().to_vec();
-            let s = ecdsa_sig.s().to_vec();
-            let mut combined = Vec::with_capacity(r.len() + s.len());
-            combined.extend_from_slice(&r);
-            combined.extend_from_slice(&s);
-            Ok(combined)
-        }
+        let (r, s) = &self.raw_components;
+        let mut combined = Vec::with_capacity(r.len() + s.len());
+        combined.extend_from_slice(r);
+        combined.extend_from_slice(s);
+        Ok(combined)
     }
 
     /// Convert DER encoded signature to hex string representation
@@ -140,13 +130,7 @@ impl EcdsaKeyPair {
 
     /// Sign data with this key pair and return the signature
     pub fn sign(&self, data: impl AsRef<[u8]>, hash_alg: HashAlg) -> CryptoResult<EcdsaSig> {
-        // Hash the data first
-        let hash_bytes = hash_alg.hash(data.as_ref())?;
-
-        let mut signer = Signer::new_without_digest(self.private_key.as_openssl_pkey())?;
-        let signature_der = signer.sign_oneshot_to_vec(&hash_bytes)?;
-
-        EcdsaSig::from_der(self.curve(), signature_der)
+        sign(&self.private_key, data, hash_alg)
     }
 
     /// Verify a signature against data using this key pair
@@ -156,17 +140,7 @@ impl EcdsaKeyPair {
         signature: &EcdsaSig,
         hash_alg: HashAlg,
     ) -> CryptoResult<bool> {
-        if signature.curve() != self.curve() {
-            return Err(Error::Invalid(
-                "Signature curve does not match key curve".to_string(),
-            ));
-        }
-        // Hash the data first
-        let hash_bytes = hash_alg.hash(data.as_ref())?;
-
-        let mut verifier = Verifier::new_without_digest(self.public_key.as_openssl_pkey())?;
-        let result = verifier.verify_oneshot(signature.as_der(), &hash_bytes)?;
-        Ok(result)
+        verify(&self.public_key, data, signature, hash_alg)
     }
 
     /// Get the private key
@@ -259,8 +233,10 @@ mod tests {
 
         // Test with wrong data
         let wrong_data = b"wrong data";
-        let is_valid_wrong = key_pair.verify(wrong_data, &signature, hash_alg).unwrap();
-        assert!(!is_valid_wrong);
+        let result = key_pair.verify(wrong_data, &signature, hash_alg);
+        assert!(result.is_ok());
+        let is_valid = result.unwrap();
+        assert!(!is_valid);
     }
 
     #[test]
@@ -315,5 +291,6 @@ mod tests {
         // This should fail because curves don't match
         let result = key_pair_384.verify(data, &signature_256, HashAlg::Sha256);
         assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Signature curve does not match key curve"));
     }
 }
