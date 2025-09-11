@@ -37,13 +37,14 @@ impl Cipher {
         // AES always has a block size of 16 bytes.
         AES_BLOCK_SIZE
     }
+}
 
-    /// Convert the cipher to an OpenSSL cipher
-    pub fn to_openssl_cipher(self) -> OpenSslCipher {
-        match self {
-            Self::Aes128Cbc => OpenSslCipher::aes_128_cbc(),
-            Self::Aes192Cbc => OpenSslCipher::aes_192_cbc(),
-            Self::Aes256Cbc => OpenSslCipher::aes_256_cbc(),
+impl From<Cipher> for OpenSslCipher {
+    fn from(cipher: Cipher) -> Self {
+        match cipher {
+            Cipher::Aes128Cbc => OpenSslCipher::aes_128_cbc(),
+            Cipher::Aes192Cbc => OpenSslCipher::aes_192_cbc(),
+            Cipher::Aes256Cbc => OpenSslCipher::aes_256_cbc(),
         }
     }
 }
@@ -86,7 +87,7 @@ impl AesEncryptor {
         let padded_data = iso_7816_pad(plaintext_bytes, self.cipher.block_size());
 
         let mut encrypter = Crypter::new(
-            self.cipher.to_openssl_cipher(),
+            self.cipher.into(),
             Mode::Encrypt,
             kenc.into().expose_secret(),
             Some(iv.as_ref()),
@@ -114,7 +115,7 @@ impl AesEncryptor {
         }
 
         let mut decrypter = Crypter::new(
-            self.cipher.to_openssl_cipher(),
+            self.cipher.into(),
             Mode::Decrypt,
             kdec.into().expose_secret(),
             Some(iv.as_ref()),
@@ -172,6 +173,7 @@ impl Default for AesEncryptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hex_literal::hex;
 
     // Test vectors for AES-128-CBC
     const AES128_KEY: &[u8] = &[
@@ -233,6 +235,17 @@ mod tests {
 
         let decrypted = encryptor.decrypt(AES128_KEY, TEST_IV, &ciphertext)?;
         assert_eq!(decrypted, TEST_PLAINTEXT);
+
+        let aes128_key = [0x42; 16];
+        let iv = [0x24; 16];
+        let plaintext = *b"hello world! this is my plaintext.";
+        let ciphertext = hex!(
+            "c7fe247ef97b21f07cbdd26cb5d346bf"
+            "d27867cb00d9486723e159978fb9a5f9"
+            "88cab121422a8391fea815de83222b16"
+        );
+        let decrypted = encryptor.decrypt(aes128_key.to_vec(), &iv, &ciphertext)?;
+        assert_eq!(decrypted, plaintext);
 
         Ok(())
     }
