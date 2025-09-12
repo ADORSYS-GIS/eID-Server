@@ -46,7 +46,6 @@ secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
 x509-parser = "0.18.0"
 base64 = "0.22.1"
-num-integer = "0.1.46"
 
 [dependencies.redis]
 version = "0.32"
