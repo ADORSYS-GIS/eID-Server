@@ -1,332 +1,241 @@
-#![allow(unused_imports)]
-use super::TrustStore;
-use super::in_memory::InMemoryTrustStore;
+#[allow(unused_imports)]
+use base64::{Engine as _, engine::general_purpose};
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
+#[allow(unused_imports)]
+use x509_parser::prelude::{FromDer, X509Certificate};
 
-#[tokio::test]
-async fn test_new_trust_store() {
-    let trust_store = InMemoryTrustStore::new();
-    assert_eq!(trust_store.count().await, 0);
-    assert!(trust_store.list_certificate_names().await.is_empty());
+#[allow(unused_imports)]
+use crate::pki::trust_store::{TrustStore, error::TrustStoreError, in_memory::InMemoryTrustStore};
+
+/// Helper function to read certificate bytes from a file.
+#[allow(dead_code)]
+async fn read_cert_file(path: &str) -> Vec<u8> {
+    let mut file = File::open(path)
+        .await
+        .unwrap_or_else(|e| panic!("Failed to open {}: {}", path, e));
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).await.unwrap();
+    bytes
 }
 
 #[tokio::test]
-async fn test_add_invalid_certificate_graceful_rejection() {
+async fn test_add_invalid_certificate() {
     let mut trust_store = InMemoryTrustStore::new();
     let invalid_der = vec![0x01, 0x02, 0x03];
 
-    // Should gracefully reject invalid certificate
-    assert!(
-        !trust_store
-            .add_certificate_der("invalid_cert".to_string(), invalid_der)
-            .await
-    );
-    assert_eq!(trust_store.count().await, 0);
+    let result = trust_store
+        .add_certificate("invalid_cert".to_string(), invalid_der)
+        .await;
+    assert!(matches!(
+        result,
+        Err(TrustStoreError::CertificateParsingError(_))
+    ));
+
+    // Verify no certificate was added
+    let cert = trust_store.certificate("invalid_cert").await.unwrap();
+    assert!(cert.is_none());
 }
 
-#[tokio::test]
-async fn test_add_invalid_pem_graceful_rejection() {
-    let mut trust_store = InMemoryTrustStore::new();
-    let invalid_pem = b"-----BEGIN CERTIFICATE-----\nInvalid PEM data\n-----END CERTIFICATE-----";
-
-    // Should gracefully reject invalid PEM
-    assert!(
-        !trust_store
-            .add_certificate_pem("invalid_cert".to_string(), invalid_pem)
-            .await
-    );
-    assert_eq!(trust_store.count().await, 0);
-}
-
-#[tokio::test]
-async fn test_remove_nonexistent_certificate() {
-    let mut trust_store = InMemoryTrustStore::new();
-
-    // Should return false for non-existent certificates
-    assert!(!trust_store.remove_certificate_by_name("nonexistent").await);
-    assert!(
-        !trust_store
-            .remove_certificate_by_serial("nonexistent")
-            .await
-    );
-}
-
-#[tokio::test]
-async fn test_get_nonexistent_certificate() {
-    let trust_store = InMemoryTrustStore::new();
-
-    // Should return None for non-existent certificates
-    assert!(
-        trust_store
-            .get_certificate_der_by_name("nonexistent")
-            .await
-            .is_none()
-    );
-    assert!(
-        trust_store
-            .get_certificate_der_by_serial("nonexistent")
-            .await
-            .is_none()
-    );
-}
-
-#[tokio::test]
-async fn test_empty_trust_store_operations() {
-    let mut trust_store = InMemoryTrustStore::new();
-
-    // All operations on empty trust store should work without panicking
-    assert_eq!(trust_store.count().await, 0);
-    assert!(trust_store.list_certificate_names().await.is_empty());
-    assert!(!trust_store.remove_certificate_by_name("test").await);
-    assert!(!trust_store.remove_certificate_by_serial("123").await);
-    assert!(
-        trust_store
-            .get_certificate_der_by_name("test")
-            .await
-            .is_none()
-    );
-    assert!(
-        trust_store
-            .get_certificate_der_by_serial("123")
-            .await
-            .is_none()
-    );
-}
-
-// Integration tests with real test certificates
 #[tokio::test]
 async fn test_add_valid_certificate_der() {
-    use tokio::fs::File;
-    use tokio::io::AsyncReadExt;
-
     let mut trust_store = InMemoryTrustStore::new();
-
-    // Read a real test certificate
-    let mut file = File::open("test_data/pki/[ROOT-CA]_Test-CSCA08.cer")
-        .await
-        .unwrap();
-    let mut der_bytes = Vec::new();
-    file.read_to_end(&mut der_bytes).await.unwrap();
+    let der_bytes = read_cert_file("test_data/pki/root_csca.cer").await;
 
     // Should successfully add valid certificate
     assert!(
         trust_store
-            .add_certificate_der("test_cert".to_string(), der_bytes.clone())
+            .add_certificate("test_cert".to_string(), der_bytes.clone())
             .await
-    );
-    assert_eq!(trust_store.count().await, 1);
-    assert!(
-        trust_store
-            .list_certificate_names()
-            .await
-            .contains(&"test_cert".to_string())
+            .unwrap()
     );
 
     // Should be able to retrieve the certificate
-    let retrieved = trust_store
-        .get_certificate_der_by_name("test_cert")
-        .await
-        .unwrap();
+    let retrieved = trust_store.certificate("test_cert").await.unwrap().unwrap();
     assert_eq!(retrieved, der_bytes);
-}
 
-#[tokio::test]
-async fn test_add_multiple_certificates() {
-    use tokio::fs::File;
-    use tokio::io::AsyncReadExt;
-
-    let mut trust_store = InMemoryTrustStore::new();
-
-    // Read first certificate
-    let mut file1 = File::open("test_data/pki/[ROOT-CA]_Test-CSCA08.cer")
-        .await
-        .unwrap();
-    let mut der_bytes1 = Vec::new();
-    file1.read_to_end(&mut der_bytes1).await.unwrap();
-
-    // Read second certificate
-    let mut file2 = File::open("test_data/pki/Link-[CA]_TEST_csca-germany-0008-04f0.cer")
-        .await
-        .unwrap();
-    let mut der_bytes2 = Vec::new();
-    file2.read_to_end(&mut der_bytes2).await.unwrap();
-
-    // Add both certificates
-    assert!(
-        trust_store
-            .add_certificate_der("cert1".to_string(), der_bytes1.clone())
-            .await
-    );
-    assert!(
-        trust_store
-            .add_certificate_der("cert2".to_string(), der_bytes2.clone())
-            .await
-    );
-
-    assert_eq!(trust_store.count().await, 2);
-    let cert_names = trust_store.list_certificate_names().await;
-    assert!(cert_names.contains(&"cert1".to_string()));
-    assert!(cert_names.contains(&"cert2".to_string()));
-
-    // Verify both can be retrieved
-    assert!(
-        trust_store
-            .get_certificate_der_by_name("cert1")
-            .await
-            .is_some()
-    );
-    assert!(
-        trust_store
-            .get_certificate_der_by_name("cert2")
-            .await
-            .is_some()
-    );
-}
-
-#[tokio::test]
-async fn test_remove_certificate_by_name() {
-    use tokio::fs::File;
-    use tokio::io::AsyncReadExt;
-
-    let mut trust_store = InMemoryTrustStore::new();
-
-    // Add a certificate
-    let mut file = File::open("test_data/pki/[ROOT-CA]_Test-CSCA08.cer")
-        .await
-        .unwrap();
-    let mut der_bytes = Vec::new();
-    file.read_to_end(&mut der_bytes).await.unwrap();
-
-    assert!(
-        trust_store
-            .add_certificate_der("test_cert".to_string(), der_bytes)
-            .await
-    );
-    assert_eq!(trust_store.count().await, 1);
-
-    // Remove the certificate
-    assert!(trust_store.remove_certificate_by_name("test_cert").await);
-    assert_eq!(trust_store.count().await, 0);
-    assert!(
-        trust_store
-            .get_certificate_der_by_name("test_cert")
-            .await
-            .is_none()
-    );
-}
-
-#[tokio::test]
-async fn test_get_certificate_by_serial_number() {
-    use tokio::fs::File;
-    use tokio::io::AsyncReadExt;
-
-    let mut trust_store = InMemoryTrustStore::new();
-
-    // Add a certificate
-    let mut file = File::open("test_data/pki/[ROOT-CA]_Test-CSCA08.cer")
-        .await
-        .unwrap();
-    let mut der_bytes = Vec::new();
-    file.read_to_end(&mut der_bytes).await.unwrap();
-
-    assert!(
-        trust_store
-            .add_certificate_der("test_cert".to_string(), der_bytes.clone())
-            .await
-    );
-
-    // Parse the certificate to get its serial number
-    use x509_parser::prelude::{FromDer, X509Certificate};
+    // Should also be retrievable by serial number
     let (_, x509_cert) = X509Certificate::from_der(&der_bytes).unwrap();
     let serial_number = x509_cert.tbs_certificate.serial.to_string();
-
-    // Should be able to retrieve by serial number
-    let retrieved = trust_store
-        .get_certificate_der_by_serial(&serial_number)
+    let retrieved_by_serial = trust_store
+        .certificate(&serial_number)
         .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(retrieved_by_serial, der_bytes);
+}
+
+#[tokio::test]
+async fn test_add_valid_certificate_pem() {
+    let mut trust_store = InMemoryTrustStore::new();
+    // Assuming you have a PEM encoded certificate for testing
+    // For now, let's use the DER and encode it as PEM for the test
+    let der_bytes = read_cert_file("test_data/pki/root_csca.cer").await;
+    let pem_bytes = format!(
+        "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----",
+        general_purpose::STANDARD.encode(der_bytes.clone())
+    );
+
+    // Should successfully add valid PEM certificate
+    assert!(
+        trust_store
+            .add_certificate("test_pem_cert".to_string(), pem_bytes.as_bytes())
+            .await
+            .unwrap()
+    );
+
+    // Should be able to retrieve the certificate (which will be DER)
+    let retrieved = trust_store
+        .certificate("test_pem_cert")
+        .await
+        .unwrap()
         .unwrap();
     assert_eq!(retrieved, der_bytes);
 }
 
 #[tokio::test]
-async fn test_remove_certificate_by_serial() {
-    use tokio::fs::File;
-    use tokio::io::AsyncReadExt;
-
+async fn test_add_duplicate_certificate() {
     let mut trust_store = InMemoryTrustStore::new();
-
-    // Add a certificate
-    let mut file = File::open("test_data/pki/[ROOT-CA]_Test-CSCA08.cer")
-        .await
-        .unwrap();
-    let mut der_bytes = Vec::new();
-    file.read_to_end(&mut der_bytes).await.unwrap();
+    let der_bytes = read_cert_file("test_data/pki/root_csca.cer").await;
 
     assert!(
         trust_store
-            .add_certificate_der("test_cert".to_string(), der_bytes.clone())
+            .add_certificate("cert_name".to_string(), der_bytes.clone())
             .await
+            .unwrap()
     );
+    assert!(
+        !trust_store
+            .add_certificate("cert_name".to_string(), der_bytes)
+            .await
+            .unwrap()
+    ); // Duplicate name, should return false
+}
 
-    // Parse the certificate to get its serial number
-    use x509_parser::prelude::{FromDer, X509Certificate};
+#[tokio::test]
+async fn test_remove_certificate() {
+    let mut trust_store = InMemoryTrustStore::new();
+    let der_bytes = read_cert_file("test_data/pki/root_csca.cer").await;
+    let cert_name = "test_cert".to_string();
+
+    trust_store
+        .add_certificate(cert_name.clone(), der_bytes.clone())
+        .await
+        .unwrap();
+
+    // Remove by name
+    assert!(trust_store.remove_certificate(&cert_name).await.unwrap());
+    assert!(trust_store.certificate(&cert_name).await.unwrap().is_none());
+
+    // Add again to test remove by serial
+    trust_store
+        .add_certificate(cert_name.clone(), der_bytes.clone())
+        .await
+        .unwrap();
     let (_, x509_cert) = X509Certificate::from_der(&der_bytes).unwrap();
     let serial_number = x509_cert.tbs_certificate.serial.to_string();
 
     // Remove by serial number
     assert!(
         trust_store
-            .remove_certificate_by_serial(&serial_number)
+            .remove_certificate(&serial_number)
             .await
+            .unwrap()
     );
-    assert_eq!(trust_store.count().await, 0);
     assert!(
         trust_store
-            .get_certificate_der_by_name("test_cert")
+            .certificate(&serial_number)
             .await
+            .unwrap()
+            .is_none()
+    );
+
+    // Try removing a non-existent certificate
+    assert!(!trust_store.remove_certificate("nonexistent").await.unwrap());
+}
+
+#[tokio::test]
+async fn test_get_certificate() {
+    let mut trust_store = InMemoryTrustStore::new();
+    let der_bytes = read_cert_file("test_data/pki/root_csca.cer").await;
+    let cert_name = "test_cert".to_string();
+
+    trust_store
+        .add_certificate(cert_name.clone(), der_bytes.clone())
+        .await
+        .unwrap();
+
+    // Retrieve by name
+    let retrieved_by_name = trust_store.certificate(&cert_name).await.unwrap().unwrap();
+    assert_eq!(retrieved_by_name, der_bytes);
+
+    // Retrieve by serial number
+    let (_, x509_cert) = X509Certificate::from_der(&der_bytes).unwrap();
+    let serial_number = x509_cert.tbs_certificate.serial.to_string();
+    let retrieved_by_serial = trust_store
+        .certificate(&serial_number)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(retrieved_by_serial, der_bytes);
+
+    // Try retrieving a non-existent certificate
+    assert!(
+        trust_store
+            .certificate("nonexistent")
+            .await
+            .unwrap()
             .is_none()
     );
 }
 
 #[tokio::test]
-async fn test_duplicate_certificate_names() {
-    use tokio::fs::File;
-    use tokio::io::AsyncReadExt;
-
+async fn test_validate_certificate_chain() {
     let mut trust_store = InMemoryTrustStore::new();
 
-    // Add first certificate
-    let mut file1 = File::open("test_data/pki/[ROOT-CA]_Test-CSCA08.cer")
+    let root_ca_der = read_cert_file("test_data/pki/root_csca.cer").await;
+    let link_ca_der = read_cert_file("test_data/pki/link_csca.cer").await;
+
+    // Add root CA to trust store
+    trust_store
+        .add_certificate("root_ca".to_string(), root_ca_der.clone())
         .await
         .unwrap();
-    let mut der_bytes1 = Vec::new();
-    file1.read_to_end(&mut der_bytes1).await.unwrap();
-
-    // Add second certificate
-    let mut file2 = File::open("test_data/pki/Link-[CA]_TEST_csca-germany-0008-04f0.cer")
+    // Add link CA to trust store
+    trust_store
+        .add_certificate("link_ca".to_string(), link_ca_der.clone())
         .await
         .unwrap();
-    let mut der_bytes2 = Vec::new();
-    file2.read_to_end(&mut der_bytes2).await.unwrap();
 
-    // Add both with same name - second should overwrite first
-    assert!(
-        trust_store
-            .add_certificate_der("same_name".to_string(), der_bytes1)
-            .await
-    );
-    assert!(
-        trust_store
-            .add_certificate_der("same_name".to_string(), der_bytes2.clone())
-            .await
-    );
+    let valid_chain = vec![link_ca_der.clone(), root_ca_der.clone()];
+    assert!(trust_store.validate(&valid_chain).await.is_ok());
 
-    // Should still have only 1 certificate (the second one)
-    assert_eq!(trust_store.count().await, 1);
+    // Invalid chain (empty)
+    let empty_chain = vec![];
+    assert!(matches!(
+        trust_store.validate(&empty_chain).await,
+        Err(TrustStoreError::CertificateParsingError(_))
+    ));
 
-    // Retrieved certificate should be the second one
-    let retrieved = trust_store
-        .get_certificate_der_by_name("same_name")
-        .await
-        .unwrap();
-    assert_eq!(retrieved, der_bytes2);
+    // Invalid chain (missing cert in store) - for this simple validation, it means not in store.
+    let mut invalid_der = root_ca_der.clone();
+    invalid_der[0] = 0x00; // Corrupt a byte
+    let invalid_chain_corrupt = vec![invalid_der.clone()];
+    assert!(matches!(
+        trust_store.validate(&invalid_chain_corrupt).await,
+        Err(TrustStoreError::CertificateParsingError(_))
+    ));
+
+    // Validate a chain with a certificate not in the store
+    let unknown_cert_der = read_cert_file("test_data/pki/root_csca.cer").await; // Re-using a known cert, but will treat as 'unknown'
+    let (_, unknown_x509_cert) = X509Certificate::from_der(&unknown_cert_der).unwrap();
+    let _unknown_serial = unknown_x509_cert.tbs_certificate.serial.to_string();
+
+    // Remove link_ca to simulate missing cert
+    trust_store.remove_certificate("link_ca").await.unwrap();
+    let chain_with_missing_link = vec![link_ca_der.clone(), root_ca_der.clone()];
+    assert!(matches!(
+        trust_store.validate(&chain_with_missing_link).await,
+        Err(TrustStoreError::CertificateNotFound(_))
+    ));
 }
