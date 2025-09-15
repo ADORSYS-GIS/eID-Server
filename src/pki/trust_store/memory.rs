@@ -3,8 +3,8 @@ use pem;
 use std::collections::{HashMap, HashSet};
 use x509_parser::prelude::{FromDer, X509Certificate};
 
-use crate::pki::trust_store::error::TrustStoreError;
 use crate::pki::trust_store::TrustStore;
+use crate::pki::trust_store::error::TrustStoreError;
 
 /// Simple in-memory trust store for certificate management.
 pub struct MemoryTrustStore {
@@ -31,10 +31,7 @@ impl MemoryTrustStore {
     }
 
     /// Validates a certificate and extracts its serial number.
-    fn validate_and_extract_serial(
-        &self,
-        der_bytes: &[u8],
-    ) -> Result<String, TrustStoreError> {
+    fn validate_and_extract_serial(&self, der_bytes: &[u8]) -> Result<String, TrustStoreError> {
         let (remaining, x509_cert) = X509Certificate::from_der(der_bytes)
             .map_err(|e| TrustStoreError::CertificateParsingError(e.to_string()))?;
 
@@ -112,9 +109,10 @@ impl TrustStore for MemoryTrustStore {
         }
 
         // If not found by DER bytes, try to remove by serial number
-        if let Some(cert_der) = self.serial_to_cert_map.remove(
-            &String::from_utf8_lossy(identifier_bytes).to_string(),
-        ) {
+        if let Some(cert_der) = self
+            .serial_to_cert_map
+            .remove(&String::from_utf8_lossy(identifier_bytes).to_string())
+        {
             self.certificates.remove(&cert_der);
             return Ok(true);
         }
