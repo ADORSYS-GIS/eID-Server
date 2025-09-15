@@ -1,14 +1,18 @@
 use async_trait::async_trait;
 use pem;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use x509_parser::prelude::{FromDer, X509Certificate};
 
-use crate::pki::trust_store::TrustStore;
 use crate::pki::trust_store::error::TrustStoreError;
+use crate::pki::trust_store::TrustStore;
 
 /// Simple in-memory trust store for certificate management.
 pub struct MemoryTrustStore {
     certificates: HashSet<Vec<u8>>,
+    // We will keep a map from serial number to the actual certificate DER bytes
+    // for efficient lookup by serial number. This avoids parsing every certificate
+    // in the HashSet for each lookup.
+    serial_to_cert_map: HashMap<String, Vec<u8>>,
 }
 
 impl Default for MemoryTrustStore {
@@ -22,11 +26,15 @@ impl MemoryTrustStore {
     pub fn new() -> Self {
         Self {
             certificates: HashSet::new(),
+            serial_to_cert_map: HashMap::new(),
         }
     }
 
     /// Validates a certificate and extracts its serial number.
-    fn validate_and_extract_serial(&self, der_bytes: &[u8]) -> Result<String, TrustStoreError> {
+    fn validate_and_extract_serial(
+        &self,
+        der_bytes: &[u8],
+    ) -> Result<String, TrustStoreError> {
         let (remaining, x509_cert) = X509Certificate::from_der(der_bytes)
             .map_err(|e| TrustStoreError::CertificateParsingError(e.to_string()))?;
 
@@ -63,12 +71,16 @@ impl TrustStore for MemoryTrustStore {
             cert_bytes.as_ref().to_vec()
         };
 
+        let serial_number = self.validate_and_extract_serial(&der_bytes)?;
+
         // If the certificate already exists, silently ignore and return false.
         if self.certificates.contains(&der_bytes) {
             return Ok(false);
         }
 
-        self.certificates.insert(der_bytes);
+        self.certificates.insert(der_bytes.clone());
+        self.serial_to_cert_map
+            .insert(serial_number.clone(), der_bytes);
         Ok(true)
     }
 
@@ -76,8 +88,38 @@ impl TrustStore for MemoryTrustStore {
         &mut self,
         identifier: impl AsRef<[u8]> + Send + Sync,
     ) -> Result<bool, TrustStoreError> {
-        let der_bytes_to_remove = identifier.as_ref().to_vec();
-        Ok(self.certificates.remove(&der_bytes_to_remove))
+        let identifier_bytes = identifier.as_ref();
+
+        // Try to remove by exact DER bytes
+        if self.certificates.remove(identifier_bytes) {
+            // Find the corresponding serial number and remove it from the map
+            // This is O(N) but given typical trust store sizes, it's acceptable.
+            let serial_to_remove = self
+                .serial_to_cert_map
+                .iter()
+                .find_map(|(serial, cert_der)| {
+                    if cert_der == identifier_bytes {
+                        Some(serial.clone())
+                    } else {
+                        None
+                    }
+                });
+
+            if let Some(serial) = serial_to_remove {
+                self.serial_to_cert_map.remove(&serial);
+            }
+            return Ok(true);
+        }
+
+        // If not found by DER bytes, try to remove by serial number
+        if let Some(cert_der) = self.serial_to_cert_map.remove(
+            &String::from_utf8_lossy(identifier_bytes).to_string(),
+        ) {
+            self.certificates.remove(&cert_der);
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 
     async fn certificate(
@@ -86,20 +128,18 @@ impl TrustStore for MemoryTrustStore {
     ) -> Result<Option<Vec<u8>>, TrustStoreError> {
         let identifier_bytes = identifier.as_ref();
 
-        // Attempt to parse the identifier as a serial number or certificate content
-        let serial_number_opt = self.validate_and_extract_serial(identifier_bytes).ok();
-
-        for cert_bytes in &self.certificates {
-            if cert_bytes == identifier_bytes {
-                return Ok(Some(cert_bytes.clone()));
-            }
-            if let Some(ref serial_number) = serial_number_opt
-                && let Ok(extracted_serial) = self.validate_and_extract_serial(cert_bytes)
-                && extracted_serial == *serial_number
-            {
-                return Ok(Some(cert_bytes.clone()));
-            }
+        // 1. Try to find by exact DER bytes
+        if let Some(cert) = self.certificates.get(identifier_bytes) {
+            return Ok(Some(cert.clone()));
         }
+
+        // 2. Try to find by serial number
+        // Convert identifier to string for serial number lookup
+        let identifier_str = String::from_utf8_lossy(identifier_bytes);
+        if let Some(cert) = self.serial_to_cert_map.get(&identifier_str.to_string()) {
+            return Ok(Some(cert.clone()));
+        }
+
         Ok(None)
     }
 
@@ -116,9 +156,12 @@ impl TrustStore for MemoryTrustStore {
         }
 
         for der_bytes in &chain_vec {
-            self.validate_and_extract_serial(der_bytes)?; // This also checks validity period
+            let serial_number = self.validate_and_extract_serial(der_bytes)?; // This also checks validity period
 
-            if !self.certificates.contains(der_bytes) {
+            // Check if the certificate exists in the trust store by DER bytes or serial number
+            if !self.certificates.contains(der_bytes)
+                && !self.serial_to_cert_map.contains_key(&serial_number)
+            {
                 return Err(TrustStoreError::CertificateNotFound(
                     "Certificate in chain not found in trust store.".to_string(),
                 ));
