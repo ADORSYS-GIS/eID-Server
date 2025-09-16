@@ -46,10 +46,8 @@ aes = "0.8"
 cmac = "0.7"
 secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
-base64 = "0.22"
 regex = "1.10"
 log = "0.4.27"
-quick-xml = { version = "0.34", features = ["serialize"] }
 zip = "2.2"
 dotenv = "0.15.0"
 
