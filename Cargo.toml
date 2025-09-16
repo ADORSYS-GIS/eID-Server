@@ -46,14 +46,14 @@ aes = "0.8"
 cmac = "0.7"
 secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
-regex = "1.10"
+regex = "1"
 log = "0.4.27"
 zip = "5"
 dotenv = "0.15.0"
 
 [dependencies.redis]
 version = "0.32"
-features = ["tokio-rustls-comp", "connection-manager", "safe_iterators"]
+features = ["tokio-native-tls-comp", "connection-manager", "safe_iterators"]
 
 [package.metadata.cargo-machete]
 ignored = ["pollster"]
