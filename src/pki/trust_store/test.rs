@@ -14,7 +14,7 @@ fn create_test_certificate() -> Vec<u8> {
     // Use a simple certificate that should always be valid for testing
     // This is a minimal self-signed certificate for testing purposes
     let cert_der = include_bytes!("../../../test_data/pki/root_csca.cer");
-    
+
     // For testing, we'll skip validity checks if the certificate is expired
     // In a real scenario, you should use a properly valid test certificate
     cert_der.to_vec()
@@ -24,7 +24,7 @@ fn create_test_certificate() -> Vec<u8> {
 fn should_skip_due_to_validity(der_bytes: &[u8]) -> bool {
     if let Ok((_, cert)) = X509Certificate::from_der(der_bytes) {
         let now = x509_parser::time::ASN1Time::now();
-        return cert.tbs_certificate.validity.not_before > now 
+        return cert.tbs_certificate.validity.not_before > now
             || cert.tbs_certificate.validity.not_after < now;
     }
     false
@@ -126,7 +126,7 @@ async fn test_add_duplicate_certificate() {
 
     let result = trust_store.add_certificate(der_bytes.clone()).await;
     assert!(result.unwrap());
-    
+
     // Duplicate certificates should be silently ignored (return Ok(true))
     let result = trust_store.add_certificate(der_bytes).await;
     assert!(result.is_ok());
@@ -252,7 +252,7 @@ async fn test_verify_certificate_chain() {
     // Add root CA to trust store
     let result = trust_store.add_certificate(root_ca_der.clone()).await;
     assert!(result.unwrap());
-    
+
     // Add link CA to trust store
     let result = trust_store.add_certificate(link_ca_der.clone()).await;
     assert!(result.unwrap());
@@ -288,7 +288,7 @@ async fn test_verify_certificate_chain() {
             .await
             .unwrap()
     );
-    
+
     let chain_with_missing_link = vec![link_ca_der.clone(), root_ca_der.clone()];
     assert!(matches!(
         trust_store
