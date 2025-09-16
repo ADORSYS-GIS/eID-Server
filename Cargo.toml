@@ -48,7 +48,7 @@ secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
 regex = "1.10"
 log = "0.4.27"
-zip = "2.2"
+zip = "5"
 dotenv = "0.15.0"
 
 [dependencies.redis]
