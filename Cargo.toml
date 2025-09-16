@@ -48,10 +48,11 @@ regex = "1.10"
 log = "0.4.27"
 quick-xml = { version = "0.34", features = ["serialize"] }
 zip = "2.2"
+dotenv = "0.15.0"
 
 [dependencies.redis]
 version = "0.32"
-features = ["tokio-native-tls-comp", "connection-manager", "safe_iterators"]
+features = ["tokio-rustls-comp", "connection-manager", "safe_iterators"]
 
 [package.metadata.cargo-machete]
 ignored = ["pollster"]
