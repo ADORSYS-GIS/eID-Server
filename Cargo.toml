@@ -21,6 +21,7 @@ thiserror = "2.0"
 color-eyre = "0.6"
 
 # Serialization / Deserialization
+hex = "0.4"
 rasn = "0.27"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -39,8 +40,10 @@ dashmap = "6.1"
 time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 hex-literal = "1"
 
-# Cryptographic dependencies
-hex = "0.4"
+# Cryptographic utilities
+rand = "0.9"
+aes = "0.8"
+cmac = "0.7"
 secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
 base64 = "0.22"
@@ -58,6 +61,7 @@ features = ["tokio-rustls-comp", "connection-manager", "safe_iterators"]
 ignored = ["pollster"]
 
 [dev-dependencies]
+hex-literal = "1"
 pollster = "0.4"
 
 [profile.dev.package.backtrace]
