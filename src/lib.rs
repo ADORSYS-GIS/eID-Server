@@ -4,6 +4,7 @@ pub mod config;
 pub mod crypto;
 pub mod cvcert;
 pub mod domain;
+pub mod pki;
 pub mod server;
 pub mod session;
 pub mod telemetry;

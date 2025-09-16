@@ -57,7 +57,7 @@ impl TrustStoreManager {
                     if !self
                         .trust_store
                         .trusted_certificates
-                        .contains_key(&csca.fingerprint)
+                        .contains_key(&csca.fingerprint().unwrap_or_default())
                     {
                         match self.trust_store.add_trusted_csca(csca.clone()) {
                             Ok(_) => {

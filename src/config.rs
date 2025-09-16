@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub server: ServerConfig,
     pub redis: RedisConfig,
+    pub master_list: MasterListConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +24,11 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct RedisConfig {
     pub uri: SecretString,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MasterListConfig {
+    pub url: String,
 }
 
 impl RedisConfig {
@@ -52,6 +58,7 @@ impl Config {
             .set_default("server.host", "localhost")?
             .set_default("server.port", 3000)?
             .set_default("redis.uri", "redis://127.0.0.1:6379")?
+            .set_default("master_list.url", "https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/ElekAusweise/CSCA/GermanMasterList.html")?
             .add_source(File::with_name("config/settings").required(false));
 
         // If env_vars is provided, we use it instead of system environment
@@ -62,7 +69,7 @@ impl Config {
             }
         } else {
             // Use system environment variables
-            // Should be in the format APP_SERVER__HOST or APP_SERVER__REDIS_URL
+            // Should be in the format APP_SERVER__HOST, APP_SERVER__PORT, APP_REDIS__URI, APP_MASTER_LIST__URL
             builder = builder.add_source(
                 Environment::with_prefix("APP")
                     .prefix_separator("_")
@@ -81,11 +88,17 @@ mod tests {
 
     #[test]
     fn test_default_config() {
-        let config = Config::load().expect("Failed to load config");
+        let env_vars = HashMap::new();
+
+        let config = Config::load_with_sources(Some(env_vars)).expect("Failed to load config");
 
         assert_eq!(config.server.host, "localhost");
         assert_eq!(config.server.port, 3000);
         assert_eq!(config.redis.uri.expose_secret(), "redis://127.0.0.1:6379");
+        assert_eq!(
+            config.master_list.url,
+            "https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/ElekAusweise/CSCA/GermanMasterList.html"
+        );
     }
 
     #[test]
@@ -97,12 +110,20 @@ mod tests {
             "redis.uri".to_string(),
             "rediss://localhost:6379".to_string(),
         );
+        env_vars.insert(
+            "master_list.url".to_string(),
+            "https://custom.example.com/masterlist.html".to_string(),
+        );
 
         let config = Config::load_with_sources(Some(env_vars)).expect("Failed to load config");
 
         assert_eq!(config.server.host, "0.0.0.0");
         assert_eq!(config.server.port, 443);
         assert_eq!(config.redis.uri.expose_secret(), "rediss://localhost:6379");
+        assert_eq!(
+            config.master_list.url,
+            "https://custom.example.com/masterlist.html"
+        );
     }
 
     #[test]
@@ -117,5 +138,9 @@ mod tests {
         // The other values should use default
         assert_eq!(config.server.port, 3000);
         assert_eq!(config.redis.uri.expose_secret(), "redis://127.0.0.1:6379");
+        assert_eq!(
+            config.master_list.url,
+            "https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/ElekAusweise/CSCA/GermanMasterList.html"
+        );
     }
 }

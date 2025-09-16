@@ -1,19 +1,21 @@
-use super::master_list_fetcher::MasterListFetcher;
+use super::MasterListFetcher;
 use super::periodic_updater::{MasterListUpdateStatus, PeriodicUpdater};
 use super::trust_store_manager::{TrustStoreManager, TrustStoreStats};
 use super::validator::{CertificateValidator, ValidationResult};
 use super::{CscaInfo, CscaValidationError, MasterList, MasterListParser};
+use super::{FetcherConfig, WebMasterListFetcher};
+use crate::config::MasterListConfig;
 use async_trait::async_trait;
 use openssl::x509::X509;
 use std::path::Path;
+use std::sync::Arc;
 use tokio::fs;
 use tracing::{info, warn};
 
 /// CSCA validation service for managing Master Lists and trust stores
-#[derive(Debug, Clone)]
 pub struct CscaValidationService {
     /// Master List fetcher for downloading from remote sources
-    fetcher: MasterListFetcher,
+    fetcher: Arc<dyn MasterListFetcher>,
     /// Certificate validator for trust chain validation
     validator: CertificateValidator,
     /// Trust store manager for certificate storage and operations
@@ -24,13 +26,36 @@ pub struct CscaValidationService {
     master_list: Option<MasterList>,
 }
 
+impl Clone for CscaValidationService {
+    fn clone(&self) -> Self {
+        Self {
+            fetcher: Arc::clone(&self.fetcher),
+            validator: self.validator.clone(),
+            trust_store_manager: self.trust_store_manager.clone(),
+            updater: self.updater.clone(),
+            master_list: self.master_list.clone(),
+        }
+    }
+}
+
 impl CscaValidationService {
-    /// Create a new CSCA validation service
-    pub fn new() -> Result<Self, CscaValidationError> {
-        let fetcher = MasterListFetcher::new()?;
+    /// Create a new CSCA validation service with default German BSI fetcher
+    pub fn new(master_list_config: MasterListConfig) -> Result<Self, CscaValidationError> {
+        let master_list_config_clone = master_list_config.clone();
+        Self::with_fetcher(
+            Self::create_default_fetcher(master_list_config)?,
+            master_list_config_clone,
+        )
+    }
+
+    /// Create a new CSCA validation service with custom fetcher
+    pub fn with_fetcher(
+        fetcher: Arc<dyn MasterListFetcher>,
+        master_list_config: MasterListConfig,
+    ) -> Result<Self, CscaValidationError> {
         let validator = CertificateValidator::new()?;
         let trust_store_manager = TrustStoreManager::new()?;
-        let updater = PeriodicUpdater::new()?;
+        let updater = PeriodicUpdater::new(master_list_config)?;
 
         Ok(Self {
             fetcher,
@@ -41,23 +66,32 @@ impl CscaValidationService {
         })
     }
 
+    /// Create default fetcher with German BSI support
+    fn create_default_fetcher(
+        master_list_config: MasterListConfig,
+    ) -> Result<Arc<dyn MasterListFetcher>, CscaValidationError> {
+        let config = FetcherConfig::default();
+        let web_fetcher = WebMasterListFetcher::new(config, master_list_config)?;
+        Ok(Arc::new(web_fetcher))
+    }
+
     /// Load Master List from file
     pub async fn load_master_list_from_file<P: AsRef<Path>>(
         &mut self,
         file_path: P,
     ) -> Result<(), CscaValidationError> {
-        let content = fs::read_to_string(file_path).await?;
-        self.load_master_list_from_string(&content).await
+        let content = fs::read(file_path).await?;
+        self.load_master_list_from_bytes(&content).await
     }
 
-    /// Load Master List from string content
-    pub async fn load_master_list_from_string(
+    /// Load Master List from bytes
+    pub async fn load_master_list_from_bytes(
         &mut self,
-        content: &str,
+        content: &[u8],
     ) -> Result<(), CscaValidationError> {
-        info!("Loading Master List from content");
+        info!("Loading Master List from DER bytes");
 
-        let master_list = MasterListParser::parse_auto(content)?;
+        let master_list = MasterListParser::parse_der(content)?;
         info!(
             "Parsed Master List version {} with {} countries",
             master_list.version,
@@ -78,12 +112,18 @@ impl CscaValidationService {
         Ok(())
     }
 
-    /// Fetch and load German Master List from BSI website
-    pub async fn fetch_german_master_list(&mut self) -> Result<(), CscaValidationError> {
-        let master_list = self.fetcher.fetch_german_master_list().await?;
+    /// Fetch and load master list from configured sources
+    pub async fn fetch_master_list(&mut self) -> Result<(), CscaValidationError> {
+        let master_list = self.fetcher.fetch_master_list().await?;
         self.master_list = Some(master_list);
         self.update_trust_store_from_master_list().await?;
         Ok(())
+    }
+
+    /// Fetch and load German Master List from BSI website (deprecated - use fetch_master_list instead)
+    #[deprecated(note = "Use fetch_master_list() instead for flexibility with multiple sources")]
+    pub async fn fetch_german_master_list(&mut self) -> Result<(), CscaValidationError> {
+        self.fetch_master_list().await
     }
 
     /// Update trust store with certificates from current Master List
@@ -158,11 +198,11 @@ impl CscaValidationService {
         PeriodicUpdater::needs_update(self.master_list.as_ref())
     }
 
-    /// Automatically update German Master List from BSI if needed
-    pub async fn auto_update_german_master_list(&mut self) -> Result<bool, CscaValidationError> {
+    /// Update German Master List from BSI if needed
+    pub async fn update_german_master_list(&mut self) -> Result<bool, CscaValidationError> {
         match self
             .updater
-            .auto_update_german_master_list(self.master_list.as_ref())
+            .update_master_list(self.master_list.as_ref())
             .await?
         {
             Some(master_list) => {
@@ -174,34 +214,9 @@ impl CscaValidationService {
         }
     }
 
-    /// Schedule periodic Master List updates from BSI
-    pub async fn start_periodic_updates(
-        &mut self,
-        update_interval_hours: u64,
-    ) -> Result<(), CscaValidationError> {
-        // Note: This simplified version doesn't automatically update the service's master list
-        // The caller should manually check and update the master list when needed
-        self.updater
-            .start_periodic_updates(update_interval_hours, |result| match result {
-                Ok(_) => {
-                    tracing::info!("Periodic Master List update completed successfully");
-                }
-                Err(e) => {
-                    tracing::error!("Periodic update failed: {}", e);
-                }
-            })
-            .await
-    }
-
     /// Get Master List update status and statistics
     pub fn get_update_status(&self) -> MasterListUpdateStatus {
         PeriodicUpdater::get_update_status(self.master_list.as_ref())
-    }
-}
-
-impl Default for CscaValidationService {
-    fn default() -> Self {
-        Self::new().expect("Failed to create default CSCA validation service")
     }
 }
 

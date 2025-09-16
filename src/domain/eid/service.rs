@@ -1,7 +1,7 @@
-use super::csca::{CscaValidationError, CscaValidationService};
+use crate::config::Config;
+use crate::pki::master_list::{CscaValidationError, CscaValidationService};
 use crate::session::{SessionManager, SessionStore};
 
-#[derive(Debug)]
 pub struct EidService<S: SessionStore> {
     pub session_manager: SessionManager<S>,
     pub csca_validator: CscaValidationService,
@@ -18,7 +18,21 @@ impl<S: SessionStore> Clone for EidService<S> {
 
 impl<S: SessionStore> EidService<S> {
     pub fn new(session_manager: SessionManager<S>) -> Result<Self, CscaValidationError> {
-        let csca_validator = CscaValidationService::new()?;
+        let config = Config::load().map_err(|e| {
+            CscaValidationError::MasterListParse(format!("Failed to load config: {e}"))
+        })?;
+        let csca_validator = CscaValidationService::new(config.master_list)?;
+        Ok(Self {
+            session_manager,
+            csca_validator,
+        })
+    }
+
+    pub fn with_config(
+        session_manager: SessionManager<S>,
+        config: &Config,
+    ) -> Result<Self, CscaValidationError> {
+        let csca_validator = CscaValidationService::new(config.master_list.clone())?;
         Ok(Self {
             session_manager,
             csca_validator,

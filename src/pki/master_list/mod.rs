@@ -1,19 +1,54 @@
-mod master_list_fetcher;
+mod adapter;
 mod parser;
 mod periodic_updater;
 mod service;
 mod trust_store_manager;
 mod validator;
+mod web_master_list_fetcher;
 
-pub use master_list_fetcher::MasterListFetcher;
+use async_trait::async_trait;
+
+/// Abstract interface for fetching master lists from various sources
+#[async_trait]
+pub trait MasterListFetcher: Send + Sync {
+    /// Fetch master list from the configured source
+    async fn fetch_master_list(&self) -> Result<MasterList, CscaValidationError>;
+
+    /// Get the name/identifier of this fetcher
+    fn source_name(&self) -> &str;
+
+    /// Check if the fetcher is available/configured
+    fn is_available(&self) -> bool {
+        true
+    }
+}
+
+/// Configuration for different master list sources
+#[derive(Debug, Clone)]
+pub struct FetcherConfig {
+    pub timeout_seconds: u64,
+    pub user_agent: String,
+    pub retry_attempts: u32,
+}
+
+impl Default for FetcherConfig {
+    fn default() -> Self {
+        Self {
+            timeout_seconds: 30,
+            user_agent: "eID-Server/0.1.0".to_string(),
+            retry_attempts: 3,
+        }
+    }
+}
+pub use adapter::ZipAdapter;
 pub use parser::MasterListParser;
 pub use periodic_updater::{MasterListUpdateStatus, PeriodicUpdater};
 pub use service::{CscaValidationService, CscaValidator};
 pub use trust_store_manager::{TrustStoreManager, TrustStoreStats};
 pub use validator::{CertificateValidator, ValidationResult};
+pub use web_master_list_fetcher::WebMasterListFetcher;
 
 use openssl::{
-    asn1::Asn1TimeRef,
     hash::MessageDigest,
     x509::X509Name,
     x509::{X509, X509StoreContext, store::X509StoreBuilder},
@@ -28,14 +63,8 @@ use time::OffsetDateTime;
 pub enum CscaValidationError {
     #[error("Failed to parse certificate: {0}")]
     CertificateParse(#[from] openssl::error::ErrorStack),
-    #[error("Certificate has expired")]
-    CertificateExpired,
-    #[error("Certificate is not yet valid")]
-    CertificateNotYetValid,
-    #[error("Trust chain validation failed: {0}")]
-    TrustChainValidation(String),
-    #[error("CSCA not found in trusted store")]
-    CscaNotFound,
+    #[error("Openssl Error: {0}")]
+    CertificateValidation(String),
     #[error("Master List parsing failed: {0}")]
     MasterListParse(String),
     #[error("IO error: {0}")]
@@ -47,18 +76,6 @@ pub enum CscaValidationError {
 pub struct CscaInfo {
     /// Country code (ISO 3166-1 alpha-2)
     pub country_code: String,
-    /// Certificate serial number
-    pub serial_number: String,
-    /// Certificate subject
-    pub subject: String,
-    /// Certificate issuer
-    pub issuer: String,
-    /// Certificate validity start date
-    pub not_before: OffsetDateTime,
-    /// Certificate validity end date
-    pub not_after: OffsetDateTime,
-    /// Certificate fingerprint (SHA-256)
-    pub fingerprint: String,
     /// Raw certificate data in DER format
     pub certificate_der: Vec<u8>,
 }
@@ -66,37 +83,12 @@ pub struct CscaInfo {
 impl CscaInfo {
     /// Create CSCA info from X509 certificate
     pub fn from_x509(cert: &X509, country_code: String) -> Result<Self, CscaValidationError> {
-        let serial_number = cert.serial_number().to_bn()?.to_string();
-
-        // Convert X509Name to string using PEM format and parsing
-        let subject = format!("{:?}", cert.subject_name());
-        let issuer = format!("{:?}", cert.issuer_name());
-
-        // Convert ASN1Time to Unix timestamp (simplified approach)
-        let not_before = Self::asn1_time_to_offset_datetime(cert.not_before())?;
-        let not_after = Self::asn1_time_to_offset_datetime(cert.not_after())?;
-
-        let fingerprint = hex::encode(cert.digest(MessageDigest::sha256())?);
         let certificate_der = cert.to_der()?;
 
         Ok(CscaInfo {
             country_code,
-            serial_number,
-            subject,
-            issuer,
-            not_before,
-            not_after,
-            fingerprint,
             certificate_der,
         })
-    }
-
-    /// Convert ASN1TimeRef to OffsetDateTime (simplified)
-    fn asn1_time_to_offset_datetime(
-        _asn1_time: &Asn1TimeRef,
-    ) -> Result<OffsetDateTime, CscaValidationError> {
-        let now = OffsetDateTime::now_utc();
-        Ok(now)
     }
 
     /// Convert to X509 certificate
@@ -106,8 +98,35 @@ impl CscaInfo {
 
     /// Check if certificate is currently valid (not expired, not before valid date)
     pub fn is_valid(&self) -> bool {
-        let now = OffsetDateTime::now_utc();
-        now >= self.not_before && now <= self.not_after
+        // Extract validity from the certificate directly
+        if let Ok(cert) = self.to_x509() {
+            // Use OpenSSL's built-in certificate validation for validity periods
+            let now = openssl::asn1::Asn1Time::days_from_now(0).unwrap();
+
+            // Check if certificate is not yet valid (not_before > now)
+            match cert.not_before().compare(&now) {
+                Ok(std::cmp::Ordering::Greater) => return false,
+                Err(_) => return false,
+                _ => {}
+            }
+
+            // Check if certificate has expired (not_after < now)
+            match cert.not_after().compare(&now) {
+                Ok(std::cmp::Ordering::Less) => return false,
+                Err(_) => return false,
+                _ => {}
+            }
+
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get fingerprint of the certificate (calculated on demand)
+    pub fn fingerprint(&self) -> Result<String, CscaValidationError> {
+        let cert = self.to_x509()?;
+        Ok(hex::encode(cert.digest(MessageDigest::sha256())?))
     }
 }
 
@@ -201,8 +220,8 @@ impl CscaTrustStore {
 
     /// Add a trusted CSCA certificate to the store
     pub fn add_trusted_csca(&mut self, csca: CscaInfo) -> Result<(), CscaValidationError> {
-        self.trusted_certificates
-            .insert(csca.fingerprint.clone(), csca);
+        let fingerprint = csca.fingerprint()?;
+        self.trusted_certificates.insert(fingerprint, csca);
         Ok(())
     }
 
@@ -236,9 +255,11 @@ impl CscaTrustStore {
         let mut store_builder = X509StoreBuilder::new()?;
 
         for cert_info in self.trusted_certificates.values() {
-            if let Ok(cert) = self.get_cached_cert(&cert_info.fingerprint) {
-                if let Err(e) = store_builder.add_cert(cert) {
-                    log::warn!("Failed to add certificate to store: {e}");
+            if let Ok(fingerprint) = cert_info.fingerprint() {
+                if let Ok(cert) = self.get_cached_cert(&fingerprint) {
+                    if let Err(e) = store_builder.add_cert(cert) {
+                        log::warn!("Failed to add certificate to store: {e}");
+                    }
                 }
             }
         }
@@ -263,16 +284,20 @@ impl CscaTrustStore {
             return Ok(cert);
         }
 
-        Err(CscaValidationError::CscaNotFound)
+        Err(CscaValidationError::CertificateValidation(
+            "CSCA not found in trusted store".to_string(),
+        ))
     }
 
     /// Find a certificate by Authority Key Identifier
     pub fn find_cert_by_aki(&self, aki: &[u8]) -> Option<X509> {
         for cert_info in self.trusted_certificates.values() {
-            if let Ok(cert) = self.get_cached_cert(&cert_info.fingerprint) {
-                if let Some(ski) = cert.subject_key_id() {
-                    if ski.as_slice() == aki {
-                        return Some(cert);
+            if let Ok(fingerprint) = cert_info.fingerprint() {
+                if let Ok(cert) = self.get_cached_cert(&fingerprint) {
+                    if let Some(ski) = cert.subject_key_id() {
+                        if ski.as_slice() == aki {
+                            return Some(cert);
+                        }
                     }
                 }
             }
@@ -283,9 +308,11 @@ impl CscaTrustStore {
     /// Find a certificate by subject name
     pub fn find_cert_by_subject(&self, subject: &X509Name) -> Option<X509> {
         for cert_info in self.trusted_certificates.values() {
-            if let Ok(cert) = self.get_cached_cert(&cert_info.fingerprint) {
-                if cert.subject_name().to_der().ok()? == subject.to_der().ok()? {
-                    return Some(cert);
+            if let Ok(fingerprint) = cert_info.fingerprint() {
+                if let Ok(cert) = self.get_cached_cert(&fingerprint) {
+                    if cert.subject_name().to_der().ok()? == subject.to_der().ok()? {
+                        return Some(cert);
+                    }
                 }
             }
         }
@@ -319,8 +346,10 @@ impl CscaTrustStore {
     pub fn get_all_certificates(&self) -> Result<Vec<X509>, CscaValidationError> {
         let mut certs = Vec::new();
         for cert_info in self.trusted_certificates.values() {
-            if let Ok(cert) = self.get_cached_cert(&cert_info.fingerprint) {
-                certs.push(cert);
+            if let Ok(fingerprint) = cert_info.fingerprint() {
+                if let Ok(cert) = self.get_cached_cert(&fingerprint) {
+                    certs.push(cert);
+                }
             }
         }
         Ok(certs)
