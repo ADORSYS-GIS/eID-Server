@@ -208,12 +208,12 @@ async fn test_validate_certificate_chain() {
         .unwrap();
 
     let valid_chain = vec![link_ca_der.clone(), root_ca_der.clone()];
-    assert!(trust_store.validate(valid_chain.into_iter()).await.is_ok());
+    assert!(trust_store.verify(valid_chain.into_iter()).await.is_ok());
 
     // Invalid chain (empty)
     let empty_chain: Vec<Vec<u8>> = vec![];
     assert!(matches!(
-        trust_store.validate(empty_chain.into_iter()).await,
+        trust_store.verify(empty_chain.into_iter()).await,
         Err(TrustStoreError::CertificateParsingError(_))
     ));
 
@@ -222,13 +222,11 @@ async fn test_validate_certificate_chain() {
     invalid_der[0] = 0x00; // Corrupt a byte
     let invalid_chain_corrupt = vec![invalid_der.clone()];
     assert!(matches!(
-        trust_store
-            .validate(invalid_chain_corrupt.into_iter())
-            .await,
+        trust_store.verify(invalid_chain_corrupt.into_iter()).await,
         Err(TrustStoreError::CertificateParsingError(_))
     ));
 
-    // Validate a chain with a certificate not in the store
+    // verify a chain with a certificate not in the store
     // Remove link_ca to simulate missing cert
     assert!(
         trust_store
@@ -239,7 +237,7 @@ async fn test_validate_certificate_chain() {
     let chain_with_missing_link = vec![link_ca_der.clone(), root_ca_der.clone()];
     assert!(matches!(
         trust_store
-            .validate(chain_with_missing_link.into_iter())
+            .verify(chain_with_missing_link.into_iter())
             .await,
         Err(TrustStoreError::CertificateNotFound(_))
     ));

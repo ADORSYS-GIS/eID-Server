@@ -28,8 +28,8 @@ pub trait TrustStore: Send + Sync {
         identifier: impl AsRef<[u8]> + Send + Sync,
     ) -> Result<Option<Vec<u8>>, TrustStoreError>;
 
-    /// Validates a certificate chain against the trust store.
-    async fn validate(
+    /// Verifies a certificate chain against the trust store.
+    async fn verify(
         &self,
         certificate_chain: impl IntoIterator<Item = impl Into<Vec<u8>>> + Send,
     ) -> Result<(), TrustStoreError>;

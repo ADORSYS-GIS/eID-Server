@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use pem;
 use std::collections::{HashMap, HashSet};
+use x509_parser::num_bigint::BigUint;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::pki::trust_store::TrustStore;
@@ -12,7 +13,7 @@ pub struct MemoryTrustStore {
     // We will keep a map from serial number to the actual certificate DER bytes
     // for efficient lookup by serial number. This avoids parsing every certificate
     // in the HashSet for each lookup.
-    serial_to_cert_map: HashMap<String, Vec<u8>>,
+    serial_to_cert_map: HashMap<Vec<u8>, Vec<u8>>,
 }
 
 impl Default for MemoryTrustStore {
@@ -30,8 +31,13 @@ impl MemoryTrustStore {
         }
     }
 
+    /// Converts a BigUint to bytes in big-endian format
+    fn biguint_to_bytes(serial: &BigUint) -> Vec<u8> {
+        serial.to_bytes_be()
+    }
+
     /// Validates a certificate and extracts its serial number.
-    fn validate_and_extract_serial(&self, der_bytes: &[u8]) -> Result<String, TrustStoreError> {
+    fn validate_and_extract_serial(&self, der_bytes: &[u8]) -> Result<Vec<u8>, TrustStoreError> {
         let (remaining, x509_cert) = X509Certificate::from_der(der_bytes)
             .map_err(|e| TrustStoreError::CertificateParsingError(e.to_string()))?;
 
@@ -52,7 +58,7 @@ impl MemoryTrustStore {
             ));
         }
 
-        Ok(x509_cert.tbs_certificate.serial.to_string())
+        Ok(Self::biguint_to_bytes(&x509_cert.tbs_certificate.serial))
     }
 }
 
@@ -62,22 +68,29 @@ impl TrustStore for MemoryTrustStore {
         &mut self,
         cert_bytes: impl AsRef<[u8]> + Send,
     ) -> Result<bool, TrustStoreError> {
-        let der_bytes = if let Ok(parsed_pem) = pem::parse(cert_bytes.as_ref()) {
-            parsed_pem.contents().to_vec()
-        } else {
-            cert_bytes.as_ref().to_vec()
+        let der_bytes = match pem::parse(cert_bytes.as_ref()) {
+            Ok(parsed_pem) => parsed_pem.contents().to_vec(),
+            Err(_) => {
+                // Silently ignore malformed PEM certificates
+                return Ok(true);
+            }
         };
 
-        let serial_number = self.validate_and_extract_serial(&der_bytes)?;
+        let serial_number = match self.validate_and_extract_serial(&der_bytes) {
+            Ok(serial) => serial,
+            Err(_) => {
+                // Silently ignore malformed certificates
+                return Ok(true);
+            }
+        };
 
-        // If the certificate already exists, silently ignore and return false.
+        // If the certificate already exists, silently ignore and return true.
         if self.certificates.contains(&der_bytes) {
-            return Ok(false);
+            return Ok(true);
         }
 
         self.certificates.insert(der_bytes.clone());
-        self.serial_to_cert_map
-            .insert(serial_number.clone(), der_bytes);
+        self.serial_to_cert_map.insert(serial_number, der_bytes);
         Ok(true)
     }
 
@@ -90,7 +103,6 @@ impl TrustStore for MemoryTrustStore {
         // Try to remove by exact DER bytes
         if self.certificates.remove(identifier_bytes) {
             // Find the corresponding serial number and remove it from the map
-            // This is O(N) but given typical trust store sizes, it's acceptable.
             let serial_to_remove = self
                 .serial_to_cert_map
                 .iter()
@@ -109,10 +121,7 @@ impl TrustStore for MemoryTrustStore {
         }
 
         // If not found by DER bytes, try to remove by serial number
-        if let Some(cert_der) = self
-            .serial_to_cert_map
-            .remove(&String::from_utf8_lossy(identifier_bytes).to_string())
-        {
+        if let Some(cert_der) = self.serial_to_cert_map.remove(identifier_bytes) {
             self.certificates.remove(&cert_der);
             return Ok(true);
         }
@@ -126,22 +135,20 @@ impl TrustStore for MemoryTrustStore {
     ) -> Result<Option<Vec<u8>>, TrustStoreError> {
         let identifier_bytes = identifier.as_ref();
 
-        // 1. Try to find by exact DER bytes
-        if let Some(cert) = self.certificates.get(identifier_bytes) {
+        // 1. Try to find by serial number (raw bytes)
+        if let Some(cert) = self.serial_to_cert_map.get(identifier_bytes) {
             return Ok(Some(cert.clone()));
         }
 
-        // 2. Try to find by serial number
-        // Convert identifier to string for serial number lookup
-        let identifier_str = String::from_utf8_lossy(identifier_bytes);
-        if let Some(cert) = self.serial_to_cert_map.get(&identifier_str.to_string()) {
+        // 2. Try to find by exact DER bytes
+        if let Some(cert) = self.certificates.get(identifier_bytes) {
             return Ok(Some(cert.clone()));
         }
 
         Ok(None)
     }
 
-    async fn validate(
+    async fn verify(
         &self,
         certificate_chain: impl IntoIterator<Item = impl Into<Vec<u8>>> + Send,
     ) -> Result<(), TrustStoreError> {
@@ -154,7 +161,7 @@ impl TrustStore for MemoryTrustStore {
         }
 
         for der_bytes in &chain_vec {
-            let serial_number = self.validate_and_extract_serial(der_bytes)?; // This also checks validity period
+            let serial_number = self.validate_and_extract_serial(der_bytes)?;
 
             // Check if the certificate exists in the trust store by DER bytes or serial number
             if !self.certificates.contains(der_bytes)
