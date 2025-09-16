@@ -60,6 +60,32 @@ impl MemoryTrustStore {
 
         Ok(Self::biguint_to_bytes(&x509_cert.tbs_certificate.serial))
     }
+
+    /// Helper method to parse certificate and extract serial number
+    fn parse_certificate(der_bytes: &[u8]) -> Result<(Vec<u8>, Vec<u8>), TrustStoreError> {
+        let (remaining, x509_cert) = X509Certificate::from_der(der_bytes)
+            .map_err(|e| TrustStoreError::CertificateParsingError(e.to_string()))?;
+
+        if !remaining.is_empty() {
+            return Err(TrustStoreError::CertificateParsingError(
+                "Certificate contains unparsed data after DER".to_string(),
+            ));
+        }
+
+        // Check certificate validity period
+        let now_asn1_time = x509_parser::time::ASN1Time::now();
+
+        if x509_cert.tbs_certificate.validity.not_before > now_asn1_time
+            || x509_cert.tbs_certificate.validity.not_after < now_asn1_time
+        {
+            return Err(TrustStoreError::CertificateParsingError(
+                "Certificate is not currently valid (either not yet active or expired)".to_string(),
+            ));
+        }
+
+        let serial_number = Self::biguint_to_bytes(&x509_cert.tbs_certificate.serial);
+        Ok((serial_number, der_bytes.to_vec()))
+    }
 }
 
 #[async_trait]
@@ -71,13 +97,13 @@ impl TrustStore for MemoryTrustStore {
         let der_bytes = match pem::parse(cert_bytes.as_ref()) {
             Ok(parsed_pem) => parsed_pem.contents().to_vec(),
             Err(_) => {
-                // Silently ignore malformed PEM certificates
-                return Ok(true);
+                // If it's not PEM, assume it's already DER
+                cert_bytes.as_ref().to_vec()
             }
         };
 
-        let serial_number = match self.validate_and_extract_serial(&der_bytes) {
-            Ok(serial) => serial,
+        let (serial_number, cert_der) = match Self::parse_certificate(&der_bytes) {
+            Ok((serial, der)) => (serial, der),
             Err(_) => {
                 // Silently ignore malformed certificates
                 return Ok(true);
@@ -85,12 +111,12 @@ impl TrustStore for MemoryTrustStore {
         };
 
         // If the certificate already exists, silently ignore and return true.
-        if self.certificates.contains(&der_bytes) {
+        if self.certificates.contains(&cert_der) {
             return Ok(true);
         }
 
-        self.certificates.insert(der_bytes.clone());
-        self.serial_to_cert_map.insert(serial_number, der_bytes);
+        self.certificates.insert(cert_der.clone());
+        self.serial_to_cert_map.insert(serial_number, cert_der);
         Ok(true)
     }
 
@@ -141,8 +167,8 @@ impl TrustStore for MemoryTrustStore {
         }
 
         // 2. Try to find by exact DER bytes
-        if let Some(cert) = self.certificates.get(identifier_bytes) {
-            return Ok(Some(cert.clone()));
+        if self.certificates.contains(identifier_bytes) {
+            return Ok(Some(identifier_bytes.to_vec()));
         }
 
         Ok(None)
