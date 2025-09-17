@@ -6,5 +6,6 @@ pub mod cvcert;
 pub mod domain;
 pub mod server;
 pub mod session;
+pub mod signed_objects;
 pub mod telemetry;
 pub mod tls;
