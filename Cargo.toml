@@ -37,8 +37,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # Miscellaneous utilities
 async-trait = "0.1"
 dashmap = "6.1"
+time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 hex-literal = "1"
-time = { version = "0.3", features = ["serde"] }
 
 # Cryptographic utilities
 rand = "0.9"
@@ -46,6 +46,10 @@ aes = "0.8"
 cmac = "0.7"
 secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
+regex = "1"
+log = "0.4.27"
+zip = "5"
+dotenv = "0.15.0"
 
 [dependencies.redis]
 version = "0.32"

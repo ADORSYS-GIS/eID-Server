@@ -20,7 +20,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppState<S: SessionStore> {
     pub service: EidService<S>,
 }
