@@ -8,3 +8,4 @@ pub mod server;
 pub mod session;
 pub mod telemetry;
 pub mod tls;
+pub mod signed_objects;
