@@ -162,7 +162,7 @@ impl CscaValidationService {
 
     /// Get CSCA certificates for a specific country
     pub fn get_csca_for_country(&self, country_code: &str) -> Option<&Vec<CscaInfo>> {
-        let master_list = self.master_list.as_ref().unwrap();
+        let master_list = self.master_list.as_ref()?;
 
         self.trust_store_manager
             .get_csca_for_country(master_list, country_code)

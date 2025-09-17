@@ -21,6 +21,8 @@ impl WebMasterListFetcher {
         let http_client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds))
             .user_agent(&config.user_agent)
+            .danger_accept_invalid_certs(false)
+            .use_rustls_tls()
             .build()
             .map_err(|e| {
                 CscaValidationError::MasterListParse(format!("Failed to create HTTP client: {e}"))

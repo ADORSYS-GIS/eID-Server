@@ -8,6 +8,24 @@ mod web_master_list_fetcher;
 
 use async_trait::async_trait;
 
+pub use adapter::ZipAdapter;
+pub use parser::MasterListParser;
+pub use periodic_updater::{MasterListUpdateStatus, PeriodicUpdater};
+pub use service::{CscaValidationService, CscaValidator};
+pub use trust_store_manager::{TrustStoreManager, TrustStoreStats};
+pub use validator::{CertificateValidator, ValidationResult};
+pub use web_master_list_fetcher::WebMasterListFetcher;
+
+use openssl::{
+    hash::MessageDigest,
+    x509::X509Name,
+    x509::{X509, X509StoreContext, store::X509StoreBuilder},
+};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use thiserror::Error;
+use time::OffsetDateTime;
+
 /// Abstract interface for fetching master lists from various sources
 #[async_trait]
 pub trait MasterListFetcher: Send + Sync {
@@ -40,23 +58,6 @@ impl Default for FetcherConfig {
         }
     }
 }
-pub use adapter::ZipAdapter;
-pub use parser::MasterListParser;
-pub use periodic_updater::{MasterListUpdateStatus, PeriodicUpdater};
-pub use service::{CscaValidationService, CscaValidator};
-pub use trust_store_manager::{TrustStoreManager, TrustStoreStats};
-pub use validator::{CertificateValidator, ValidationResult};
-pub use web_master_list_fetcher::WebMasterListFetcher;
-
-use openssl::{
-    hash::MessageDigest,
-    x509::X509Name,
-    x509::{X509, X509StoreContext, store::X509StoreBuilder},
-};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use thiserror::Error;
-use time::OffsetDateTime;
 
 /// Errors that can occur during CSCA validation
 #[derive(Error, Debug)]
@@ -101,7 +102,10 @@ impl CscaInfo {
         // Extract validity from the certificate directly
         if let Ok(cert) = self.to_x509() {
             // Use OpenSSL's built-in certificate validation for validity periods
-            let now = openssl::asn1::Asn1Time::days_from_now(0).unwrap();
+            let now = match openssl::asn1::Asn1Time::days_from_now(0) {
+                Ok(time) => time,
+                Err(_) => return false,
+            };
 
             // Check if certificate is not yet valid (not_before > now)
             match cert.not_before().compare(&now) {
@@ -239,12 +243,15 @@ impl CscaTrustStore {
             let store = self.build_x509_store()?;
             let mut ctx = X509StoreContext::new()?;
 
-            Ok(ctx.init(
-                &store,
-                cert,
-                openssl::stack::Stack::new().unwrap().as_ref(),
-                |c| Ok(c.verify_cert().is_ok()),
-            )?)
+            let empty_stack = openssl::stack::Stack::new().map_err(|e| {
+                CscaValidationError::CertificateValidation(format!(
+                    "Failed to create empty stack: {e}"
+                ))
+            })?;
+
+            Ok(ctx.init(&store, cert, empty_stack.as_ref(), |c| {
+                Ok(c.verify_cert().is_ok())
+            })?)
         } else {
             Ok(false)
         }
@@ -270,17 +277,18 @@ impl CscaTrustStore {
     /// Get a cached X509 certificate or parse it
     fn get_cached_cert(&self, fingerprint: &str) -> Result<X509, CscaValidationError> {
         // Try to get from cache first
-        if let Some(cert) = self.cert_cache.read().unwrap().get(fingerprint) {
-            return Ok(cert.clone());
+        if let Ok(cache_read) = self.cert_cache.read() {
+            if let Some(cert) = cache_read.get(fingerprint) {
+                return Ok(cert.clone());
+            }
         }
 
         // If not in cache, parse it and add to cache
         if let Some(cert_info) = self.trusted_certificates.get(fingerprint) {
             let cert = X509::from_der(&cert_info.certificate_der)?;
-            self.cert_cache
-                .write()
-                .unwrap()
-                .insert(fingerprint.to_string(), cert.clone());
+            if let Ok(mut cache_write) = self.cert_cache.write() {
+                cache_write.insert(fingerprint.to_string(), cert.clone());
+            }
             return Ok(cert);
         }
 
@@ -336,7 +344,9 @@ impl CscaTrustStore {
         let count = expired.len();
         for fp in &expired {
             self.trusted_certificates.remove(fp);
-            self.cert_cache.write().unwrap().remove(fp);
+            if let Ok(mut cache_write) = self.cert_cache.write() {
+                cache_write.remove(fp);
+            }
         }
 
         Ok(count)
@@ -364,9 +374,15 @@ impl Default for CscaTrustStore {
 
 impl Clone for CscaTrustStore {
     fn clone(&self) -> Self {
+        let cache_clone = self
+            .cert_cache
+            .read()
+            .map(|cache| cache.clone())
+            .unwrap_or_default();
+
         Self {
             trusted_certificates: self.trusted_certificates.clone(),
-            cert_cache: std::sync::RwLock::new(self.cert_cache.read().unwrap().clone()),
+            cert_cache: std::sync::RwLock::new(cache_clone),
         }
     }
 }
