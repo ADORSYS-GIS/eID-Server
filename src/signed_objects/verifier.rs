@@ -17,32 +17,42 @@ pub struct ValidationResult {
     pub signer_subject: Option<String>,
 }
 
-pub fn verify_cms_signed_object(input: &ValidationInput<'_>) -> Result<ValidationResult, SignedObjectError> {
+pub fn verify_cms_signed_object(
+    input: &ValidationInput<'_>,
+) -> Result<ValidationResult, SignedObjectError> {
     // Build trust store (validates anchors PEM input early)
     let mut store_builder = X509StoreBuilder::new()
         .map_err(|e| SignedObjectError::Pki(format!("Failed to create store: {e}")))?;
     for ca_pem in input.trust_anchors_pem {
         let ca = X509::from_pem(ca_pem)
             .map_err(|e| SignedObjectError::Pki(format!("Invalid CA PEM: {e}")))?;
-        store_builder.add_cert(ca)
+        store_builder
+            .add_cert(ca)
             .map_err(|e| SignedObjectError::Pki(format!("Failed to add CA: {e}")))?;
     }
     let _store: X509Store = store_builder.build();
 
     // Note: CMS verification API is not available in this build context.
-    warn!("CMS verification not available in current OpenSSL feature set; returning UntrustedSigner");
+    warn!(
+        "CMS verification not available in current OpenSSL feature set; returning UntrustedSigner"
+    );
     Err(SignedObjectError::UntrustedSigner)
 }
 
-pub fn validate_master_list(input: &ValidationInput<'_>) -> Result<ValidationResult, SignedObjectError> {
+pub fn validate_master_list(
+    input: &ValidationInput<'_>,
+) -> Result<ValidationResult, SignedObjectError> {
     verify_cms_signed_object(input)
 }
 
-pub fn validate_defect_list(input: &ValidationInput<'_>) -> Result<ValidationResult, SignedObjectError> {
+pub fn validate_defect_list(
+    input: &ValidationInput<'_>,
+) -> Result<ValidationResult, SignedObjectError> {
     verify_cms_signed_object(input)
 }
 
-pub fn validate_document_security_object(input: &ValidationInput<'_>) -> Result<ValidationResult, SignedObjectError> {
+pub fn validate_document_security_object(
+    input: &ValidationInput<'_>,
+) -> Result<ValidationResult, SignedObjectError> {
     verify_cms_signed_object(input)
 }
-

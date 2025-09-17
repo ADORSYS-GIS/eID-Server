@@ -17,4 +17,3 @@ pub enum SignedObjectError {
     #[error("Tampered or invalid signature")]
     BadSignature,
 }
-
