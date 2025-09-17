@@ -360,12 +360,6 @@ impl From<Vec<u8>> for Id {
     }
 }
 
-impl From<&Vec<u8>> for Id {
-    fn from(value: &Vec<u8>) -> Self {
-        Self(value.clone())
-    }
-}
-
 impl AsRef<[u8]> for Id {
     fn as_ref(&self) -> &[u8] {
         &self.0
@@ -380,12 +374,6 @@ impl From<&str> for Id {
 
 impl From<String> for Id {
     fn from(value: String) -> Self {
-        Self(value.as_bytes().to_vec())
-    }
-}
-
-impl From<&String> for Id {
-    fn from(value: &String) -> Self {
         Self(value.as_bytes().to_vec())
     }
 }

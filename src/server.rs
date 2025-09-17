@@ -7,7 +7,7 @@ use std::net::TcpListener;
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::domain::eid::service::EidService;
+use crate::domain::service::EidService;
 use crate::server::handlers::health::health_check;
 use crate::session::SessionStore;
 use crate::tls::TlsConfig;
@@ -59,6 +59,8 @@ impl<S: SessionStore> Server<S> {
 
         let router = Router::new()
             .route("/health", get(health_check))
+            // .route("/", get(process_authentication))
+            // .route("/", post(process_authentication))
             .layer(cors_layer)
             .layer(trace_layer)
             .with_state(state);
