@@ -12,9 +12,11 @@ use crate::server::handlers::health::health_check;
 use crate::session::SessionStore;
 use crate::tls::TlsConfig;
 use axum::http::Method;
+use axum::routing::post;
 use axum::{Router, routing::get};
 use axum_server::tls_openssl::{OpenSSLAcceptor, OpenSSLConfig};
 use color_eyre::eyre::{Context, Result};
+use handlers::process_authentication;
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
@@ -59,8 +61,7 @@ impl<S: SessionStore> Server<S> {
 
         let router = Router::new()
             .route("/health", get(health_check))
-            // .route("/", get(process_authentication))
-            // .route("/", post(process_authentication))
+            .route("/", post(process_authentication))
             .layer(cors_layer)
             .layer(trace_layer)
             .with_state(state);
