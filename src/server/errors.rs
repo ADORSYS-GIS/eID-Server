@@ -67,7 +67,7 @@ pub enum EidError {
     #[error("The maximum number of open sessions has been reached")]
     TooManyOpenSessions,
     #[error(
-        "The function {0} has been selected but
+        "The function {0} has been selected but\
         the corresponding request element is missing"
     )]
     MissingArgument(String),
