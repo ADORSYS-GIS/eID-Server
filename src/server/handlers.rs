@@ -8,8 +8,7 @@ use tracing::instrument;
 use useid::handle_useid;
 
 use crate::domain::models::eid::UseIDRequest;
-use crate::domain::models::errors::AppError;
-use crate::server::AppState;
+use crate::server::{AppState, errors::AppError};
 use crate::session::SessionStore;
 use crate::soap::Envelope;
 

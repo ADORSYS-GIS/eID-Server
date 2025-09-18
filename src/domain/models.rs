@@ -1,5 +1,4 @@
 pub mod eid;
-pub mod errors;
 
 use serde::Serialize;
 

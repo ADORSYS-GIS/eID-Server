@@ -1,5 +1,4 @@
-//! This module contains the HTTP server implementation.
-
+mod errors;
 mod handlers;
 mod responses;
 

@@ -60,6 +60,7 @@ impl From<quick_xml::DeError> for AppError {
 
 /// Error type for eID operations
 #[derive(Error, Debug)]
+#[allow(unused)]
 pub enum EidError {
     #[error("The PreSharedKey is invalid")]
     InvalidPSK,

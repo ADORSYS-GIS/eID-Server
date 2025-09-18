@@ -3,7 +3,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use crate::{domain::models::errors::AppError, soap::Envelope};
+use crate::{server::errors::AppError, soap::Envelope};
 
 const APP_CONTENT_TYPE: &str = "text/xml; charset=utf-8";
 const INTERNAL_ERROR_MESSAGE: &str = "The server encountered an internal error.";

@@ -6,9 +6,11 @@ use crate::crypto::generate_random_bytes;
 use crate::domain::models::{
     ResultType,
     eid::{PreSharedKey, Session, UseIDRequest, UseIDResponse},
+};
+use crate::server::{
+    AppState,
     errors::{AppError, EidError},
 };
-use crate::server::AppState;
 use crate::session::{SessionData, SessionError, SessionStore};
 use crate::soap::Envelope;
 
@@ -25,16 +27,7 @@ pub async fn handle_useid<S: SessionStore>(
     envelope: Envelope<UseIDRequest>,
 ) -> Result<String, AppError> {
     let body = envelope.into_body();
-    // validate the request structure
-    body.validate()?;
-
-    if body.age_verification.is_some() && body.use_operations.age_verification.is_prohibited() {
-        return Err(EidError::MissingArgument("AgeVerification".into()).into());
-    }
-
-    if body.place_verification.is_some() && body.use_operations.place_verification.is_prohibited() {
-        return Err(EidError::MissingArgument("PlaceVerification".into()).into());
-    }
+    validate_request(&body)?;
 
     let (id, key) = if let Some(ref psk) = body.psk {
         if psk.validate().is_err() {
@@ -63,6 +56,18 @@ pub async fn handle_useid<S: SessionStore>(
         Err(SessionError::MaxSessions) => Err(EidError::TooManyOpenSessions.into()),
         Err(e) => Err(AppError::internal(e)),
     }
+}
+
+fn validate_request(body: &UseIDRequest) -> Result<(), AppError> {
+    body.validate()?;
+
+    if body.age_verification.is_some() && body.use_operations.age_verification.is_prohibited() {
+        return Err(EidError::MissingArgument("AgeVerification".into()).into());
+    }
+    if body.place_verification.is_some() && body.use_operations.place_verification.is_prohibited() {
+        return Err(EidError::MissingArgument("PlaceVerification".into()).into());
+    }
+    Ok(())
 }
 
 fn build_response(session_id: String, psk: Vec<u8>) -> Result<String, AppError> {
