@@ -20,6 +20,7 @@ enum IncomingReq {
     UseID(UseIDRequest),
 }
 
+#[inline]
 fn soap_ok(xml: String) -> Response {
     SoapResponse::new(xml).into_response()
 }
