@@ -4,7 +4,7 @@ pub mod useid;
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
-use tracing::instrument;
+use tracing::{debug, instrument};
 use useid::handle_useid;
 
 use crate::domain::models::eid::UseIDRequest;
@@ -26,7 +26,7 @@ fn soap_ok(xml: String) -> Response {
 }
 
 /// Processes an incoming request and routes to the appropriate handler
-#[instrument(skip(state))]
+#[instrument(skip(state, request))]
 pub async fn process_authentication<S>(
     State(state): State<AppState<S>>,
     request: String,
@@ -34,6 +34,8 @@ pub async fn process_authentication<S>(
 where
     S: SessionStore,
 {
+    debug!("Processing request: {request}");
+
     let envelope = Envelope::<IncomingReq>::parse(&request)?;
     let body = envelope.into_body();
 
