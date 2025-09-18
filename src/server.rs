@@ -60,7 +60,7 @@ impl<S: SessionStore> Server<S> {
 
         let router = Router::new()
             .route("/health", get(health_check))
-            .route("/", post(process_authentication))
+            .route("/eid", post(process_authentication))
             .layer(cors_layer)
             .layer(trace_layer)
             .with_state(state);
