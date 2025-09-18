@@ -61,10 +61,11 @@ pub async fn handle_useid<S: SessionStore>(
 fn validate_request(body: &UseIDRequest) -> Result<(), AppError> {
     body.validate()?;
 
-    if body.age_verification.is_some() && !body.use_operations.age_verification.is_prohibited() {
+    if body.age_verification.is_none() && !body.use_operations.age_verification.is_prohibited() {
         return Err(EidError::MissingArgument("AgeVerification".into()).into());
     }
-    if body.place_verification.is_some() && !body.use_operations.place_verification.is_prohibited() {
+    if body.place_verification.is_none() && !body.use_operations.place_verification.is_prohibited()
+    {
         return Err(EidError::MissingArgument("PlaceVerification".into()).into());
     }
     Ok(())
