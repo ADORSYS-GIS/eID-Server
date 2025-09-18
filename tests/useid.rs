@@ -83,7 +83,7 @@ async fn test_invalid_body_fails() {
 }
 
 #[tokio::test]
-async fn test_age_verification_prohibited_but_present_fails() {
+async fn test_age_verifi_required_but_missing_age_verif_req_fails() {
     let TestCertificates {
         server_cert,
         server_key,
@@ -97,13 +97,12 @@ async fn test_age_verification_prohibited_but_present_fails() {
         .build()
         .unwrap();
 
-    // A request where UseOperations marks AgeVerification as PROHIBITED
-    // but the request includes AgeVerificationRequest
+    // A request where UseOperations marks AgeVerification as REQUIRED
+    // but the request does not include AgeVerificationRequest
     let mut xml = include_str!("../test_data/eid/useIDRequest.xml").to_string();
-    xml = xml.replace(
-        "<eid:AgeVerification>REQUIRED</eid:AgeVerification>",
-        "<eid:AgeVerification>PROHIBITED</eid:AgeVerification>",
-    );
+    xml = xml.replace("<eid:AgeVerificationRequest>", "");
+    xml = xml.replace("</eid:AgeVerificationRequest>", "");
+    xml = xml.replace("<eid:Age>18</eid:Age>", "");
 
     let response = client
         .post(&addr)
