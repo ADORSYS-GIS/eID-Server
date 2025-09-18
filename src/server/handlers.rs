@@ -18,6 +18,8 @@ use super::responses::SoapResponse;
 enum IncomingReq {
     #[serde(rename = "useIDRequest")]
     UseID(UseIDRequest),
+    #[serde(other)]
+    Other,
 }
 
 #[inline]
@@ -44,5 +46,8 @@ where
             let envelope = Envelope::new(req);
             handle_useid(state, envelope).await.map(soap_ok)
         }
+        IncomingReq::Other => Err(AppError::SchemaViolation(
+            "Unsupported request type".to_string(),
+        )),
     }
 }
