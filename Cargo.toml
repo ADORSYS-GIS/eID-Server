@@ -15,6 +15,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 
 # Async runtime
 tokio = { version = "1.46", features = ["full"] }
+tokio-cron-scheduler = "0.14.0"
 
 # Error handling
 thiserror = "2.0"
@@ -37,7 +38,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # Miscellaneous utilities
 async-trait = "0.1"
 dashmap = "6.1"
-time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
+time = { version = "0.3", features = ["serde"] }
 hex-literal = "1"
 
 # Cryptographic utilities
@@ -47,9 +48,8 @@ cmac = "0.7"
 secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
 regex = "1"
-log = "0.4.27"
 zip = "5"
-dotenv = "0.15.0"
+dotenvy = "0.15.7"
 
 [dependencies.redis]
 version = "0.32"

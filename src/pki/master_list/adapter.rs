@@ -2,37 +2,45 @@ use super::{CscaValidationError, MasterList, MasterListParser};
 use regex::Regex;
 use reqwest::Client;
 use std::io::{Cursor, Read};
-use tracing::{debug, info, warn};
+use std::sync::LazyLock;
+use tracing::{debug, warn};
 use zip::ZipArchive;
+
+/// Lazy-initialized regex for finding ZIP download links in HTML
+static ZIP_LINK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"href="([^"]*\.zip[^"]*)"#).expect("Invalid regex pattern for ZIP links")
+});
 
 /// Adapter for handling zip-compressed master list files
 pub struct ZipAdapter;
 
 impl ZipAdapter {
     /// Check if the data appears to be a zip file by examining magic bytes
-    pub fn is_zip_file(data: &[u8]) -> bool {
+    pub fn is_zip_file<T: AsRef<[u8]>>(data: T) -> bool {
+        let data = data.as_ref();
         // ZIP file magic bytes: PK (0x504B)
         data.len() >= 4 && data[0] == 0x50 && data[1] == 0x4B
     }
 
     /// Extract the first file from a zip archive
     /// Returns the extracted bytes or the original data if not a zip file
-    pub fn extract_or_passthrough(data: Vec<u8>) -> Result<Vec<u8>, CscaValidationError> {
+    pub fn extract_or_passthrough<T: Into<Vec<u8>>>(
+        data: T,
+    ) -> Result<Vec<u8>, CscaValidationError> {
+        let data = data.into();
         if !Self::is_zip_file(&data) {
             debug!("Data is not a zip file, passing through unchanged");
             return Ok(data);
         }
 
-        info!("Detected zip file, attempting to extract contents");
+        debug!("Detected zip file, attempting to extract contents");
         Self::extract_first_file(data)
     }
 
     /// Extract the first file from a zip archive
     fn extract_first_file(data: Vec<u8>) -> Result<Vec<u8>, CscaValidationError> {
         let cursor = Cursor::new(data);
-        let mut archive = ZipArchive::new(cursor).map_err(|e| {
-            CscaValidationError::MasterListParse(format!("Failed to read zip archive: {e}"))
-        })?;
+        let mut archive = ZipArchive::new(cursor)?;
 
         if archive.is_empty() {
             return Err(CscaValidationError::MasterListParse(
@@ -41,22 +49,16 @@ impl ZipAdapter {
         }
 
         // Get the first file in the archive
-        let mut file = archive.by_index(0).map_err(|e| {
-            CscaValidationError::MasterListParse(format!("Failed to access first file in zip: {e}"))
-        })?;
+        let mut file = archive.by_index(0)?;
 
         let file_name = file.name().to_string();
-        info!("Extracting file: {} ({} bytes)", file_name, file.size());
+        debug!("Extracting file: {} ({} bytes)", file_name, file.size());
 
         // Read the file contents
         let mut contents = Vec::new();
-        file.read_to_end(&mut contents).map_err(|e| {
-            CscaValidationError::MasterListParse(format!(
-                "Failed to read file '{file_name}' from zip: {e}"
-            ))
-        })?;
+        file.read_to_end(&mut contents)?;
 
-        info!(
+        debug!(
             "Successfully extracted {} bytes from {}",
             contents.len(),
             file_name
@@ -66,32 +68,28 @@ impl ZipAdapter {
 
     /// Extract a specific file from a zip archive by name
     /// Falls back to extracting the first file if the specific file is not found
-    pub fn extract_file_by_name(
-        data: Vec<u8>,
-        target_filename: &str,
+    pub fn extract_file_by_name<T: Into<Vec<u8>>, S: AsRef<str>>(
+        data: T,
+        target_filename: S,
     ) -> Result<Vec<u8>, CscaValidationError> {
+        let data = data.into();
+        let target_filename = target_filename.as_ref();
         if !Self::is_zip_file(&data) {
             debug!("Data is not a zip file, passing through unchanged");
             return Ok(data);
         }
 
         let cursor = Cursor::new(data);
-        let mut archive = ZipArchive::new(cursor).map_err(|e| {
-            CscaValidationError::MasterListParse(format!("Failed to read zip archive: {e}"))
-        })?;
+        let mut archive = ZipArchive::new(cursor)?;
 
         // Try to find the specific file first
         let mut target_index = None;
         for i in 0..archive.len() {
-            let file = archive.by_index(i).map_err(|e| {
-                CscaValidationError::MasterListParse(format!(
-                    "Failed to access file at index {i}: {e}"
-                ))
-            })?;
+            let file = archive.by_index(i)?;
 
             let file_name = file.name();
             if file_name.contains(target_filename) || file_name.ends_with(target_filename) {
-                info!("Found target file: {} in zip archive", file_name);
+                debug!("Found target file: {} in zip archive", file_name);
                 target_index = Some(i);
                 break;
             }
@@ -111,21 +109,13 @@ impl ZipAdapter {
             ));
         }
 
-        let mut file = archive.by_index(index_to_extract).map_err(|e| {
-            CscaValidationError::MasterListParse(format!(
-                "Failed to access file at index {index_to_extract}: {e}"
-            ))
-        })?;
+        let mut file = archive.by_index(index_to_extract)?;
 
         let file_name = file.name().to_string();
         let mut contents = Vec::new();
-        file.read_to_end(&mut contents).map_err(|e| {
-            CscaValidationError::MasterListParse(format!(
-                "Failed to read file '{file_name}' from zip: {e}"
-            ))
-        })?;
+        file.read_to_end(&mut contents)?;
 
-        info!(
+        debug!(
             "Successfully extracted {} bytes from {}",
             contents.len(),
             file_name
@@ -134,17 +124,15 @@ impl ZipAdapter {
     }
 
     /// Process HTML content to extract ZIP download link and fetch the master list
-    pub async fn process_html_for_master_list(
+    pub async fn process_html_for_master_list<U: AsRef<str>, H: AsRef<str>>(
         http_client: &Client,
-        _url: &str,
-        html_content: &str,
+        _url: U,
+        html_content: H,
     ) -> Result<MasterList, CscaValidationError> {
-        // Simple regex to find ZIP download link
-        let re = Regex::new(r#"href="([^"]*\.zip[^"]*)"#).map_err(|e| {
-            CscaValidationError::MasterListParse(format!("Failed to compile regex: {e}"))
-        })?;
-
-        if let Some(captures) = re.captures(html_content) {
+        let _url = _url.as_ref();
+        let html_content = html_content.as_ref();
+        // Use lazy-initialized regex to find ZIP download link
+        if let Some(captures) = ZIP_LINK_REGEX.captures(html_content) {
             if let Some(link) = captures.get(1) {
                 let download_url = if link.as_str().starts_with("http") {
                     link.as_str().to_string()
@@ -153,13 +141,9 @@ impl ZipAdapter {
                 };
 
                 // Fetch the actual ZIP file
-                let zip_response = http_client.get(&download_url).send().await.map_err(|e| {
-                    CscaValidationError::MasterListParse(format!("Failed to fetch ZIP: {e}"))
-                })?;
+                let zip_response = http_client.get(&download_url).send().await?;
 
-                let bytes = zip_response.bytes().await.map_err(|e| {
-                    CscaValidationError::MasterListParse(format!("Failed to read ZIP bytes: {e}"))
-                })?;
+                let bytes = zip_response.bytes().await?;
 
                 let extracted_bytes = Self::extract_or_passthrough(bytes.to_vec())?;
                 return MasterListParser::parse_der(&extracted_bytes);

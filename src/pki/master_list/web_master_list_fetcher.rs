@@ -1,6 +1,6 @@
 use super::{CscaValidationError, MasterList, MasterListParser, ZipAdapter};
 use super::{FetcherConfig, MasterListFetcher};
-use crate::config::MasterListConfig;
+use crate::config::PkiConfig;
 use async_trait::async_trait;
 use reqwest::Client;
 use std::time::Duration;
@@ -9,14 +9,14 @@ use tracing::{info, warn};
 #[derive(Debug, Clone)]
 pub struct WebMasterListFetcher {
     http_client: Client,
-    master_list_config: MasterListConfig,
+    master_list_config: PkiConfig,
 }
 
 impl WebMasterListFetcher {
     /// Create a new web-based master list fetcher
     pub fn new(
         config: FetcherConfig,
-        master_list_config: MasterListConfig,
+        master_list_config: PkiConfig,
     ) -> Result<Self, CscaValidationError> {
         let http_client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds))
@@ -87,12 +87,8 @@ impl WebMasterListFetcher {
 
 #[async_trait]
 impl MasterListFetcher for WebMasterListFetcher {
-    async fn fetch_master_list(&self) -> Result<MasterList, CscaValidationError> {
+    async fn fetch(&self) -> Result<MasterList, CscaValidationError> {
         info!("Fetching master list from web source");
         self.fetch_from_configured_url().await
-    }
-
-    fn source_name(&self) -> &str {
-        "Web Source"
     }
 }

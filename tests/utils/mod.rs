@@ -18,7 +18,7 @@ pub async fn spawn_server(
     };
 
     let session_manager = SessionManager::new(session_store);
-    let service = EidService::new(session_manager).expect("Failed to create EID service");
+    let service = EidService::new(session_manager);
 
     let server = Server::new(service, &config, tls_config).await.unwrap();
 

@@ -2,7 +2,6 @@ mod adapter;
 mod parser;
 mod periodic_updater;
 mod service;
-mod trust_store_manager;
 mod validator;
 mod web_master_list_fetcher;
 
@@ -12,13 +11,11 @@ pub use adapter::ZipAdapter;
 pub use parser::MasterListParser;
 pub use periodic_updater::{MasterListUpdateStatus, PeriodicUpdater};
 pub use service::{CscaValidationService, CscaValidator};
-pub use trust_store_manager::{TrustStoreManager, TrustStoreStats};
 pub use validator::{CertificateValidator, ValidationResult};
 pub use web_master_list_fetcher::WebMasterListFetcher;
 
 use openssl::{
     hash::MessageDigest,
-    x509::X509Name,
     x509::{X509, X509StoreContext, store::X509StoreBuilder},
 };
 use serde::{Deserialize, Serialize};
@@ -28,17 +25,9 @@ use time::OffsetDateTime;
 
 /// Abstract interface for fetching master lists from various sources
 #[async_trait]
-pub trait MasterListFetcher: Send + Sync {
+pub trait MasterListFetcher: Send + Sync + std::fmt::Debug {
     /// Fetch master list from the configured source
-    async fn fetch_master_list(&self) -> Result<MasterList, CscaValidationError>;
-
-    /// Get the name/identifier of this fetcher
-    fn source_name(&self) -> &str;
-
-    /// Check if the fetcher is available/configured
-    fn is_available(&self) -> bool {
-        true
-    }
+    async fn fetch(&self) -> Result<MasterList, CscaValidationError>;
 }
 
 /// Configuration for different master list sources
@@ -70,6 +59,12 @@ pub enum CscaValidationError {
     MasterListParse(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Zip error: {0}")]
+    Zip(#[from] zip::result::ZipError),
+    #[error("Regex error: {0}")]
+    Regex(#[from] regex::Error),
+    #[error("HTTP request error: {0}")]
+    Http(#[from] reqwest::Error),
 }
 
 /// Country Signing Certificate Authority information
@@ -205,12 +200,10 @@ impl MasterList {
 }
 
 /// Trust store for managing trusted CSCA certificates
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CscaTrustStore {
     /// Map of trusted CSCA certificates by fingerprint
     trusted_certificates: HashMap<String, CscaInfo>,
-    /// Cache of parsed X509 certificates
-    cert_cache: std::sync::RwLock<HashMap<String, X509>>,
 }
 
 impl CscaTrustStore {
@@ -218,7 +211,6 @@ impl CscaTrustStore {
     pub fn new() -> Result<Self, CscaValidationError> {
         Ok(Self {
             trusted_certificates: HashMap::new(),
-            cert_cache: std::sync::RwLock::new(HashMap::new()),
         })
     }
 
@@ -263,9 +255,9 @@ impl CscaTrustStore {
 
         for cert_info in self.trusted_certificates.values() {
             if let Ok(fingerprint) = cert_info.fingerprint() {
-                if let Ok(cert) = self.get_cached_cert(&fingerprint) {
+                if let Ok(cert) = self.get_cert(&fingerprint) {
                     if let Err(e) = store_builder.add_cert(cert) {
-                        log::warn!("Failed to add certificate to store: {e}");
+                        tracing::warn!("Failed to add certificate to store: {e}");
                     }
                 }
             }
@@ -274,115 +266,20 @@ impl CscaTrustStore {
         Ok(store_builder.build())
     }
 
-    /// Get a cached X509 certificate or parse it
-    fn get_cached_cert(&self, fingerprint: &str) -> Result<X509, CscaValidationError> {
-        // Try to get from cache first
-        if let Ok(cache_read) = self.cert_cache.read() {
-            if let Some(cert) = cache_read.get(fingerprint) {
-                return Ok(cert.clone());
-            }
-        }
-
-        // If not in cache, parse it and add to cache
+    /// Get X509 certificate by parsing from DER
+    fn get_cert(&self, fingerprint: &str) -> Result<X509, CscaValidationError> {
         if let Some(cert_info) = self.trusted_certificates.get(fingerprint) {
-            let cert = X509::from_der(&cert_info.certificate_der)?;
-            if let Ok(mut cache_write) = self.cert_cache.write() {
-                cache_write.insert(fingerprint.to_string(), cert.clone());
-            }
-            return Ok(cert);
+            Ok(X509::from_der(&cert_info.certificate_der)?)
+        } else {
+            Err(CscaValidationError::CertificateValidation(
+                "CSCA not found in trusted store".to_string(),
+            ))
         }
-
-        Err(CscaValidationError::CertificateValidation(
-            "CSCA not found in trusted store".to_string(),
-        ))
-    }
-
-    /// Find a certificate by Authority Key Identifier
-    pub fn find_cert_by_aki(&self, aki: &[u8]) -> Option<X509> {
-        for cert_info in self.trusted_certificates.values() {
-            if let Ok(fingerprint) = cert_info.fingerprint() {
-                if let Ok(cert) = self.get_cached_cert(&fingerprint) {
-                    if let Some(ski) = cert.subject_key_id() {
-                        if ski.as_slice() == aki {
-                            return Some(cert);
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    /// Find a certificate by subject name
-    pub fn find_cert_by_subject(&self, subject: &X509Name) -> Option<X509> {
-        for cert_info in self.trusted_certificates.values() {
-            if let Ok(fingerprint) = cert_info.fingerprint() {
-                if let Ok(cert) = self.get_cached_cert(&fingerprint) {
-                    if cert.subject_name().to_der().ok()? == subject.to_der().ok()? {
-                        return Some(cert);
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    /// Get all trusted CSCA certificates
-    pub fn get_all_trusted_csca(&self) -> HashMap<String, CscaInfo> {
-        self.trusted_certificates.clone()
-    }
-
-    /// Clean up expired certificates from trust store
-    pub fn cleanup_expired(&mut self) -> Result<usize, CscaValidationError> {
-        let expired: Vec<String> = self
-            .trusted_certificates
-            .iter()
-            .filter(|(_, cert)| !cert.is_valid())
-            .map(|(fp, _)| fp.clone())
-            .collect();
-
-        let count = expired.len();
-        for fp in &expired {
-            self.trusted_certificates.remove(fp);
-            if let Ok(mut cache_write) = self.cert_cache.write() {
-                cache_write.remove(fp);
-            }
-        }
-
-        Ok(count)
-    }
-
-    /// Get all certificates in the trust store
-    pub fn get_all_certificates(&self) -> Result<Vec<X509>, CscaValidationError> {
-        let mut certs = Vec::new();
-        for cert_info in self.trusted_certificates.values() {
-            if let Ok(fingerprint) = cert_info.fingerprint() {
-                if let Ok(cert) = self.get_cached_cert(&fingerprint) {
-                    certs.push(cert);
-                }
-            }
-        }
-        Ok(certs)
     }
 }
 
 impl Default for CscaTrustStore {
     fn default() -> Self {
         Self::new().expect("Failed to create default CSCA trust store")
-    }
-}
-
-impl Clone for CscaTrustStore {
-    fn clone(&self) -> Self {
-        let cache_clone = self
-            .cert_cache
-            .read()
-            .map(|cache| cache.clone())
-            .unwrap_or_default();
-
-        Self {
-            trusted_certificates: self.trusted_certificates.clone(),
-            cert_cache: std::sync::RwLock::new(cache_clone),
-        }
     }
 }

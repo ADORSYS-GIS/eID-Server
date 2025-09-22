@@ -1,15 +1,16 @@
 use super::{CscaInfo, CscaValidationError, MasterList};
 use openssl::x509::X509;
 use time::OffsetDateTime;
-use tracing::{info, warn};
+use tracing::warn;
 
 /// Master List parser for DER format
 pub struct MasterListParser;
 
 impl MasterListParser {
     /// Parse Master List from binary DER format
-    pub fn parse_der(der_data: &[u8]) -> Result<MasterList, CscaValidationError> {
-        info!(
+    pub fn parse_der<T: AsRef<[u8]>>(der_data: T) -> Result<MasterList, CscaValidationError> {
+        let der_data = der_data.as_ref();
+        tracing::debug!(
             "Attempting to parse binary DER format master list ({} bytes)",
             der_data.len()
         );
@@ -60,7 +61,7 @@ impl MasterListParser {
                                     cert_count += 1;
                                     offset += total_cert_size;
 
-                                    info!(
+                                    tracing::debug!(
                                         "Successfully parsed certificate #{} at offset {} (size: {} bytes)",
                                         cert_count,
                                         offset - total_cert_size,
@@ -95,7 +96,7 @@ impl MasterListParser {
             ));
         }
 
-        info!(
+        tracing::debug!(
             "Successfully parsed {} certificates from binary DER format",
             cert_count
         );

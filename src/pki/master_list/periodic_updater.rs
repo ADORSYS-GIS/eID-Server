@@ -1,7 +1,8 @@
 use super::MasterListFetcher;
 use super::{CscaValidationError, FetcherConfig, MasterList, WebMasterListFetcher};
-use crate::config::MasterListConfig;
+use crate::config::PkiConfig;
 use std::sync::Arc;
+use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::{error, info};
 
 /// Master List update status and information
@@ -16,39 +17,102 @@ pub struct MasterListUpdateStatus {
     pub total_certificates: usize,
 }
 
-/// Service for handling periodic updates of Master Lists
+/// Service for handling periodic updates of Master Lists using cron scheduling
 pub struct PeriodicUpdater {
     fetcher: Arc<dyn MasterListFetcher>,
+    scheduler: Arc<JobScheduler>,
 }
 
 impl Clone for PeriodicUpdater {
     fn clone(&self) -> Self {
         Self {
             fetcher: Arc::clone(&self.fetcher),
+            scheduler: Arc::clone(&self.scheduler),
         }
     }
 }
 
 impl PeriodicUpdater {
     /// Create a new periodic updater with default German BSI fetcher
-    pub fn new(master_list_config: MasterListConfig) -> Result<Self, CscaValidationError> {
+    pub async fn new(master_list_config: PkiConfig) -> Result<Self, CscaValidationError> {
         let config = FetcherConfig::default();
         let fetcher = Arc::new(WebMasterListFetcher::new(config, master_list_config)?);
-        Ok(Self { fetcher })
+        let scheduler = Arc::new(JobScheduler::new().await.map_err(|e| {
+            CscaValidationError::MasterListParse(format!("Failed to create job scheduler: {e}"))
+        })?);
+        Ok(Self { fetcher, scheduler })
     }
 
     /// Create updater with existing fetcher
-    pub fn with_fetcher(fetcher: Arc<dyn MasterListFetcher>) -> Self {
-        Self { fetcher }
+    pub async fn with_fetcher(
+        fetcher: Arc<dyn MasterListFetcher>,
+    ) -> Result<Self, CscaValidationError> {
+        let scheduler = Arc::new(JobScheduler::new().await.map_err(|e| {
+            CscaValidationError::MasterListParse(format!("Failed to create job scheduler: {e}"))
+        })?);
+        Ok(Self { fetcher, scheduler })
     }
 
-    /// Check if Master List needs updating
+    /// Start the periodic updater with a default daily schedule (runs at 2 AM every day)
+    pub async fn start_periodic_updates(&self) -> Result<(), CscaValidationError> {
+        self.start_with_schedule("0 0 2 * * *").await
+    }
+
+    /// Start the periodic updater with a custom cron schedule
+    /// Format: "sec min hour day_of_month month day_of_week year"
+    pub async fn start_with_schedule(
+        &self,
+        cron_schedule: &str,
+    ) -> Result<(), CscaValidationError> {
+        let fetcher = Arc::clone(&self.fetcher);
+
+        let job = Job::new_async(cron_schedule, move |_uuid, _lock| {
+            let fetcher = Arc::clone(&fetcher);
+            Box::pin(async move {
+                info!("Periodic Master List update triggered by scheduler");
+
+                match fetcher.fetch().await {
+                    Ok(master_list) => {
+                        info!("Successfully updated Master List from scheduler - version: {}, countries: {}", 
+                              master_list.version, master_list.csca_certificates.len());
+                    }
+                    Err(e) => {
+                        error!("Failed to fetch Master List in scheduled update: {}", e);
+                    }
+                }
+            })
+        })
+        .map_err(|e| {
+            CscaValidationError::MasterListParse(format!("Failed to create scheduled job: {e}"))
+        })?;
+
+        self.scheduler.add(job).await.map_err(|e| {
+            CscaValidationError::MasterListParse(format!("Failed to add job to scheduler: {e}"))
+        })?;
+
+        self.scheduler.start().await.map_err(|e| {
+            CscaValidationError::MasterListParse(format!("Failed to start scheduler: {e}"))
+        })?;
+
+        info!(
+            "Periodic Master List updater started with schedule: {}",
+            cron_schedule
+        );
+        Ok(())
+    }
+
+    /// Check if the scheduler is running
+    pub async fn is_running(&self) -> bool {
+        true
+    }
+
+    /// Check if Master List needs updating (utility method)
     pub fn needs_update(master_list: Option<&MasterList>) -> bool {
         master_list.map(|ml| !ml.is_valid()).unwrap_or(true)
     }
 
-    /// Update German Master List from BSI if needed
-    pub async fn update_master_list(
+    /// Manual update method - fetch Master List immediately if needed
+    pub async fn update_master_list_now(
         &self,
         current_master_list: Option<&MasterList>,
     ) -> Result<Option<MasterList>, CscaValidationError> {
@@ -57,11 +121,15 @@ impl PeriodicUpdater {
             return Ok(None);
         }
 
-        info!("Master List needs updating, fetching from BSI");
+        info!("Master List needs updating, fetching now");
 
-        match self.fetcher.fetch_master_list().await {
+        match self.fetcher.fetch().await {
             Ok(master_list) => {
-                info!("Successfully updated Master List from BSI");
+                info!(
+                    "Successfully updated Master List - version: {}, countries: {}",
+                    master_list.version,
+                    master_list.csca_certificates.len()
+                );
                 Ok(Some(master_list))
             }
             Err(e) => {
