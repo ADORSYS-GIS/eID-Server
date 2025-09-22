@@ -44,6 +44,7 @@ pub async fn handle_useid<S: SessionStore>(
     let session_data = SessionData {
         request_data: body,
         psk: key.clone(),
+        conn_handle: None,
     };
 
     match state
@@ -54,12 +55,12 @@ pub async fn handle_useid<S: SessionStore>(
     {
         Ok(_) => build_response(id, key),
         Err(SessionError::MaxSessions) => Err(EidError::TooManyOpenSessions.into()),
-        Err(e) => Err(AppError::internal(e)),
+        Err(e) => Err(AppError::soap_internal(e)),
     }
 }
 
 fn validate_request(body: &UseIDRequest) -> Result<(), AppError> {
-    body.validate()?;
+    body.validate().map_err(EidError::from)?;
 
     if body.age_verification.is_none() && !body.use_operations.age_verification.is_prohibited() {
         return Err(EidError::MissingArgument("AgeVerification".into()).into());
@@ -85,7 +86,7 @@ fn build_response(session_id: String, psk: Vec<u8>) -> Result<String, AppError> 
             result: ResultType::ok(),
         },
     };
-    resp.validate().map_err(AppError::internal)?;
+    resp.validate().map_err(AppError::soap_internal)?;
     let result = Envelope::new(resp).serialize_soap(true);
-    result.map_err(AppError::internal)
+    result.map_err(AppError::soap_internal)
 }
