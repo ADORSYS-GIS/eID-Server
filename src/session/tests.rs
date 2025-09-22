@@ -12,8 +12,8 @@ struct TestData {
 }
 
 // Helper function to create a test session manager
-fn create_test_manager() -> SessionManager<MemoryStore> {
-    SessionManager::new(MemoryStore::new())
+fn create_test_manager() -> SessionManager {
+    SessionManager::new(Arc::new(MemoryStore::new()))
 }
 
 // Helper function to create test data
@@ -35,8 +35,7 @@ async fn test_new_session_manager_default_values() {
 
 #[tokio::test]
 async fn test_method_chaining() {
-    let store = MemoryStore::new();
-    let manager = SessionManager::new(store)
+    let manager = SessionManager::new(Arc::new(MemoryStore::new()))
         .with_expiry(Duration::minutes(45))
         .with_max_sessions(75_000);
 
@@ -142,7 +141,7 @@ async fn test_get_expiry_date() {
 async fn test_custom_expiry_duration() {
     let store = MemoryStore::new();
     let custom_duration = Duration::hours(2);
-    let manager = SessionManager::new(store).with_expiry(custom_duration);
+    let manager = SessionManager::new(Arc::new(store)).with_expiry(custom_duration);
 
     let session_id = "custom_expiry_test";
     let data = create_test_data();
@@ -164,7 +163,7 @@ async fn test_custom_expiry_duration() {
 async fn test_max_sessions_limit() {
     let store = MemoryStore::new();
     let max_sessions = 2;
-    let manager = SessionManager::new(store).with_max_sessions(max_sessions);
+    let manager = SessionManager::new(Arc::new(store)).with_max_sessions(max_sessions);
 
     // Insert sessions up to the limit
     manager.insert("session1", "data1").await.unwrap();
@@ -186,7 +185,7 @@ async fn test_max_sessions_limit() {
 #[tokio::test]
 async fn test_session_expiration() {
     let store = MemoryStore::new();
-    let manager = SessionManager::new(store).with_expiry(Duration::seconds(1));
+    let manager = SessionManager::new(Arc::new(store)).with_expiry(Duration::seconds(1));
 
     let id1 = "expiration_test";
     let data1 = create_test_data();

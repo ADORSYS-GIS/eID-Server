@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
-    pub redis: RedisConfig,
+    #[serde(default)]
+    pub redis: Option<RedisConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +52,6 @@ impl Config {
         let mut builder = ConfigLib::builder()
             .set_default("server.host", "localhost")?
             .set_default("server.port", 3000)?
-            .set_default("redis.uri", "redis://127.0.0.1:6379")?
             .add_source(File::with_name("config/settings").required(false));
 
         // If env_vars is provided, we use it instead of system environment
@@ -85,7 +85,7 @@ mod tests {
 
         assert_eq!(config.server.host, "localhost");
         assert_eq!(config.server.port, 3000);
-        assert_eq!(config.redis.uri.expose_secret(), "redis://127.0.0.1:6379");
+        assert!(config.redis.is_none());
     }
 
     #[test]
@@ -102,7 +102,10 @@ mod tests {
 
         assert_eq!(config.server.host, "0.0.0.0");
         assert_eq!(config.server.port, 443);
-        assert_eq!(config.redis.uri.expose_secret(), "rediss://localhost:6379");
+        assert_eq!(
+            config.redis.unwrap().uri.expose_secret(),
+            "rediss://localhost:6379"
+        );
     }
 
     #[test]
@@ -116,6 +119,6 @@ mod tests {
         assert_eq!(config.server.host, "192.168.1.1");
         // The other values should use default
         assert_eq!(config.server.port, 3000);
-        assert_eq!(config.redis.uri.expose_secret(), "redis://127.0.0.1:6379");
+        assert!(config.redis.is_none());
     }
 }

@@ -48,7 +48,7 @@ enum Format {
     Der,
 }
 
-struct Inner<S> {
+struct Inner {
     format: Format,
     cert_chain: Vec<u8>,
     private_key: Vec<u8>,
@@ -56,15 +56,15 @@ struct Inner<S> {
     ca_certs: Option<Vec<Vec<u8>>>,
     psk_config: Option<TlsPskConfig>,
     is_mtls: bool,
-    session_store: Option<Arc<S>>,
+    session_store: Option<Arc<dyn SessionStore>>,
 }
 
 /// Configuration for the TLS server.
-pub struct TlsConfig<S: SessionStore> {
-    inner: Inner<S>,
+pub struct TlsConfig {
+    inner: Inner,
 }
 
-impl<S: SessionStore> TlsConfig<S> {
+impl TlsConfig {
     /// Creates a new TLS configuration from PEM encoded data
     ///
     /// # Arguments
@@ -133,9 +133,9 @@ impl<S: SessionStore> TlsConfig<S> {
     }
 
     /// Add session store support for centralized session caching.
-    pub fn with_session_store(mut self, session_store: S) -> Self {
+    pub fn with_session_store(mut self, session_store: Arc<dyn SessionStore>) -> Self {
         debug!("Adding session store support to TLS configuration");
-        self.inner.session_store = Some(Arc::new(session_store));
+        self.inner.session_store = Some(session_store);
         self
     }
 
@@ -325,7 +325,7 @@ impl<S: SessionStore> TlsConfig<S> {
     fn setup_session_callbacks(
         &self,
         builder: &mut SslAcceptorBuilder,
-        session_store: &Arc<S>,
+        session_store: &Arc<dyn SessionStore>,
     ) -> Result<(), TlsError> {
         debug!("Setting up session store callbacks");
 

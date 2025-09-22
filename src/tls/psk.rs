@@ -3,7 +3,7 @@ use color_eyre::Report;
 use dashmap::DashMap;
 use std::{collections::HashMap, error::Error as StdError, fmt, sync::Arc};
 
-use crate::session::{SessionData, SessionError, SessionManager, SessionStore};
+use crate::session::{SessionData, SessionError, SessionManager};
 
 /// Abstract interface for a PSK store.
 #[async_trait]
@@ -13,7 +13,7 @@ pub trait PskStore: Send + Sync {
 }
 
 #[async_trait]
-impl<S: SessionStore> PskStore for SessionManager<S> {
+impl PskStore for SessionManager {
     async fn get_psk(&self, identity: &[u8]) -> Result<Option<Vec<u8>>, PskStoreError> {
         let result: Option<SessionData> = self.get(identity).await?;
 

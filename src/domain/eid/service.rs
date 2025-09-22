@@ -1,12 +1,12 @@
-use crate::session::{SessionManager, SessionStore};
+use crate::session::SessionManager;
 
 #[derive(Debug, Clone)]
-pub struct EidService<S: SessionStore> {
-    pub session_manager: SessionManager<S>,
+pub struct EidService {
+    pub session_manager: SessionManager,
 }
 
-impl<S: SessionStore> EidService<S> {
-    pub fn new(session_manager: SessionManager<S>) -> Self {
+impl EidService {
+    pub fn new(session_manager: SessionManager) -> Self {
         Self { session_manager }
     }
 }

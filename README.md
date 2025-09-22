@@ -46,7 +46,7 @@ The eID Server enables identity verification using a SOAP-based flow between the
 Before running the server, ensure you have the following tools installed:
 
 - [Rust & Cargo](https://www.rust-lang.org/tools/install) (Latest stable version recommended).
-- [Redis](https://redis.io/download): The in-memory key-value store used for caching and session management.
+- [Redis](https://redis.io/download) (Optional): Used for persistent session management. The server defaults to a temporary in-memory store if Redis is not configured.
 
 **Clone the Repository:**
 
@@ -66,20 +66,24 @@ mkdir -p config
 touch config/settings.toml
 ```
 
-Add basic configuration:
+Add basic configuration. By default, the server will use a temporary in-memory session store.
 
 ```toml
 [server]
 host = "127.0.0.1"
 port = 8080
+```
 
-[redis]
-uri = "redis://127.0.0.1:6379"
+To enable persistent sessions with Redis, uncomment the following section.
+
+```toml
+#[redis]
+#uri = "redis://127.0.0.1:6379"
 ```
 
 **Environment Variables:**
 
-Create a `.env` file in the root directory. Take a look at the [.env.example](.env.example) file for an example of the required variables.
+You can also configure the server using environment variables. By default, no Redis connection is needed. To enable it, set the **APP_REDIS__URI** variable. See the [.env.example](.env.example) file for more details.
 
 ### Running with Docker Compose
 
@@ -95,7 +99,7 @@ This command will pull all required images and start the server.
 
 ### Running Manually
 
-Make sure you have Redis running and then execute:
+You can run the server directly with `Cargo`. If you have configured a Redis URI, ensure the Redis server is running first.
 
 ```bash
 cargo run
