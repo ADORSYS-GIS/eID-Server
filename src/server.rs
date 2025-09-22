@@ -9,7 +9,6 @@ use std::sync::Arc;
 use crate::config::Config;
 use crate::domain::eid::service::EidService;
 use crate::server::handlers::health::health_check;
-use crate::session::SessionStore;
 use crate::tls::TlsConfig;
 use axum::http::Method;
 use axum::{Router, routing::get};
@@ -21,23 +20,19 @@ use tower_http::{
 };
 
 #[derive(Debug, Clone)]
-pub struct AppState<S: SessionStore> {
-    pub service: EidService<S>,
+pub struct AppState {
+    pub service: EidService,
 }
 
-pub struct Server<S: SessionStore> {
+pub struct Server {
     router: Router,
     listener: TcpListener,
-    tls_config: TlsConfig<S>,
+    tls_config: TlsConfig,
 }
 
-impl<S: SessionStore> Server<S> {
+impl Server {
     /// Creates a new HTTPS server.
-    pub async fn new(
-        service: EidService<S>,
-        config: &Config,
-        tls_config: TlsConfig<S>,
-    ) -> Result<Self> {
+    pub async fn new(service: EidService, config: &Config, tls_config: TlsConfig) -> Result<Self> {
         let trace_layer =
             TraceLayer::new_for_http().make_span_with(|request: &'_ axum::extract::Request<_>| {
                 let uri = request.uri().to_string();
