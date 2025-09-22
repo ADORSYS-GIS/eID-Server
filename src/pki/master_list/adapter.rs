@@ -38,8 +38,8 @@ impl ZipAdapter {
     }
 
     /// Extract the first file from a zip archive
-    fn extract_first_file(data: Vec<u8>) -> Result<Vec<u8>, CscaValidationError> {
-        let cursor = Cursor::new(data);
+    fn extract_first_file(data: impl Into<Vec<u8>>) -> Result<Vec<u8>, CscaValidationError> {
+        let cursor = Cursor::new(data.into());
         let mut archive = ZipArchive::new(cursor)?;
 
         if archive.is_empty() {
