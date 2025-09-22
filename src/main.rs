@@ -7,11 +7,13 @@ use eid_server::telemetry;
 use eid_server::tls::{
     TLS_SESSION_PREFIX, TestCertificates, TlsConfig, generate_test_certificates,
 };
+use time::Duration;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
     telemetry::init_tracing();
+    dotenvy::dotenv()?;
 
     // Load configuration
     let config = Config::load()?;
@@ -33,7 +35,10 @@ async fn main() -> color_eyre::Result<()> {
         ..
     } = generate_test_certificates();
 
-    let session_manager = SessionManager::new(eid_store);
+    let session_manager = SessionManager::new(eid_store)
+        .with_max_sessions(1000)
+        .with_expiry(Duration::minutes(5));
+
     // Build the TLS configuration
     let tls_config = TlsConfig::from_pem(server_cert, server_key)
         .with_psk(session_manager.clone())
