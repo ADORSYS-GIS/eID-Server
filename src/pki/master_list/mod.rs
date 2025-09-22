@@ -254,12 +254,11 @@ impl CscaTrustStore {
         let mut store_builder = X509StoreBuilder::new()?;
 
         for cert_info in self.trusted_certificates.values() {
-            if let Ok(fingerprint) = cert_info.fingerprint() {
-                if let Ok(cert) = self.get_cert(&fingerprint) {
-                    if let Err(e) = store_builder.add_cert(cert) {
-                        tracing::warn!("Failed to add certificate to store: {e}");
-                    }
-                }
+            if let Ok(fingerprint) = cert_info.fingerprint()
+                && let Ok(cert) = self.get_cert(&fingerprint)
+                && let Err(e) = store_builder.add_cert(cert)
+            {
+                tracing::warn!("Failed to add certificate to store: {e}");
             }
         }
 

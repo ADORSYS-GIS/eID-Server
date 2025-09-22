@@ -132,22 +132,22 @@ impl ZipAdapter {
         let _url = _url.as_ref();
         let html_content = html_content.as_ref();
         // Use lazy-initialized regex to find ZIP download link
-        if let Some(captures) = ZIP_LINK_REGEX.captures(html_content) {
-            if let Some(link) = captures.get(1) {
-                let download_url = if link.as_str().starts_with("http") {
-                    link.as_str().to_string()
-                } else {
-                    format!("https://www.bsi.bund.de{}", link.as_str())
-                };
+        if let Some(captures) = ZIP_LINK_REGEX.captures(html_content)
+            && let Some(link) = captures.get(1)
+        {
+            let download_url = if link.as_str().starts_with("http") {
+                link.as_str().to_string()
+            } else {
+                format!("https://www.bsi.bund.de{}", link.as_str())
+            };
 
-                // Fetch the actual ZIP file
-                let zip_response = http_client.get(&download_url).send().await?;
+            // Fetch the actual ZIP file
+            let zip_response = http_client.get(&download_url).send().await?;
 
-                let bytes = zip_response.bytes().await?;
+            let bytes = zip_response.bytes().await?;
 
-                let extracted_bytes = Self::extract_or_passthrough(bytes.to_vec())?;
-                return MasterListParser::parse_der(&extracted_bytes);
-            }
+            let extracted_bytes = Self::extract_or_passthrough(bytes.to_vec())?;
+            return MasterListParser::parse_der(&extracted_bytes);
         }
 
         Err(CscaValidationError::MasterListParse(

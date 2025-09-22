@@ -173,10 +173,10 @@ impl MasterListParser {
         // Try to find country (C=) entry in subject
         for entry in subject.entries() {
             let nid = entry.object().nid();
-            if nid == openssl::nid::Nid::COUNTRYNAME {
-                if let Ok(country) = entry.data().as_utf8() {
-                    return Some(country.to_string());
-                }
+            if nid == openssl::nid::Nid::COUNTRYNAME
+                && let Ok(country) = entry.data().as_utf8()
+            {
+                return Some(country.to_string());
             }
         }
 
