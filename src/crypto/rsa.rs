@@ -138,7 +138,7 @@ impl RsaPrivateKey {
     fn from_pkey(key: PKey<Private>) -> CryptoResult<Self> {
         let rsa = key.rsa()?;
         let bits = rsa.size() * 8;
-        let key_size = RsaKeySize::try_from(bits as u32)?;
+        let key_size = RsaKeySize::try_from(bits)?;
         Ok(Self { key, key_size })
     }
 
@@ -335,13 +335,13 @@ mod tests {
     fn test_key_roundtrip() {
         // load via PEM
         let pem_bytes = include_bytes!("../../test_data/rsa/rsa4096.pem");
-        let result = RsaPrivateKey::from_pem(&pem_bytes);
+        let result = RsaPrivateKey::from_pem(pem_bytes);
         assert!(result.is_ok());
         let pk_pem = result.unwrap();
 
         // load via DER
         let der_bytes = include_bytes!("../../test_data/rsa/rsa4096.der");
-        let result = RsaPrivateKey::from_der(&der_bytes);
+        let result = RsaPrivateKey::from_der(der_bytes);
         assert!(result.is_ok());
         let pk_der = result.unwrap();
 
@@ -364,7 +364,7 @@ mod tests {
         let hash_alg = HashAlg::Sha256;
 
         let signature = key_pair.sign(data, hash_alg).unwrap();
-        let debug_str = format!("{:?}", signature);
+        let debug_str = format!("{signature:?}");
 
         assert!(debug_str.contains("RsaSignature"));
         assert!(debug_str.contains("Rsa2048"));
