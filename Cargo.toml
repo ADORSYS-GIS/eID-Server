@@ -23,7 +23,6 @@ color-eyre = "0.6"
 # Serialization / Deserialization
 hex = "0.4"
 rasn = "0.27"
-pem = "3.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 bincode = { version = "2.0", features = ["serde"] }
@@ -47,8 +46,6 @@ aes = "0.8"
 cmac = "0.7"
 secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
-x509-parser = "0.18"
-base64 = "0.22"
 
 [dependencies.redis]
 version = "0.32"
