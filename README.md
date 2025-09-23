@@ -83,7 +83,7 @@ To enable persistent sessions with Redis, uncomment the following section.
 
 **Environment Variables:**
 
-You can also configure the server using environment variables. By default, no Redis connection is needed. To enable it, set the **APP_REDIS__URI** variable. See the [.env.example](.env.example) file for more details.
+You can also configure the server using environment variables. By default, no Redis connection is needed. To enable it, set the **APP_REDIS\_\_URI** variable. See the [.env.example](.env.example) file for more details.
 
 ### Running with Docker Compose
 
