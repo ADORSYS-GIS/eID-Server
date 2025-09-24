@@ -52,7 +52,7 @@ mockall = "0.12" # Added for automock macro on traits
 # Cryptographic utilities
 ring = "0.17"
 chacha20poly1305 = "0.10" # Added for authenticated encryption
-x509-parser = "0.17"
+x509-parser = { version = "0.17", features = ["verify"] }
 lru = "0.16"
 hex = "0.4"
 pem = "3.0"
@@ -62,6 +62,7 @@ openssl = { version = "0.10", features = ["vendored"] }
 
 # XML canonicalization and processing
 xml_c14n = "0.3.0"
+zip = "5.1.1"
 
 [dependencies.redis]
 version = "0.32"
