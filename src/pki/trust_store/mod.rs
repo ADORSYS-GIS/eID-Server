@@ -3,7 +3,6 @@ pub mod cleaner;
 pub mod error;
 pub mod models;
 pub mod persistence;
-pub mod updater;
 
 use log::info;
 
@@ -81,10 +80,25 @@ impl TrustStore {
 
     /// Triggers an update of the trust store using master lists.
     pub async fn update_from_master_list(&mut self) -> Result<(), TrustStoreError> {
-        // This have been implemented in the updater module
-        Err(TrustStoreError::Other(
-            "Master list update not yet implemented".to_string(),
-        ))
+        use crate::pki::master_list::{HttpMasterListFetcher, MasterListProcessor};
+
+        let fetcher = Box::new(HttpMasterListFetcher::new());
+        let processor = MasterListProcessor::new(fetcher);
+
+        // BSI German Master List URL as specified in the task
+        let master_list_url = "https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/ElekAusweise/CSCA/GermanMasterList.html";
+
+        // Update certificates from master list
+        processor
+            .update_from_master_list(&mut self.certificate_manager, master_list_url)
+            .await?;
+
+        // Persist updated certificates
+        self.repository
+            .save_certificates(self.certificate_manager.get_certificates())
+            .await?;
+
+        Ok(())
     }
 
     /// Cleans up expired certificates from the trust store.
