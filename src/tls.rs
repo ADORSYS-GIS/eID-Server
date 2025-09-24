@@ -52,7 +52,6 @@ struct Inner<S> {
     format: Format,
     cert_chain: Vec<u8>,
     private_key: Vec<u8>,
-    intermediate_certs: Option<Vec<u8>>,
     ca_certs: Option<Vec<Vec<u8>>>,
     psk_config: Option<TlsPskConfig>,
     is_mtls: bool,
@@ -78,7 +77,6 @@ impl<S: SessionStore> TlsConfig<S> {
                 psk_config: None,
                 cert_chain: cert_chain.into(),
                 private_key: key.into(),
-                intermediate_certs: None,
                 ca_certs: None,
                 is_mtls: false,
                 session_store: None,
@@ -92,14 +90,13 @@ impl<S: SessionStore> TlsConfig<S> {
     ///
     /// * `cert_chain` - Server certificate chain in DER format.
     /// * `key` - Server private key in DER format.
-    pub fn from_der(cert_chain: impl Into<Vec<u8>>, key: impl Into<Vec<u8>>) -> Self {
+    pub fn from_der(cert_der: impl Into<Vec<u8>>, key_der: impl Into<Vec<u8>>) -> Self {
         Self {
             inner: Inner {
                 format: Format::Der,
                 psk_config: None,
-                cert_chain: cert_chain.into(),
-                private_key: key.into(),
-                intermediate_certs: None,
+                cert_chain: cert_der.into(),
+                private_key: key_der.into(),
                 ca_certs: None,
                 is_mtls: false,
                 session_store: None,
@@ -110,14 +107,9 @@ impl<S: SessionStore> TlsConfig<S> {
     /// Enable client authentication by providing root CA certificates.
     ///
     /// Optional intermediate certificates can also be provided.
-    pub fn with_client_auth(
-        mut self,
-        ca_certs_pem: impl Into<Vec<Vec<u8>>>,
-        intermediate_certs_pem: Option<impl Into<Vec<u8>>>,
-    ) -> Self {
+    pub fn with_client_auth(mut self, ca_certs_pem: impl Into<Vec<Vec<u8>>>) -> Self {
         debug!("Enabling client authentication with CA certificates");
         self.inner.ca_certs = Some(ca_certs_pem.into());
-        self.inner.intermediate_certs = intermediate_certs_pem.map(Into::into);
         self.inner.is_mtls = true;
         self
     }
@@ -209,22 +201,26 @@ impl<S: SessionStore> TlsConfig<S> {
         let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls_server())?;
 
         // Load server certificate chain and private key
-        let cert: X509;
         let key: PKey<Private>;
         if self.inner.format == Format::Pem {
             trace!("Loading server certificate chain from PEM...");
-            cert = X509::from_pem(&self.inner.cert_chain)?;
+            let certs = X509::stack_from_pem(&self.inner.cert_chain)?;
+            for (i, cert) in certs.iter().enumerate() {
+                if i == 0 {
+                    builder.set_certificate(cert)?;
+                } else {
+                    builder.add_extra_chain_cert(cert.clone())?;
+                }
+            }
             trace!("Loading server private key from PEM...");
             key = PKey::private_key_from_pem(&self.inner.private_key)?;
         } else {
-            trace!("Loading server certificate chain from DER...");
-            cert = X509::from_der(&self.inner.cert_chain)?;
+            trace!("Loading server certificate from DER...");
+            let cert = X509::from_der(&self.inner.cert_chain)?;
+            builder.set_certificate(&cert)?;
             trace!("Loading server private key from DER...");
             key = PKey::private_key_from_der(&self.inner.private_key)?;
         }
-
-        // Configure server certificate and private key
-        builder.set_certificate(&cert)?;
         builder.set_private_key(&key)?;
         debug!("Set server certificate and private key");
 
@@ -235,15 +231,6 @@ impl<S: SessionStore> TlsConfig<S> {
                 let ca_cert = X509::from_pem(ca_cert)?;
                 let store = builder.cert_store_mut();
                 store.add_cert(ca_cert)?;
-            }
-        }
-
-        // Add intermediate certs if needed
-        if let Some(intermediate_certs) = &self.inner.intermediate_certs {
-            debug!("Adding intermediate certificates to chain");
-            let intermediate_certs = X509::stack_from_pem(intermediate_certs)?;
-            for intermediate_cert in intermediate_certs {
-                builder.add_extra_chain_cert(intermediate_cert)?;
             }
         }
 
