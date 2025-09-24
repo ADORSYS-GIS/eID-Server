@@ -9,3 +9,4 @@ pub mod session;
 pub mod signed_objects;
 pub mod telemetry;
 pub mod tls;
+pub mod pki;
