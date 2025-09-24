@@ -39,7 +39,11 @@ async-trait = "0.1"
 dashmap = "6.1"
 hex-literal = "1"
 walkdir = "2"
+zip = "0.6"
 time = { version = "0.3", features = ["serde", "parsing"] }
+scraper = "0.20"
+pem = "3.0"
+url = "2.5"
 
 # Cryptographic utilities
 rand = "0.9"
@@ -48,6 +52,8 @@ cmac = "0.7"
 secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
 x509-parser = { version = "0.18", features = ["verify", "verify-aws"] }
+chrono = "0.4.42"
+log = "0.4.28"
 
 [dependencies.redis]
 version = "0.32"
