@@ -173,11 +173,12 @@ impl MemoryTrustStore {
                         || ext.eq_ignore_ascii_case("crt")
                 })
                 && let Ok(der_bytes) = fs::read(path).await
-                    && let Ok(cert_entry) = CertificateEntry::from_der(der_bytes) {
-                        self.cache
-                            .insert(cert_entry.serial_number.clone(), cert_entry);
-                        count += 1;
-                    }
+                && let Ok(cert_entry) = CertificateEntry::from_der(der_bytes)
+            {
+                self.cache
+                    .insert(cert_entry.serial_number.clone(), cert_entry);
+                count += 1;
+            }
         }
         tracing::info!("Loaded {count} certificates from disk");
         Ok(())
@@ -193,22 +194,24 @@ impl MemoryTrustStore {
         // First, we look in the provided chain
         for entry in chain_pool {
             if let Ok(candidate) = entry.parse()
-                && candidate.subject() == issuer_dn {
-                    // Verify the signature to ensure this is the correct issuer
-                    if cert.verify_signature(Some(candidate.public_key())).is_ok() {
-                        return Some(entry.clone());
-                    }
+                && candidate.subject() == issuer_dn
+            {
+                // Verify the signature to ensure this is the correct issuer
+                if cert.verify_signature(Some(candidate.public_key())).is_ok() {
+                    return Some(entry.clone());
                 }
+            }
         }
         // If not found, we look in the trust store
         for entry in self.cache.iter() {
             if let Ok(candidate) = entry.value().parse()
-                && candidate.subject() == issuer_dn {
-                    // Verify the signature to ensure this is the correct issuer
-                    if cert.verify_signature(Some(candidate.public_key())).is_ok() {
-                        return Some(entry.clone());
-                    }
+                && candidate.subject() == issuer_dn
+            {
+                // Verify the signature to ensure this is the correct issuer
+                if cert.verify_signature(Some(candidate.public_key())).is_ok() {
+                    return Some(entry.clone());
                 }
+            }
         }
         None
     }
