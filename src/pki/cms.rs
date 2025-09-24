@@ -32,9 +32,7 @@ pub struct ValidationResult {
     pub signer_serial_hex: Option<String>,
 }
 
-pub fn verify_cms_signed_object(
-    input: &ValidationInput<'_>,
-) -> Result<ValidationResult, PkiError> {
+pub fn verify_cms_signed_object(input: &ValidationInput<'_>) -> Result<ValidationResult, PkiError> {
     // Build trust store (validates anchors PEM input early)
     let mut store_builder = X509StoreBuilder::new()
         .map_err(|e| PkiError::Pki(format!("Failed to create store: {e}")))?;
@@ -42,7 +40,8 @@ pub fn verify_cms_signed_object(
         // PARTIAL_CHAIN not available in this OpenSSL builder on this target; proceed without setting it.
     }
     for ca_pem in input.trust_anchors_pem {
-        let ca = X509::from_pem(ca_pem).map_err(|e| PkiError::Pki(format!("Invalid CA PEM: {e}")))?;
+        let ca =
+            X509::from_pem(ca_pem).map_err(|e| PkiError::Pki(format!("Invalid CA PEM: {e}")))?;
         store_builder
             .add_cert(ca)
             .map_err(|e| PkiError::Pki(format!("Failed to add CA: {e}")))?;
@@ -85,16 +84,18 @@ pub fn verify_cms_signed_object(
         let (signer_issuer, signer_serial_hex) = pkcs7
             .signers(&intermediates_stack, Pkcs7Flags::empty())
             .ok()
-            .and_then(|signers| signers.get(0).map(|c| {
-                let issuer = format_subject(c.issuer_name());
-                let serial = c
-                    .serial_number()
-                    .to_bn()
-                    .ok()
-                    .and_then(|bn| bn.to_hex_str().ok())
-                    .map(|s| s.to_string());
-                (Some(issuer), serial)
-            }))
+            .and_then(|signers| {
+                signers.get(0).map(|c| {
+                    let issuer = format_subject(c.issuer_name());
+                    let serial = c
+                        .serial_number()
+                        .to_bn()
+                        .ok()
+                        .and_then(|bn| bn.to_hex_str().ok())
+                        .map(|s| s.to_string());
+                    (Some(issuer), serial)
+                })
+            })
             .unwrap_or((None, None));
         return Ok(ValidationResult {
             valid: true,
@@ -129,8 +130,7 @@ fn format_subject(name: &X509NameRef) -> String {
     if let Some(cn) = cn {
         return cn;
     }
-    name
-        .entries()
+    name.entries()
         .map(|e| {
             let nid = e.object().nid().short_name().unwrap_or("");
             let val = e
@@ -143,5 +143,3 @@ fn format_subject(name: &X509NameRef) -> String {
         .collect::<Vec<_>>()
         .join(", ")
 }
-
-

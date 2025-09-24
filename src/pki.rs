@@ -1,5 +1,3 @@
 mod cms;
 
-pub use cms::{verify_cms_signed_object, ValidationInput, ValidationResult, PkiError};
-
-
+pub use cms::{PkiError, ValidationInput, ValidationResult, verify_cms_signed_object};

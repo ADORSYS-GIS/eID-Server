@@ -1,5 +1,5 @@
-use crate::signed_objects::SignedObjectError;
 use crate::pki;
+use crate::signed_objects::SignedObjectError;
 
 pub use crate::pki::ValidationInput;
 
