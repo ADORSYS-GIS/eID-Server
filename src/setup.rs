@@ -1,11 +1,15 @@
 use crate::config::Config;
-use crate::domain::eid::service::EidService;
-use crate::session::{MemoryStore, RedisStore, SessionManager, SessionStore};
-use crate::tls::{TLS_SESSION_PREFIX, TestCertificates, TlsConfig, generate_test_certificates};
+use crate::session::{MemoryStore, RedisStore, SessionStore};
+use crate::tls::TLS_SESSION_PREFIX;
 use color_eyre::eyre::Context;
 use std::sync::Arc;
 
-pub async fn setup(config: &Config) -> color_eyre::Result<(EidService, TlsConfig)> {
+pub struct SetupData {
+    pub eid_store: Arc<dyn SessionStore>,
+    pub tls_store: Arc<dyn SessionStore>,
+}
+
+pub async fn setup(config: &Config) -> color_eyre::Result<SetupData> {
     let (eid_store, tls_store): (Arc<dyn SessionStore>, Arc<dyn SessionStore>) =
         if let Some(redis_config) = &config.redis {
             tracing::info!("Redis URI provided, using Redis for session storage.");
@@ -22,21 +26,8 @@ pub async fn setup(config: &Config) -> color_eyre::Result<(EidService, TlsConfig
             (Arc::new(MemoryStore::new()), Arc::new(MemoryStore::new()))
         };
 
-    // load server certificate and key
-    // TODO : Use real data to build the config
-    let TestCertificates {
-        server_cert,
-        server_key,
-        ..
-    } = generate_test_certificates();
-
-    let session_manager = SessionManager::new(eid_store);
-
-    // Build the TLS configuration
-    let tls_config = TlsConfig::from_pem(server_cert, server_key)
-        .with_psk(session_manager.clone())
-        .with_session_store(tls_store);
-
-    let service = EidService::new(session_manager);
-    Ok((service, tls_config))
+    Ok(SetupData {
+        eid_store,
+        tls_store,
+    })
 }

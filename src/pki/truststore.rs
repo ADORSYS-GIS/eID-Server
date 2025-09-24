@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use color_eyre::eyre::{Report, eyre};
 use dashmap::DashMap;
 use thiserror::Error;
@@ -66,27 +65,29 @@ impl CertificateEntry {
 }
 
 /// Abstract interface for a trust store.
-#[async_trait]
-pub trait TrustStore: Send + Sync + 'static {
+pub trait TrustStore: Clone + Send + Sync + 'static {
     /// Add DER encoded certificates to the trust store.
     ///
     /// Returns the number of certificates added.
-    async fn add_certs<I, D>(&self, der_certs: I) -> Result<usize, TrustStoreError>
+    fn add_certs<I, D>(
+        &self,
+        der_certs: I,
+    ) -> impl Future<Output = Result<usize, TrustStoreError>> + Send
     where
         I: IntoIterator<Item = D> + Send,
         D: AsRef<[u8]> + Send;
 
     /// Get a certificate by its serial number.
-    async fn get_cert_by_serial(
+    fn get_cert_by_serial(
         &self,
         serial_number: impl AsRef<[u8]> + Send,
-    ) -> Result<Option<CertificateEntry>, TrustStoreError>;
+    ) -> impl Future<Output = Result<Option<CertificateEntry>, TrustStoreError>> + Send;
 
     /// Get a certificate by its subject DN.
-    async fn get_cert_by_subject(
+    fn get_cert_by_subject(
         &self,
         subject: &str,
-    ) -> Result<Option<CertificateEntry>, TrustStoreError>;
+    ) -> impl Future<Output = Result<Option<CertificateEntry>, TrustStoreError>> + Send;
 
     /// Verify the given DER encoded certificate chain against the trust store.
     /// The first element of the chain must be the leaf certificate.
@@ -96,19 +97,22 @@ pub trait TrustStore: Send + Sync + 'static {
     ///
     /// An error will be returned if the certificate is invalid (e.g. expired).
     /// If the chain contains more than 10 certificates, an error will be returned.
-    async fn verify<I, D>(&self, der_chain: I) -> Result<bool, TrustStoreError>
+    fn verify<I, D>(
+        &self,
+        der_chain: I,
+    ) -> impl Future<Output = Result<bool, TrustStoreError>> + Send
     where
         I: IntoIterator<Item = D> + Send,
         D: AsRef<[u8]> + Send;
 
     /// Remove a certificate from the trust store by its serial number.
-    async fn remove_cert(
+    fn remove_cert(
         &self,
         serial_number: impl AsRef<[u8]> + Send,
-    ) -> Result<bool, TrustStoreError>;
+    ) -> impl Future<Output = Result<bool, TrustStoreError>> + Send;
 
     /// Remove all certificates from the trust store.
-    async fn clear(&self) -> Result<(), TrustStoreError>;
+    fn clear(&self) -> impl Future<Output = Result<(), TrustStoreError>> + Send;
 }
 
 /// In-memory trust store implementation.
@@ -117,6 +121,7 @@ pub trait TrustStore: Send + Sync + 'static {
 /// It is assumed that the certificates are loaded from a directory.
 ///
 /// Useful for development and testing.
+#[derive(Debug, Clone)]
 pub struct MemoryTrustStore {
     base_path: PathBuf,
     cache: Arc<DashMap<Vec<u8>, CertificateEntry>>,
@@ -309,7 +314,6 @@ impl MemoryTrustStore {
     }
 }
 
-#[async_trait]
 impl TrustStore for MemoryTrustStore {
     async fn add_certs<I, D>(&self, der_certs: I) -> Result<usize, TrustStoreError>
     where
@@ -409,7 +413,7 @@ mod tests {
         params.is_ca = rcgen::IsCa::Ca(BasicConstraints::Unconstrained);
         let cert = params.self_signed(&key_pair).unwrap();
         let der = cert.der();
-        let entry = CertificateEntry::from_der(&der).unwrap();
+        let entry = CertificateEntry::from_der(der).unwrap();
         let issuer = Issuer::new(params, key_pair);
         (issuer, entry)
     }
@@ -426,7 +430,7 @@ mod tests {
         params.is_ca = rcgen::IsCa::NoCa;
         let cert = params.signed_by(&key_pair, ca).unwrap();
         let der = cert.der();
-        CertificateEntry::from_der(&der).unwrap()
+        CertificateEntry::from_der(der).unwrap()
     }
 
     #[tokio::test]
