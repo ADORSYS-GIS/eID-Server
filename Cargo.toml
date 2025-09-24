@@ -38,6 +38,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 async-trait = "0.1"
 dashmap = "6.1"
 hex-literal = "1"
+walkdir = "2"
 time = { version = "0.3", features = ["serde", "parsing"] }
 
 # Cryptographic utilities
@@ -46,6 +47,7 @@ aes = "0.8"
 cmac = "0.7"
 secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
+x509-parser = { version = "0.18", features = ["verify", "verify-aws"] }
 
 [dependencies.redis]
 version = "0.32"
@@ -57,6 +59,8 @@ ignored = ["pollster"]
 [dev-dependencies]
 hex-literal = "1"
 pollster = "0.4"
+rcgen = "0.14"
+tempfile = "3"
 
 [profile.dev.package.backtrace]
 opt-level = 3
