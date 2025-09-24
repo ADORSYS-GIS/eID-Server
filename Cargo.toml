@@ -7,7 +7,6 @@ edition = "2024"
 # Web server framework
 axum = { version = "0.8", features = ["macros"] }
 axum-server = { version = "0.7", features = ["tls-openssl"] }
-tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
@@ -22,10 +21,11 @@ thiserror = "2.0"
 color-eyre = "0.6"
 
 # Serialization / Deserialization
+hex = "0.4"
+rasn = "0.27"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 bincode = { version = "2.0", features = ["serde"] }
-serde = { version = "1.0", features = ["derive"] }
-quick-xml = { version = "0.37", features = ["serialize"] }
 
 # Configuration
 config = "0.15"
@@ -43,6 +43,7 @@ rand = { version = "0.8", features = ["std"] }
 urlencoding = "2.1"
 flate2 = "1.0"
 dashmap = "6.1"
+hex-literal = "1"
 time = { version = "0.3", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.6", features = ["v4", "serde"] }
@@ -63,6 +64,12 @@ openssl = { version = "0.10", features = ["vendored"] }
 # XML canonicalization and processing
 xml_c14n = "0.3.0"
 zip = "5.1.1"
+# Cryptographic utilities
+rand = "0.9"
+aes = "0.8"
+cmac = "0.7"
+secrecy = { version = "0.10", features = ["serde"] }
+openssl = { version = "0.10", features = ["vendored"] }
 
 [dependencies.redis]
 version = "0.32"
@@ -73,6 +80,9 @@ ignored = ["pollster"]
 
 [dev-dependencies]
 http-body-util = "0.1"
+hex-literal = "1"
+pollster = "0.4"
+
 
 [profile.dev.package.backtrace]
 opt-level = 3

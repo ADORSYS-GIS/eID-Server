@@ -1,12 +1,27 @@
-use serde::Serialize;
+use axum::{
+    http::StatusCode,
+    http::header::CONTENT_TYPE,
+    response::{IntoResponse, Response},
+};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct _ResponseBody<T: Serialize> {
-    status_code: u16,
-    data: T,
+const PAOS_CONTENT_TYPE: &str = "application/xml, charset=utf-8";
+
+pub struct PaosResponse<T: Into<String>>(T);
+
+impl<T: Into<String>> PaosResponse<T> {
+    #[allow(dead_code)]
+    pub fn new(data: T) -> Self {
+        Self(data)
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct _ErrorResponse {
-    pub msg: String,
+impl<T: Into<String>> IntoResponse for PaosResponse<T> {
+    fn into_response(self) -> Response {
+        (
+            StatusCode::OK,
+            [(CONTENT_TYPE, PAOS_CONTENT_TYPE)],
+            self.0.into(),
+        )
+            .into_response()
+    }
 }

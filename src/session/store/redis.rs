@@ -34,9 +34,10 @@ impl RedisStore {
         }
     }
 
-    /// Configures the prefix for all session keys.
+    /// Overrides the default prefix for all session keys in this store.
     ///
     /// The default prefix is `"session"`.
+    #[inline]
     pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.prefix = prefix.into();
         self
@@ -51,6 +52,7 @@ impl RedisStore {
     }
 
     /// Get approximate count
+    #[inline]
     pub fn cached_count(&self) -> usize {
         self.counter.load(Ordering::Acquire)
     }
