@@ -1,1 +1,1 @@
-pub mod trustore;
+pub mod truststore;
