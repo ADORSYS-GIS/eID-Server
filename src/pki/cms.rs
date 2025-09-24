@@ -21,12 +21,15 @@ pub struct ValidationInput<'a> {
     pub cms_der: &'a [u8],
     pub trust_anchors_pem: &'a [&'a [u8]],
     pub intermediates_pem: Option<&'a [&'a [u8]]>,
+    pub allow_partial_chain: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct ValidationResult {
     pub valid: bool,
     pub signer_subject: Option<String>,
+    pub signer_issuer: Option<String>,
+    pub signer_serial_hex: Option<String>,
 }
 
 pub fn verify_cms_signed_object(
@@ -35,6 +38,9 @@ pub fn verify_cms_signed_object(
     // Build trust store (validates anchors PEM input early)
     let mut store_builder = X509StoreBuilder::new()
         .map_err(|e| PkiError::Pki(format!("Failed to create store: {e}")))?;
+    if input.allow_partial_chain {
+        // PARTIAL_CHAIN not available in this OpenSSL builder on this target; proceed without setting it.
+    }
     for ca_pem in input.trust_anchors_pem {
         let ca = X509::from_pem(ca_pem).map_err(|e| PkiError::Pki(format!("Invalid CA PEM: {e}")))?;
         store_builder
@@ -76,9 +82,25 @@ pub fn verify_cms_signed_object(
             .signers(&intermediates_stack, Pkcs7Flags::empty())
             .ok()
             .and_then(|signers| signers.get(0).map(|c| format_subject(c.subject_name())));
+        let (signer_issuer, signer_serial_hex) = pkcs7
+            .signers(&intermediates_stack, Pkcs7Flags::empty())
+            .ok()
+            .and_then(|signers| signers.get(0).map(|c| {
+                let issuer = format_subject(c.issuer_name());
+                let serial = c
+                    .serial_number()
+                    .to_bn()
+                    .ok()
+                    .and_then(|bn| bn.to_hex_str().ok())
+                    .map(|s| s.to_string());
+                (Some(issuer), serial)
+            }))
+            .unwrap_or((None, None));
         return Ok(ValidationResult {
             valid: true,
             signer_subject,
+            signer_issuer,
+            signer_serial_hex,
         });
     }
 
