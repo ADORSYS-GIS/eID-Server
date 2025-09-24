@@ -136,6 +136,12 @@ impl FileIdentity {
     }
 }
 
+impl Default for FileIdentity {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl Store for FileIdentity {
     async fn upsert(&self, _material: Material, _blob: &[u8]) -> Result<(), Error> {

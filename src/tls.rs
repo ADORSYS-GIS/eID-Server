@@ -7,7 +7,7 @@ pub use errors::TlsError;
 pub use psk::{PskStore, PskStoreError};
 
 use openssl::error::ErrorStack;
-use openssl::pkey::{PKey, Private};
+use openssl::pkey::PKey;
 use openssl::ssl::{
     ClientHelloResponse, SslAcceptor, SslAcceptorBuilder, SslContext, SslMethod, SslSession,
     SslSessionCacheMode, SslVerifyMode, SslVersion,
@@ -201,10 +201,10 @@ impl<S: SessionStore> TlsConfig<S> {
         let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls_server())?;
 
         // Load server certificate chain and private key
-        let key: PKey<Private>;
-        if self.inner.format == Format::Pem {
+        let key = if self.inner.format == Format::Pem {
             trace!("Loading server certificate chain from PEM...");
             let certs = X509::stack_from_pem(&self.inner.cert_chain)?;
+
             for (i, cert) in certs.iter().enumerate() {
                 if i == 0 {
                     builder.set_certificate(cert)?;
@@ -213,14 +213,15 @@ impl<S: SessionStore> TlsConfig<S> {
                 }
             }
             trace!("Loading server private key from PEM...");
-            key = PKey::private_key_from_pem(&self.inner.private_key)?;
+            PKey::private_key_from_pem(&self.inner.private_key)?
         } else {
             trace!("Loading server certificate from DER...");
             let cert = X509::from_der(&self.inner.cert_chain)?;
             builder.set_certificate(&cert)?;
+
             trace!("Loading server private key from DER...");
-            key = PKey::private_key_from_der(&self.inner.private_key)?;
-        }
+            PKey::private_key_from_der(&self.inner.private_key)?
+        };
         builder.set_private_key(&key)?;
         debug!("Set server certificate and private key");
 
