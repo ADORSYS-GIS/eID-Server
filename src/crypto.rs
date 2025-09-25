@@ -4,6 +4,7 @@ pub mod ecdsa;
 mod errors;
 pub mod kdf;
 mod keys;
+pub mod rsa;
 pub mod sym;
 mod utils;
 

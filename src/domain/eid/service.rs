@@ -1,12 +1,17 @@
-use crate::session::{SessionManager, SessionStore};
+use crate::pki::truststore::TrustStore;
+use crate::session::SessionManager;
 
 #[derive(Debug, Clone)]
-pub struct EidService<S: SessionStore> {
-    pub session_manager: SessionManager<S>,
+pub struct EidService<T: TrustStore> {
+    pub session_manager: SessionManager,
+    pub trust_store: T,
 }
 
-impl<S: SessionStore> EidService<S> {
-    pub fn new(session_manager: SessionManager<S>) -> Self {
-        Self { session_manager }
+impl<T: TrustStore> EidService<T> {
+    pub fn new(session_manager: SessionManager, trust_store: T) -> Self {
+        Self {
+            session_manager,
+            trust_store,
+        }
     }
 }

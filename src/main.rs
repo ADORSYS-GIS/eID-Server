@@ -1,12 +1,11 @@
-use color_eyre::eyre::Context;
 use eid_server::config::Config;
 use eid_server::domain::eid::service::EidService;
+use eid_server::pki::truststore::MemoryTrustStore;
 use eid_server::server::Server;
-use eid_server::session::{RedisStore, SessionManager};
-use eid_server::telemetry;
-use eid_server::tls::{
-    TLS_SESSION_PREFIX, TestCertificates, TlsConfig, generate_test_certificates,
-};
+use eid_server::session::SessionManager;
+use eid_server::setup::SetupData;
+use eid_server::tls::{TestCertificates, TlsConfig, generate_test_certificates};
+use eid_server::{setup::setup, telemetry};
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
@@ -15,15 +14,13 @@ async fn main() -> color_eyre::Result<()> {
 
     // Load configuration
     let config = Config::load()?;
-    tracing::info!("Loaded configuration: {:?}", config);
+    tracing::debug!("Loaded configuration: {:?}", config);
 
-    let redis_conn = config
-        .redis
-        .start()
-        .await
-        .wrap_err("Failed to start Redis")?;
-    let eid_store = RedisStore::new(redis_conn.clone());
-    let tls_store = RedisStore::new(redis_conn).with_prefix(TLS_SESSION_PREFIX);
+    // Setup server components
+    let SetupData {
+        eid_store,
+        tls_store,
+    } = setup(&config).await?;
 
     // load server certificate and key
     // TODO : Use real data to build the config
@@ -34,12 +31,15 @@ async fn main() -> color_eyre::Result<()> {
     } = generate_test_certificates();
 
     let session_manager = SessionManager::new(eid_store);
+
     // Build the TLS configuration
     let tls_config = TlsConfig::from_pem(server_cert, server_key)
         .with_psk(session_manager.clone())
         .with_session_store(tls_store);
 
-    let service = EidService::new(session_manager);
+    let trust_store = MemoryTrustStore::new("./test_certs").await?;
+
+    let service = EidService::new(session_manager, trust_store);
 
     let server = Server::new(service, &config, tls_config).await?;
     server.run().await
