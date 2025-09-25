@@ -1,11 +1,14 @@
-use color_eyre::eyre::Context;
 use eid_server::config::Config;
 use eid_server::domain::eid::service::EidService;
 use eid_server::pki::identity::{FileIdentity, Identity};
+use eid_server::pki::truststore::MemoryTrustStore;
 use eid_server::server::Server;
-use eid_server::session::{RedisStore, SessionManager};
-use eid_server::telemetry;
-use eid_server::tls::{TLS_SESSION_PREFIX, TlsConfig};
+use eid_server::session::SessionManager;
+use eid_server::tls::TlsConfig;
+use eid_server::{
+    setup::{SetupData, setup},
+    telemetry,
+};
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
@@ -14,15 +17,13 @@ async fn main() -> color_eyre::Result<()> {
 
     // Load configuration
     let config = Config::load()?;
-    tracing::info!("Loaded configuration: {:?}", config);
+    tracing::debug!("Loaded configuration: {:?}", config);
 
-    let redis_conn = config
-        .redis
-        .start()
-        .await
-        .wrap_err("Failed to start Redis")?;
-    let eid_store = RedisStore::new(redis_conn.clone());
-    let tls_store = RedisStore::new(redis_conn).with_prefix(TLS_SESSION_PREFIX);
+    // Setup server components
+    let SetupData {
+        eid_store,
+        tls_store,
+    } = setup(&config).await?;
 
     // load server certificate chain and key
     // TODO : Use real data to build the config
@@ -30,6 +31,7 @@ async fn main() -> color_eyre::Result<()> {
     let server_key = include_bytes!("../test_certs/identity/server.key");
 
     let session_manager = SessionManager::new(eid_store);
+
     // Build the TLS configuration
     let tls_config = TlsConfig::from_pem(server_cert, server_key)
         .with_psk(session_manager.clone())
@@ -37,9 +39,9 @@ async fn main() -> color_eyre::Result<()> {
 
     let file_identity = FileIdentity::new();
     let identity = Identity::new(file_identity.clone(), file_identity);
+    let trust_store = MemoryTrustStore::new("./test_certs").await?;
 
-    let service = EidService::new(session_manager, identity);
-
+    let service = EidService::new(session_manager, trust_store, identity);
     let server = Server::new(service, &config, tls_config).await?;
     server.run().await
 }
