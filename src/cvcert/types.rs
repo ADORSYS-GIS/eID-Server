@@ -356,7 +356,8 @@ impl Date {
         }
         let max_days = match month {
             2 => {
-                if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+                if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
+                {
                     29 // Leap year
                 } else {
                     28
