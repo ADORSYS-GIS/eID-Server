@@ -20,7 +20,7 @@ pub async fn spawn_server(
 
     let session_manager = SessionManager::new(session_store);
     let file_identity = FileIdentity::new();
-    let identity = Identity::new(file_identity.clone(), file_identity.clone());
+    let identity = Identity::new(file_identity.clone(), file_identity);
     let service = EidService::new(session_manager, identity);
 
     let server = Server::new(service, &config, tls_config).await.unwrap();

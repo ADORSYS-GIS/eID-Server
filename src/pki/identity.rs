@@ -9,6 +9,7 @@ use tracing::error;
 pub enum Error {
     #[error("{0} not found")]
     NotFound(String),
+
     #[error("Key store error: {0}")]
     KeyStore(String),
 

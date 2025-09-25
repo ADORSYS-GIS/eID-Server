@@ -36,7 +36,7 @@ async fn main() -> color_eyre::Result<()> {
         .with_session_store(tls_store);
 
     let file_identity = FileIdentity::new();
-    let identity = Identity::new(file_identity.clone(), file_identity.clone());
+    let identity = Identity::new(file_identity.clone(), file_identity);
 
     let service = EidService::new(session_manager, identity);
 
