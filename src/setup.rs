@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::domain::eid::service::EidService;
+use crate::domain::service::EidService;
 use crate::pki::identity::{FileIdentity, Identity};
 use crate::pki::truststore::MemoryTrustStore;
 use crate::session::{MemoryStore, RedisStore, SessionManager, SessionStore};
