@@ -8,8 +8,8 @@ use tracing::{debug, instrument};
 use useid::handle_useid;
 
 use crate::domain::models::eid::UseIDRequest;
+use crate::pki::truststore::TrustStore;
 use crate::server::{AppState, errors::AppError};
-use crate::session::SessionStore;
 use crate::soap::Envelope;
 
 use super::responses::SoapResponse;
@@ -29,12 +29,12 @@ fn soap_ok(xml: String) -> Response {
 
 /// Processes an incoming request and routes to the appropriate handler
 #[instrument(skip(state, request))]
-pub async fn process_authentication<S>(
-    State(state): State<AppState<S>>,
+pub async fn process_authentication<T>(
+    State(state): State<AppState<T>>,
     request: String,
 ) -> Result<Response, AppError>
 where
-    S: SessionStore,
+    T: TrustStore,
 {
     debug!("Processing request: {request}");
 

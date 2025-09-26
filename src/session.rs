@@ -9,7 +9,7 @@ pub use data::*;
 pub use errors::SessionError;
 pub use store::*;
 
-use std::{array::TryFromSliceError, result, sync::Arc};
+use std::{array::TryFromSliceError, fmt, result, sync::Arc};
 
 use bincode::{
     config::standard,
@@ -44,17 +44,14 @@ type Result<T> = result::Result<T, SessionError>;
 ///
 /// [we]: Self::with_expiry
 /// [wms]: Self::with_max_sessions
-#[derive(Debug, Clone)]
-pub struct SessionManager<S>
-where
-    S: SessionStore,
-{
-    store: Arc<S>,
+#[derive(Clone)]
+pub struct SessionManager {
+    store: Arc<dyn SessionStore>,
     expiry: Duration,
     max_sessions: usize,
 }
 
-impl<S: SessionStore> SessionManager<S> {
+impl SessionManager {
     /// Creates a new session manager with the provided store.
     ///
     /// # Examples
@@ -67,9 +64,9 @@ impl<S: SessionStore> SessionManager<S> {
     /// let store = MemoryStore::new();
     /// let manager = SessionManager::new(store);
     /// ```
-    pub fn new(store: S) -> Self {
+    pub fn new(store: Arc<dyn SessionStore>) -> Self {
         Self {
-            store: Arc::new(store),
+            store,
             expiry: DEFAULT_DURATION,
             max_sessions: DEFAULT_MAX_SESSIONS,
         }
@@ -313,6 +310,15 @@ impl<S: SessionStore> SessionManager<S> {
             .map_err(|e| SessionError::Other(e.into()))?;
 
         Ok(Some(expiry_date))
+    }
+}
+
+impl fmt::Debug for SessionManager {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SessionManager")
+            .field("expiry", &self.expiry)
+            .field("max_sessions", &self.max_sessions)
+            .finish()
     }
 }
 

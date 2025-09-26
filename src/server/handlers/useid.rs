@@ -7,11 +7,12 @@ use crate::domain::models::{
     ResultType,
     eid::{PreSharedKey, Session, UseIDRequest, UseIDResponse},
 };
+use crate::pki::truststore::TrustStore;
 use crate::server::{
     AppState,
     errors::{AppError, EidError},
 };
-use crate::session::{SessionData, SessionError, SessionStore};
+use crate::session::{SessionData, SessionError};
 use crate::soap::Envelope;
 
 #[derive(Debug, Serialize, Validate)]
@@ -22,8 +23,8 @@ struct UseIDResp {
 }
 
 #[instrument(skip(state, envelope))]
-pub async fn handle_useid<S: SessionStore>(
-    state: AppState<S>,
+pub async fn handle_useid<T: TrustStore>(
+    state: AppState<T>,
     envelope: Envelope<UseIDRequest>,
 ) -> Result<String, AppError> {
     let body = envelope.into_body();
