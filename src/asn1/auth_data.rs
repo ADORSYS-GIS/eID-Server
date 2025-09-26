@@ -3,8 +3,13 @@ use rasn::prelude::{ObjectIdentifier as Oid, *};
 
 /// Date definition: Date ::= NumericString (SIZE (8)) -- YYYYMMDD
 #[derive(Debug, Clone, PartialEq, Eq, AsnType, Decode, Encode)]
-#[rasn(tag(application, 0x13), delegate)]
+#[rasn(tag(application, 0x13), delegate, size(8))]
 pub struct Date(pub NumericString);
+
+/// Municipality ID definition: MunicipalityID ::= OCTET STRING
+#[derive(Debug, Clone, PartialEq, Eq, AsnType, Decode, Encode)]
+#[rasn(tag(application, 0x13), delegate)]
+pub struct CommunityID(pub OctetString);
 
 /// Auxiliary data template without the tag
 #[derive(Debug, Clone, PartialEq, Eq, Hash, AsnType, Decode, Encode)]
@@ -60,12 +65,17 @@ impl AuthenticatedAuxiliaryData {
     }
 
     /// Add a municipality ID template
-    pub fn add_municipality_id(&mut self, municipality_data: impl Into<Vec<u8>>) {
+    pub fn add_municipality_id(
+        &mut self,
+        municipality_data: impl Into<Vec<u8>>,
+    ) -> Result<(), rasn::error::EncodeError> {
+        let encoded = rasn::der::encode(&CommunityID(municipality_data.into().into()))?;
         let template = AuxDataTemplateCore {
             aux_id: Oid::new_unchecked(MUNICIPALITY_ID_OID.into()),
-            ext_info: Any::from(municipality_data.into()),
+            ext_info: Any::from(encoded),
         };
         self.add_template(template);
+        Ok(())
     }
 
     /// Encode this AuthenticatedAuxiliaryData to ASN.1 DER bytes
