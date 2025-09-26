@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use eid_server::domain::eid::service::EidService;
+use eid_server::domain::service::EidService;
 use eid_server::pki::truststore::MemoryTrustStore;
 use eid_server::session::{MemoryStore, SessionManager};
 use eid_server::tls::{TestCertificates, TlsConfig, generate_test_certificates};

@@ -1,5 +1,5 @@
 use eid_server::config::Config;
-use eid_server::domain::eid::service::EidService;
+use eid_server::domain::service::EidService;
 use eid_server::pki::truststore::MemoryTrustStore;
 use eid_server::server::Server;
 use eid_server::session::SessionManager;

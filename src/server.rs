@@ -1,5 +1,4 @@
-//! This module contains the HTTP server implementation.
-
+mod errors;
 mod handlers;
 mod responses;
 
@@ -7,14 +6,16 @@ use std::net::TcpListener;
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::domain::eid::service::EidService;
+use crate::domain::service::EidService;
 use crate::pki::truststore::TrustStore;
 use crate::server::handlers::health::health_check;
 use crate::tls::TlsConfig;
 use axum::http::Method;
+use axum::routing::post;
 use axum::{Router, routing::get};
 use axum_server::tls_openssl::{OpenSSLAcceptor, OpenSSLConfig};
 use color_eyre::eyre::{Context, Result};
+use handlers::process_authentication;
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
@@ -59,6 +60,7 @@ impl Server {
 
         let router = Router::new()
             .route("/health", get(health_check))
+            .route("/eid", post(process_authentication))
             .layer(cors_layer)
             .layer(trace_layer)
             .with_state(state);
