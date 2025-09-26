@@ -22,7 +22,7 @@ async fn test_use_id_request_succeeds() {
     let request_xml = include_str!("../test_data/eid/useIDRequest.xml");
 
     let response = client
-        .post(&addr)
+        .post(format!("{addr}/eid"))
         .header("Content-Type", "text/xml")
         .body(request_xml)
         .send()
@@ -66,7 +66,7 @@ async fn test_invalid_body_fails() {
         </soapenv:Envelope>"#;
 
     let response = client
-        .post(&addr)
+        .post(format!("{addr}/eid"))
         .header("Content-Type", "text/xml")
         .body(invalid_xml)
         .send()
@@ -105,7 +105,7 @@ async fn test_age_verifi_required_but_missing_age_verif_req_fails() {
     xml = xml.replace("<eid:Age>18</eid:Age>", "");
 
     let response = client
-        .post(&addr)
+        .post(format!("{addr}/eid"))
         .header("Content-Type", "text/xml")
         .body(xml)
         .send()
@@ -145,7 +145,7 @@ async fn test_invalid_psk_fails() {
     );
 
     let response = client
-        .post(&addr)
+        .post(format!("{addr}/eid"))
         .header("Content-Type", "text/xml")
         .body(xml)
         .send()
