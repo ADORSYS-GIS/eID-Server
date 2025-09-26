@@ -38,7 +38,7 @@ impl AttributeReq {
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct AgeVerifReq {
     #[serde(rename = "Age")]
-    #[validate(range(min = 0))]
+    #[validate(range(min = 0, max = 150))]
     pub age: i32,
 }
 
