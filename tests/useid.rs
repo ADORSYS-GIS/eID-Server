@@ -79,7 +79,7 @@ async fn test_invalid_body_fails() {
         body.contains("resultmajor#error"),
         "Expected error result: {body}"
     );
-    assert!(body.contains("common#schemaViolation"));
+    assert!(body.contains("common#unknownAPIFunction"));
 }
 
 #[tokio::test]
