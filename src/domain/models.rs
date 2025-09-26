@@ -1,7 +1,8 @@
 pub mod eid;
 pub mod paos;
 
-use serde::Serialize;
+use paos::ConnectionHandle;
+use serde::{Deserialize, Serialize};
 
 pub const RESULT_OK: &str = "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok";
 pub const RESULT_ERROR: &str = "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error";
@@ -41,4 +42,10 @@ impl ResultType {
     pub fn is_error(&self) -> bool {
         self.result_major == RESULT_ERROR
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum State {
+    Initial,
+    EAC1(ConnectionHandle),
 }
