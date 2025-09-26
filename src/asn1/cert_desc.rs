@@ -85,7 +85,7 @@ impl CertificateDescription {
         terms: impl Into<String>,
     ) -> Self {
         let plain_oid = Oid::new_unchecked(PLAIN_FORMAT_OID.into());
-        let plain_terms = PlainTermsOfUsage(Utf8String::from(terms.into()));
+        let plain_terms = PlainTermsOfUsage(terms.into());
         let terms_any = Any::new(rasn::der::encode(&plain_terms).unwrap());
 
         Self {
@@ -168,5 +168,15 @@ impl CertificateDescription {
     pub fn with_comm_certs(mut self, certs: impl Into<Vec<OctetString>>) -> Self {
         self.comm_certificates = Some(certs.into().into());
         self
+    }
+
+    /// Get the ASN.1 DER encoded bytes of this certificate description
+    pub fn to_der(&self) -> Result<Vec<u8>, rasn::error::EncodeError> {
+        rasn::der::encode(self)
+    }
+
+    /// Get the hex encoded DER bytes of this certificate description
+    pub fn to_hex(&self) -> Result<String, rasn::error::EncodeError> {
+        Ok(hex::encode(self.to_der()?))
     }
 }

@@ -52,7 +52,7 @@ pub struct StartPaosReq {
 }
 
 impl StartPaosReq {
-    pub fn select_connection_handle<'a>(&self, target_aids: &[&str]) -> Option<&ConnectionHandle> {
+    pub fn select_connection_handle(&self, target_aids: &[&str]) -> Option<&ConnectionHandle> {
         let matches: Vec<&ConnectionHandle> = self
             .connection_handles
             .iter()
