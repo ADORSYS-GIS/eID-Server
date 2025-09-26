@@ -3,15 +3,17 @@ use tracing::instrument;
 use validator::Validate;
 
 use crate::crypto::generate_random_bytes;
+use crate::domain::models::State;
 use crate::domain::models::{
     ResultType,
     eid::{PreSharedKey, Session, UseIDRequest, UseIDResponse},
 };
+use crate::pki::truststore::TrustStore;
 use crate::server::{
     AppState,
     errors::{AppError, EidError},
 };
-use crate::session::{SessionData, SessionError, SessionStore};
+use crate::session::{SessionData, SessionError};
 use crate::soap::Envelope;
 
 #[derive(Debug, Serialize, Validate)]
@@ -22,8 +24,8 @@ struct UseIDResp {
 }
 
 #[instrument(skip(state, envelope))]
-pub async fn handle_useid<S: SessionStore>(
-    state: AppState<S>,
+pub async fn handle_useid<T: TrustStore>(
+    state: AppState<T>,
     envelope: Envelope<UseIDRequest>,
 ) -> Result<String, AppError> {
     let body = envelope.into_body();
@@ -44,7 +46,7 @@ pub async fn handle_useid<S: SessionStore>(
     let session_data = SessionData {
         request_data: body,
         psk: key.clone(),
-        conn_handle: None,
+        state: State::Initial,
     };
 
     match state

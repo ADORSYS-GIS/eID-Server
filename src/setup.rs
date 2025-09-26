@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::domain::eid::service::EidService;
+use crate::domain::service::Service;
 use crate::pki::identity::{FileIdentity, Identity};
 use crate::pki::truststore::MemoryTrustStore;
 use crate::session::{MemoryStore, RedisStore, SessionManager, SessionStore};
@@ -12,9 +12,7 @@ pub struct SetupData {
     pub tls_store: Arc<dyn SessionStore>,
 }
 
-pub async fn setup(
-    config: &Config,
-) -> color_eyre::Result<(EidService<MemoryTrustStore>, TlsConfig)> {
+pub async fn setup(config: &Config) -> color_eyre::Result<(Service<MemoryTrustStore>, TlsConfig)> {
     let (eid_store, tls_store): (Arc<dyn SessionStore>, Arc<dyn SessionStore>) =
         if let Some(redis_config) = &config.redis {
             tracing::info!("Redis URI provided, using Redis for session storage.");
@@ -48,7 +46,7 @@ pub async fn setup(
     let trust_store = MemoryTrustStore::new("./test_certs").await?;
 
     Ok((
-        EidService::new(session_manager, trust_store, identity),
+        Service::new(session_manager, trust_store, identity),
         tls_config,
     ))
 }

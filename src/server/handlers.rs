@@ -15,8 +15,8 @@ use useid::handle_useid;
 
 use crate::domain::models::eid::UseIDRequest;
 use crate::domain::models::paos::StartPaosReq;
+use crate::pki::truststore::TrustStore;
 use crate::server::{AppState, errors::AppError};
-use crate::session::SessionStore;
 use crate::soap::Envelope;
 
 use super::responses::SoapResponse;
@@ -37,20 +37,20 @@ enum IncomingReq {
 }
 
 #[inline]
-fn wrap_soap(
+async fn wrap_soap(
     fut: impl Future<Output = Result<String, AppError>> + Send,
-) -> impl Future<Output = Result<Response, AppError>> {
-    async move { fut.await.map(|xml| SoapResponse::new(xml).into_response()) }
+) -> Result<Response, AppError> {
+    fut.await.map(|xml| SoapResponse::new(xml).into_response())
 }
 
 /// Processes an incoming request and routes to the appropriate handler
 #[instrument(skip(state, request))]
-pub async fn process_authentication<S>(
-    State(state): State<AppState<S>>,
+pub async fn process_authentication<T>(
+    State(state): State<AppState<T>>,
     request: String,
 ) -> Result<Response, AppError>
 where
-    S: SessionStore,
+    T: TrustStore,
 {
     debug!(req = %request, "Processing authentication request");
 
