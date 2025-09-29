@@ -254,38 +254,23 @@ fn build_chat(
     }
 }
 
-impl From<crate::session::SessionError> for AppError {
-    fn from(error: crate::session::SessionError) -> Self {
-        AppError::paos_internal(error)
-    }
+macro_rules! impl_paos_internal_error {
+    ($($error_type:ty),* $(,)?) => {
+        $(
+            impl From<$error_type> for AppError {
+                fn from(error: $error_type) -> Self {
+                    AppError::paos_internal(error)
+                }
+            }
+        )*
+    };
 }
 
-impl From<crate::pki::identity::Error> for AppError {
-    fn from(error: crate::pki::identity::Error) -> Self {
-        AppError::paos_internal(error)
-    }
-}
-
-impl From<time::error::InvalidFormatDescription> for AppError {
-    fn from(error: time::error::InvalidFormatDescription) -> Self {
-        AppError::paos_internal(error)
-    }
-}
-
-impl From<time::error::ComponentRange> for AppError {
-    fn from(error: time::error::ComponentRange) -> Self {
-        AppError::paos_internal(error)
-    }
-}
-
-impl From<time::error::Format> for AppError {
-    fn from(error: time::error::Format) -> Self {
-        AppError::paos_internal(error)
-    }
-}
-
-impl From<rasn::error::EncodeError> for AppError {
-    fn from(error: rasn::error::EncodeError) -> Self {
-        AppError::paos_internal(error)
-    }
+impl_paos_internal_error! {
+    crate::session::SessionError,
+    crate::pki::identity::Error,
+    time::error::InvalidFormatDescription,
+    time::error::ComponentRange,
+    time::error::Format,
+    rasn::error::EncodeError,
 }
