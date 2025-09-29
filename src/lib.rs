@@ -7,7 +7,7 @@ pub mod domain;
 pub mod pki;
 pub mod server;
 pub mod session;
-pub mod soap;
 pub mod setup;
+pub mod soap;
 pub mod telemetry;
 pub mod tls;
