@@ -1,4 +1,5 @@
 use crate::domain::models::{ResultType, eid::Operations};
+use bincode::{Decode, Encode};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -7,7 +8,7 @@ use validator::Validate;
 static COMM_ID_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^0[0-9]{3}([0-9]{2}(0[0-9]([0-9]{2}(0[0-9]{3})?)?)?)?$").unwrap());
 
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, Decode, Encode)]
 pub enum AttrRequest {
     ALLOWED,
     #[default]
@@ -15,7 +16,7 @@ pub enum AttrRequest {
     REQUIRED,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Decode, Encode)]
 pub struct AttributeReq {
     #[serde(rename = "$text", default)]
     pub value: AttrRequest,
@@ -35,21 +36,21 @@ impl AttributeReq {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, Decode, Encode)]
 pub struct AgeVerifReq {
     #[serde(rename = "Age")]
     #[validate(range(min = 0, max = 150))]
     pub age: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, Decode, Encode)]
 pub struct PlaceVerifReq {
     #[serde(rename = "CommunityID")]
     #[validate(regex(path = *COMM_ID_REGEX))]
     pub community_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, Decode, Encode)]
 pub struct TransactionAttestReq {
     #[serde(rename = "TransactionAttestationFormat")]
     #[validate(url)]
@@ -59,7 +60,7 @@ pub struct TransactionAttestReq {
     pub transaction_context: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Decode, Encode)]
 pub enum LevelOfAssurance {
     #[serde(rename = "http://eidas.europa.eu/LoA/low")]
     EidasLow,
@@ -77,7 +78,7 @@ pub enum LevelOfAssurance {
     BsiUndefined,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Decode, Encode)]
 pub enum EIDTypeSelection {
     ALLOWED,
     DENIED,
@@ -93,7 +94,7 @@ impl EIDTypeSelection {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Decode, Encode)]
 pub struct EIDTypeReq {
     #[serde(rename = "CardCertified")]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -109,7 +110,7 @@ pub struct EIDTypeReq {
     pub hw_key_store: Option<EIDTypeSelection>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, Decode, Encode)]
 pub struct PreSharedKey {
     #[serde(rename(deserialize = "ID", serialize = "eid:ID"))]
     #[validate(length(min = 16))]
@@ -119,7 +120,7 @@ pub struct PreSharedKey {
     pub key: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, Decode, Encode)]
 #[serde(rename_all = "PascalCase")]
 pub struct UseIDRequest {
     pub use_operations: Operations<AttributeReq>,

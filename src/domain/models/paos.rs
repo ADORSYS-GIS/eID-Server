@@ -1,3 +1,4 @@
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 pub mod did_auth;
@@ -6,7 +7,7 @@ pub mod startpaos;
 pub use did_auth::*;
 pub use startpaos::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Decode, Encode)]
 #[serde(rename_all = "PascalCase")]
 pub struct ConnectionHandle {
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -1,6 +1,7 @@
 pub mod eid;
 pub mod paos;
 
+use bincode::{Decode, Encode};
 use paos::ConnectionHandle;
 use serde::{Deserialize, Serialize};
 
@@ -44,7 +45,7 @@ impl ResultType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Decode, Encode)]
 pub enum State {
     Initial,
     EAC1(ConnectionHandle),
