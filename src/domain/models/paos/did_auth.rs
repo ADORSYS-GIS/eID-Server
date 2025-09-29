@@ -25,6 +25,8 @@ pub struct EAC1InputType {
     #[serde(rename = "@Protocol")]
     #[validate(custom(function = "must_be_oid"))]
     pub protocol: String,
+    #[serde(rename = "@xsi:type")]
+    pub type_: String,
     #[serde(rename = "Certificate")]
     pub certificates: Vec<String>,
     #[serde(rename = "CertificateDescription")]
@@ -100,6 +102,7 @@ mod tests {
                 auth_protocol_data: AuthProtoData {
                     data: EAC1InputType {
                         protocol: "urn:oid:1.3.162.15480.3.0.14.2".to_string(),
+                        type_: "EAC1InputType".to_string(),
                         certificates: vec!["certificate1".to_string(), "certificate2".to_string()],
                         cert_description: "certificate description".to_string(),
                         required_chat: None,
