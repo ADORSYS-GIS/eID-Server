@@ -1,11 +1,12 @@
 use chrono::{DateTime, Datelike, Utc, Weekday};
-use tracing::{error, info};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::{Instant, interval, sleep_until};
+use tracing::{error, info};
 
-use crate::pki::truststore::TrustStore;
+use crate::config::MasterListConfig;
+use crate::pki::truststore::MemoryTrustStore;
 
 /// Configuration for the master list update scheduler
 #[derive(Debug, Clone)]
@@ -18,6 +19,10 @@ pub struct SchedulerConfig {
     pub update_hour: u32,
     /// Minute of the hour to run the update (0-59, default: 0)
     pub update_minute: u32,
+    /// Path to trust store certificates directory
+    pub trust_store_path: String,
+    /// Master list configuration
+    pub master_list_config: MasterListConfig,
 }
 
 impl Default for SchedulerConfig {
@@ -27,25 +32,33 @@ impl Default for SchedulerConfig {
             update_day: Weekday::Sun,
             update_hour: 2,
             update_minute: 0,
+            trust_store_path: "./test_certs".to_string(),
+            master_list_config: MasterListConfig::default(),
         }
     }
 }
 
 /// Scheduler for automatic master list updates
-pub struct MasterListScheduler<T: TrustStore> {
-    trust_store: Arc<Mutex<T>>,
+pub struct MasterListScheduler {
+    trust_store: Arc<Mutex<MemoryTrustStore>>,
     config: SchedulerConfig,
     shutdown_signal: Arc<Mutex<bool>>,
 }
 
-impl<T: TrustStore> MasterListScheduler<T> {
+impl MasterListScheduler {
     /// Creates a new MasterListScheduler
-    pub fn new(trust_store: Arc<Mutex<T>>, config: SchedulerConfig) -> Self {
-        Self {
-            trust_store,
+    pub async fn new(config: SchedulerConfig) -> color_eyre::Result<Self> {
+        let trust_store = MemoryTrustStore::new(&config.trust_store_path).await?;
+        Ok(Self {
+            trust_store: Arc::new(Mutex::new(trust_store)),
             config,
             shutdown_signal: Arc::new(Mutex::new(false)),
-        }
+        })
+    }
+
+    /// Get a reference to the trust store for external access
+    pub fn trust_store(&self) -> Arc<Mutex<MemoryTrustStore>> {
+        Arc::clone(&self.trust_store)
     }
 
     /// Starts the scheduler in a background task
@@ -77,7 +90,7 @@ impl<T: TrustStore> MasterListScheduler<T> {
 
     /// Main scheduler loop
     async fn run_scheduler(
-        trust_store: Arc<Mutex<T>>,
+        trust_store: Arc<Mutex<MemoryTrustStore>>,
         config: SchedulerConfig,
         shutdown_signal: Arc<Mutex<bool>>,
     ) {
@@ -95,7 +108,7 @@ impl<T: TrustStore> MasterListScheduler<T> {
         }
 
         // Run the update immediately if we've passed the scheduled time
-        Self::perform_update(&trust_store).await;
+        Self::perform_update(&trust_store, &config).await;
 
         // Set up weekly interval
         let mut interval = interval(Duration::from_secs(7 * 24 * 60 * 60)); // 1 week
@@ -110,7 +123,7 @@ impl<T: TrustStore> MasterListScheduler<T> {
                         break;
                     }
 
-                    Self::perform_update(&trust_store).await;
+                    Self::perform_update(&trust_store, &config).await;
                 }
                 _ = tokio::time::sleep(Duration::from_secs(60)) => {
                     // Check shutdown signal every minute
@@ -148,22 +161,20 @@ impl<T: TrustStore> MasterListScheduler<T> {
     }
 
     /// Performs the actual master list update
-    async fn perform_update(trust_store: &Arc<Mutex<T>>) {
+    async fn perform_update(trust_store: &Arc<Mutex<MemoryTrustStore>>, config: &SchedulerConfig) {
         info!("Starting scheduled master list update");
 
-        let handler = super::MasterListHandler::default();
+        let handler = super::MasterListHandler::new(&config.master_list_config);
         let trust_store_locked = trust_store.lock().await;
 
         match handler.process_master_list(&*trust_store_locked).await {
             Ok(count) => {
                 info!(
-                    "✓ Scheduled master list update completed successfully, added {} certificates",
-                    count
+                    "✓ Scheduled master list update completed successfully, added {count} certificates",
                 );
             }
             Err(e) => {
-                error!("✗ Scheduled master list update failed: {}", e);
-                // Log but don't panic - we'll try again next week
+                error!("{e}");
             }
         }
     }
@@ -172,21 +183,19 @@ impl<T: TrustStore> MasterListScheduler<T> {
     pub async fn trigger_immediate_update(&self) -> Result<(), String> {
         info!("Triggering immediate master list update");
 
-        let handler = super::MasterListHandler::default();
+        let handler = super::MasterListHandler::new(&self.config.master_list_config);
         let trust_store_locked = self.trust_store.lock().await;
 
         match handler.process_master_list(&*trust_store_locked).await {
             Ok(count) => {
                 info!(
-                    "✓ Immediate master list update completed successfully, added {} certificates",
-                    count
+                    "✓ Immediate master list update completed successfully, added {count} certificates",
                 );
                 Ok(())
             }
             Err(e) => {
-                let error_msg = format!("✗ Immediate master list update failed: {}", e);
-                error!("{}", error_msg);
-                Err(error_msg)
+                error!("{e}");
+                Err(e.to_string())
             }
         }
     }
@@ -204,9 +213,11 @@ mod tests {
             update_day: Weekday::Sun,
             update_hour: 2,
             update_minute: 0,
+            trust_store_path: "./test_certs".to_string(),
+            master_list_config: MasterListConfig::default(),
         };
 
-        let next_run = MasterListScheduler::<crate::pki::truststore::MemoryTrustStore>::calculate_next_run_time(&config);
+        let next_run = MasterListScheduler::calculate_next_run_time(&config);
 
         // Verify it's a Sunday at 2:00 AM
         assert_eq!(next_run.weekday(), Weekday::Sun);

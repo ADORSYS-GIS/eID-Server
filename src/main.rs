@@ -1,6 +1,6 @@
 use eid_server::config::Config;
 use eid_server::domain::eid::service::EidService;
-use eid_server::pki::truststore::MemoryTrustStore;
+use eid_server::pki::master_list::MasterListHandler;
 use eid_server::server::Server;
 use eid_server::session::SessionManager;
 use eid_server::setup::SetupData;
@@ -37,7 +37,31 @@ async fn main() -> color_eyre::Result<()> {
         .with_psk(session_manager.clone())
         .with_session_store(tls_store);
 
-    let trust_store = MemoryTrustStore::new("./test_certs").await?;
+    // Create scheduler with integrated trust store management
+    tracing::info!("Creating master list scheduler with integrated trust store...");
+    let scheduler =
+        MasterListHandler::create_scheduler(&config.master_list, "./test_certs").await?;
+
+    // Perform initial master list processing
+    tracing::info!("Performing initial master list processing...");
+    match scheduler.trigger_immediate_update().await {
+        Ok(()) => {
+            tracing::info!("Successfully loaded CSCA certificates from master list");
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Failed to load master list: {e}. Continuing with local certificates only."
+            );
+        }
+    }
+
+    // Start scheduler for automatic updates
+    let _scheduler_handle = scheduler.start().await;
+    tracing::info!("Master list scheduler started for automatic updates");
+
+    // Get trust store from scheduler for service
+    let trust_store_ref = scheduler.trust_store();
+    let trust_store = trust_store_ref.lock().await.clone();
 
     let service = EidService::new(session_manager, trust_store);
 

@@ -16,7 +16,7 @@ pub struct MasterListConfig {
 impl Default for MasterListConfig {
     fn default() -> Self {
         Self {
-            master_list_url: "https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/ElekAusweise/CSCA/GermanMasterList.html".to_string(),
+            master_list_url: "".to_string(),
         }
     }
 }
@@ -66,7 +66,7 @@ impl Config {
         let mut builder = ConfigLib::builder()
             .set_default("server.host", "localhost")?
             .set_default("server.port", 3000)?
-            .set_default("master_list.url", "https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/ElekAusweise/CSCA/GermanMasterList.html")?
+            .set_default("master_list.master_list_url", "https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/ElekAusweise/CSCA/GermanMasterList.html")?
             .add_source(File::with_name("config/settings").required(false));
 
         // If env_vars is provided, we use it instead of system environment

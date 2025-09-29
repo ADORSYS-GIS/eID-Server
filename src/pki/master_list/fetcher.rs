@@ -40,9 +40,14 @@ impl MasterListFetcher {
     /// Extract ZIP download URL from the HTML page using proper HTML parsing
     fn extract_zip_url_from_html(&self, html: &str) -> Result<String, MasterListError> {
         let document = Html::parse_document(html);
-        let link_selector = Selector::parse("a[href]").map_err(|e| MasterListError::Parser {
-            message: format!("CSS selector parsing error: {}", e),
-        })?;
+        let link_selector = match Selector::parse("a[href]") {
+            Ok(selector) => selector,
+            Err(e) => {
+                return Err(MasterListError::Parser {
+                    message: format!("CSS selector parsing error: {e}"),
+                });
+            }
+        };
 
         let base_url = Url::parse("https://www.bsi.bund.de")?;
 
@@ -115,7 +120,7 @@ impl MasterListFetcher {
 
 impl Default for MasterListFetcher {
     fn default() -> Self {
-        Self::new("https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/ElekAusweise/CSCA/GermanMasterList.html".to_string())
+        Self::new("".to_string()) // URL should be provided via configuration
     }
 }
 
