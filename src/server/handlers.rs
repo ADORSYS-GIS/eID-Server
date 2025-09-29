@@ -56,7 +56,7 @@ where
 
     let envelope = Envelope::<IncomingReq>::parse(&request)?;
     let header = envelope.header().clone().unwrap_or_default();
-    
+
     match envelope.into_body() {
         IncomingReq::UseIDReq(request) => {
             wrap_soap(handle_useid(
