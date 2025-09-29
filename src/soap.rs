@@ -104,7 +104,8 @@ impl<T: Serialize> Envelope<T> {
         let config = conf
             .namespace(prefix::SOAP, ns::SOAP_ENV)
             .namespace(prefix::DSS, ns::DSS)
-            .namespace(prefix::WSA, ns::WSA);
+            .namespace(prefix::WSA, ns::WSA)
+            .namespace(prefix::XSI, ns::XSI);
 
         let env = PaosEnvRef(self);
         to_string(&config, &env)
