@@ -1,5 +1,5 @@
 use chrono::{DateTime, Datelike, Utc, Weekday};
-use log::{error, info};
+use tracing::{error, info};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -151,7 +151,7 @@ impl<T: TrustStore> MasterListScheduler<T> {
     async fn perform_update(trust_store: &Arc<Mutex<T>>) {
         info!("Starting scheduled master list update");
 
-        let handler = super::MasterListHandler::new();
+        let handler = super::MasterListHandler::default();
         let trust_store_locked = trust_store.lock().await;
 
         match handler.process_master_list(&*trust_store_locked).await {
@@ -172,7 +172,7 @@ impl<T: TrustStore> MasterListScheduler<T> {
     pub async fn trigger_immediate_update(&self) -> Result<(), String> {
         info!("Triggering immediate master list update");
 
-        let handler = super::MasterListHandler::new();
+        let handler = super::MasterListHandler::default();
         let trust_store_locked = self.trust_store.lock().await;
 
         match handler.process_master_list(&*trust_store_locked).await {

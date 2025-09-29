@@ -8,33 +8,25 @@ use zip::ZipArchive;
 
 use super::MasterListError;
 
-/// URL for the German Master List from BSI
-const MASTER_LIST_URL: &str =
-    "https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/ElekAusweise/CSCA/GermanMasterList.html";
-
 /// Master list fetcher for downloading and processing CSCA certificates
 pub struct MasterListFetcher {
     client: reqwest::Client,
+    url: String,
 }
 
 impl MasterListFetcher {
-    /// Create a new master list fetcher
-    pub fn new() -> Self {
+    /// Create a new master list fetcher with the specified URL
+    pub fn new(url: String) -> Self {
         Self {
             client: reqwest::Client::new(),
+            url,
         }
     }
 
-    /// Fetch the master list from the BSI URL
+    /// Fetch the master list from the configured URL
     pub async fn fetch_master_list(&self) -> Result<Vec<u8>, MasterListError> {
         // First, fetch the HTML page to find the actual ZIP download link
-        let html_response = self
-            .client
-            .get(MASTER_LIST_URL)
-            .send()
-            .await?
-            .text()
-            .await?;
+        let html_response = self.client.get(&self.url).send().await?.text().await?;
 
         // Extract the ZIP file URL from the HTML
         let zip_url = self.extract_zip_url_from_html(&html_response)?;
@@ -48,15 +40,11 @@ impl MasterListFetcher {
     /// Extract ZIP download URL from the HTML page using proper HTML parsing
     fn extract_zip_url_from_html(&self, html: &str) -> Result<String, MasterListError> {
         let document = Html::parse_document(html);
-        let link_selector =
-            Selector::parse("a[href]").map_err(|e| MasterListError::ParseError {
-                message: format!("CSS selector parsing error: {}", e),
-            })?;
+        let link_selector = Selector::parse("a[href]").map_err(|e| MasterListError::Parser {
+            message: format!("CSS selector parsing error: {}", e),
+        })?;
 
-        let base_url =
-            Url::parse("https://www.bsi.bund.de").map_err(|e| MasterListError::ParseError {
-                message: format!("Base URL parsing error: {}", e),
-            })?;
+        let base_url = Url::parse("https://www.bsi.bund.de")?;
 
         // Look for ZIP file links
         for element in document.select(&link_selector) {
@@ -64,18 +52,13 @@ impl MasterListFetcher {
                 && href.contains(".zip")
             {
                 // Parse the URL properly using the url crate
-                let absolute_url =
-                    base_url
-                        .join(href)
-                        .map_err(|e| MasterListError::ParseError {
-                            message: format!("URL joining error: {}", e),
-                        })?;
+                let absolute_url = base_url.join(href)?;
 
                 return Ok(absolute_url.to_string());
             }
         }
 
-        Err(MasterListError::ParseError {
+        Err(MasterListError::Parser {
             message: "Could not find ZIP download link in HTML".to_string(),
         })
     }
@@ -132,7 +115,7 @@ impl MasterListFetcher {
 
 impl Default for MasterListFetcher {
     fn default() -> Self {
-        Self::new()
+        Self::new("https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/ElekAusweise/CSCA/GermanMasterList.html".to_string())
     }
 }
 
@@ -142,7 +125,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_master_list_fetcher_creation() {
-        let _fetcher = MasterListFetcher::new();
+        let _fetcher = MasterListFetcher::default();
         // Just test that creation doesn't panic
     }
 

@@ -8,11 +8,25 @@ use redis::{
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MasterListConfig {
+    pub master_list_url: String,
+}
+
+impl Default for MasterListConfig {
+    fn default() -> Self {
+        Self {
+            master_list_url: "https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/ElekAusweise/CSCA/GermanMasterList.html".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
     #[serde(default)]
     pub redis: Option<RedisConfig>,
+    pub master_list: MasterListConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +66,7 @@ impl Config {
         let mut builder = ConfigLib::builder()
             .set_default("server.host", "localhost")?
             .set_default("server.port", 3000)?
+            .set_default("master_list.url", "https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/ElekAusweise/CSCA/GermanMasterList.html")?
             .add_source(File::with_name("config/settings").required(false));
 
         // If env_vars is provided, we use it instead of system environment

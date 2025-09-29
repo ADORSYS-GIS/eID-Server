@@ -1,3 +1,4 @@
+use crate::config::MasterListConfig;
 use crate::pki::truststore::{TrustStore, TrustStoreError};
 use color_eyre::eyre::Result;
 
@@ -11,13 +12,13 @@ use fetcher::MasterListFetcher;
 #[derive(Debug, thiserror::Error)]
 pub enum MasterListError {
     #[error("HTTP request failed: {0}")]
-    HttpError(#[from] reqwest::Error),
+    Http(#[from] reqwest::Error),
 
     #[error("ZIP archive error: {0}")]
     ZipError(#[from] zip::result::ZipError),
 
     #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
 
     #[error("Trust store error: {0}")]
     TrustStoreError(#[from] TrustStoreError),
@@ -26,7 +27,10 @@ pub enum MasterListError {
     X509Error(#[from] x509_parser::prelude::X509Error),
 
     #[error("Master list parsing error: {message}")]
-    ParseError { message: String },
+    Parser { message: String },
+
+    #[error("URL parsing error: {0}")]
+    UrlError(#[from] url::ParseError),
 
     #[error("No valid CSCA certificates found in master list")]
     NoValidCertificates,
@@ -38,10 +42,10 @@ pub struct MasterListHandler {
 }
 
 impl MasterListHandler {
-    /// Create a new master list handler
-    pub fn new() -> Self {
+    /// Create a new master list handler with configuration
+    pub fn new(config: &MasterListConfig) -> Self {
         Self {
-            fetcher: MasterListFetcher::new(),
+            fetcher: MasterListFetcher::new(config.master_list_url.clone()),
         }
     }
 
@@ -123,7 +127,7 @@ impl MasterListHandler {
         I: IntoIterator<Item = D> + Send,
         D: AsRef<[u8]> + Send,
     {
-        trust_store.verify(der_chain).await.map_err(|e| e.into())
+        Ok(trust_store.verify(der_chain).await?)
     }
 
     /// Get a CSCA certificate by its serial number
@@ -132,10 +136,7 @@ impl MasterListHandler {
         trust_store: &T,
         serial_number: impl AsRef<[u8]> + Send,
     ) -> Result<Option<crate::pki::truststore::CertificateEntry>, MasterListError> {
-        trust_store
-            .get_cert_by_serial(serial_number)
-            .await
-            .map_err(|e| e.into())
+        Ok(trust_store.get_cert_by_serial(serial_number).await?)
     }
 
     /// Get a CSCA certificate by its subject DN
@@ -144,10 +145,7 @@ impl MasterListHandler {
         trust_store: &T,
         subject: &str,
     ) -> Result<Option<crate::pki::truststore::CertificateEntry>, MasterListError> {
-        trust_store
-            .get_cert_by_subject(subject)
-            .await
-            .map_err(|e| e.into())
+        Ok(trust_store.get_cert_by_subject(subject).await?)
     }
 
     /// Clear all certificates from the trust store
@@ -155,13 +153,13 @@ impl MasterListHandler {
         &self,
         trust_store: &T,
     ) -> Result<(), MasterListError> {
-        trust_store.clear().await.map_err(|e| e.into())
+        Ok(trust_store.clear().await?)
     }
 }
 
 impl Default for MasterListHandler {
     fn default() -> Self {
-        Self::new()
+        Self::new(&MasterListConfig::default())
     }
 }
 
@@ -173,13 +171,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_master_list_handler_creation() {
-        let _handler = MasterListHandler::new();
+        let _handler = MasterListHandler::default();
         // Just test that creation doesn't panic
     }
 
     #[tokio::test]
     async fn test_pem_to_der_conversion() {
-        let _fetcher = MasterListFetcher::new();
+        let _fetcher = MasterListFetcher::default();
         let _pem_data = "-----BEGIN CERTIFICATE-----
 MIIBkTCB+wIJAKnL4UKMTVE/MA0GCSqGSIb3DQEBCwUAMBQxEjAQBgNVBAMMCWxv
 Y2FsaG9zdDAeFw0yMTEyMTAwNDIzMjlaFw0yMjEyMTAwNDIzMjlaMBQxEjAQBgNV
@@ -205,7 +203,7 @@ gQCg3u4OoHw5GcZzrv9z7L1z5h4WDgCeV9Yr+uXH8VD9dw9o1rNQF3sMkz4h9K6j
     async fn test_trust_store_method_usage() {
         let temp_dir = tempdir().unwrap();
         let trust_store = MemoryTrustStore::new(temp_dir.path()).await.unwrap();
-        let handler = MasterListHandler::new();
+        let handler = MasterListHandler::default();
 
         // Test get_certificate_by_serial - should return None for non-existent certificate
         let result = handler
@@ -241,7 +239,7 @@ gQCg3u4OoHw5GcZzrv9z7L1z5h4WDgCeV9Yr+uXH8VD9dw9o1rNQF3sMkz4h9K6j
     async fn test_cleanup_expired_certificates() {
         let temp_dir = tempdir().unwrap();
         let trust_store = MemoryTrustStore::new(temp_dir.path()).await.unwrap();
-        let handler = MasterListHandler::new();
+        let handler = MasterListHandler::default();
 
         // Test cleanup_expired_certificates on empty trust store - should return 0
         let result = handler.cleanup_expired_certificates(&trust_store).await;
