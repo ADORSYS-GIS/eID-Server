@@ -15,7 +15,7 @@ async fn test_mutual_tls_works() {
 
     let session_store = MemoryStore::new();
     let tls_config = TlsConfig::from_pem(server_cert, server_key)
-        .with_client_auth(&[ca_cert.to_pem().unwrap()], None::<&[u8]>)
+        .with_client_auth(&[ca_cert.to_pem().unwrap()])
         .with_session_store(Arc::new(session_store.clone()));
 
     let addr = utils::spawn_server(session_store, tls_config).await;

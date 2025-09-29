@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use eid_server::domain::service::EidService;
+use eid_server::pki::identity::{FileIdentity, Identity};
 use eid_server::pki::truststore::MemoryTrustStore;
 use eid_server::session::{MemoryStore, SessionManager};
 use eid_server::tls::{TestCertificates, TlsConfig, generate_test_certificates};
@@ -17,10 +18,12 @@ pub async fn spawn_server(session_store: MemoryStore, tls_config: TlsConfig) -> 
         config
     };
 
-    let trust_store = MemoryTrustStore::new("./test_certs").await.unwrap();
     let session_manager = SessionManager::new(Arc::new(session_store));
-    let service = EidService::new(session_manager, trust_store);
+    let file_identity = FileIdentity::new();
+    let identity = Identity::new(file_identity.clone(), file_identity);
+    let trust_store = MemoryTrustStore::new("./test_certs").await.unwrap();
 
+    let service = EidService::new(session_manager, trust_store, identity);
     let server = Server::new(service, &config, tls_config).await.unwrap();
 
     let port = server.port();
@@ -39,6 +42,6 @@ pub fn create_tls_config(psk_store: DashMap<String, Vec<u8>>) -> TlsConfig {
 
     // build the tls configuration
     TlsConfig::from_pem(server_cert, server_key)
-        .with_client_auth(&[ca_cert], None::<&[u8]>)
+        .with_client_auth(&[ca_cert])
         .with_psk(psk_store)
 }
