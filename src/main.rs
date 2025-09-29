@@ -6,7 +6,7 @@ use eid_server::{setup::setup, telemetry};
 async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
     telemetry::init_tracing();
-    dotenvy::dotenv()?;
+    dotenvy::dotenv().ok();
 
     // Load configuration
     let config = Config::load()?;
