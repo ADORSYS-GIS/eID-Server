@@ -159,7 +159,7 @@ async fn build_did_auth_eac1<T: TrustStore>(
 
     let eac1_input_type = EAC1InputType {
         protocol: EAC2_PROTOCOL_ID.into(),
-        type_: EAC1_TYPE.into(),
+        type_: Some(EAC1_TYPE.into()),
         certificates: vec![hex::encode(dv_cvc), hex::encode(term_cvc)],
         cert_description: hex::encode(cert_desc_bytes),
         auth_aux_data: build_auth_aux_data(session_data)?,
