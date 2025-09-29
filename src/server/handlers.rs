@@ -55,12 +55,22 @@ where
     debug!(req = %request, "Processing authentication request");
 
     let envelope = Envelope::<IncomingReq>::parse(&request)?;
+    let header = envelope.header().clone().unwrap_or_default();
+    
     match envelope.into_body() {
         IncomingReq::UseIDReq(request) => {
-            wrap_soap(handle_useid(state, Envelope::new(request))).await
+            wrap_soap(handle_useid(
+                state,
+                Envelope::new(request).with_header(header),
+            ))
+            .await
         }
         IncomingReq::StartPaosReq(request) => {
-            wrap_soap(handle_start_paos(state, Envelope::new(request))).await
+            wrap_soap(handle_start_paos(
+                state,
+                Envelope::new(request).with_header(header),
+            ))
+            .await
         }
     }
 }
