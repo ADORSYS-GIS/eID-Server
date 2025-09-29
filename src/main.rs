@@ -1,10 +1,5 @@
 use eid_server::config::Config;
-use eid_server::domain::eid::service::EidService;
-use eid_server::pki::master_list::MasterListHandler;
 use eid_server::server::Server;
-use eid_server::session::SessionManager;
-use eid_server::setup::SetupData;
-use eid_server::tls::{TestCertificates, TlsConfig, generate_test_certificates};
 use eid_server::{setup::setup, telemetry};
 
 #[tokio::main]
@@ -64,6 +59,7 @@ async fn main() -> color_eyre::Result<()> {
     let trust_store = trust_store_ref.lock().await.clone();
 
     let service = EidService::new(session_manager, trust_store);
+    let (service, tls_config) = setup(&config).await?;
 
     let server = Server::new(service, &config, tls_config).await?;
     server.run().await

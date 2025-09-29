@@ -13,8 +13,6 @@ WORKDIR /app
 
 # Set the Rust target and build the application
 RUN --mount=type=bind,source=src,target=src \
-    --mount=type=bind,source=Config,target=Config \
-    --mount=type=bind,source=certs,target=certs \
     --mount=type=bind,source=test_data,target=test_data \
     --mount=type=bind,source=Cargo.toml,target=Cargo.toml \
     --mount=type=bind,source=Cargo.lock,target=Cargo.lock \
