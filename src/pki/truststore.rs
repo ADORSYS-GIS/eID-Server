@@ -65,7 +65,7 @@ impl CertificateEntry {
 }
 
 /// Abstract interface for a trust store.
-pub trait TrustStore: Clone + Send + Sync + 'static {
+pub trait TrustStore: Send + Sync + Clone + 'static {
     /// Add DER encoded certificates to the trust store.
     ///
     /// Returns the number of certificates added.
