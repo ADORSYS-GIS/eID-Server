@@ -242,10 +242,11 @@ fn build_chat(
     }
 
     // Add special verification functions
-    if session_data.request_data.age_verification.is_some() {
+    let operations = &session_data.request_data.use_operations;
+    if !operations.age_verification.is_prohibited() {
         rights.add(AccessRight::AgeVerification);
     }
-    if session_data.request_data.place_verification.is_some() {
+    if !operations.place_verification.is_prohibited() {
         rights.add(AccessRight::CommunityIdVerification);
     }
 
