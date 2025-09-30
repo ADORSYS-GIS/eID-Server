@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use time::OffsetDateTime;
 use tracing::{debug, info, warn};
 use x509_parser::prelude::X509Certificate;
@@ -7,12 +6,12 @@ use x509_parser::verify::verify_signature;
 
 use crate::pki::truststore::{CertificateEntry, TrustStoreError};
 
-/// Helper function to convert x509-parser's ASN1Time to chrono's DateTime<Utc>
-pub fn asn1_time_to_chrono(asn1_time: ASN1Time) -> Result<DateTime<Utc>, TrustStoreError> {
+/// Helper function to convert x509-parser's ASN1Time to time's OffsetDateTime
+pub fn asn1_time_to_offset_datetime(
+    asn1_time: ASN1Time,
+) -> Result<OffsetDateTime, TrustStoreError> {
     let offset_datetime: OffsetDateTime = asn1_time.to_datetime();
-
-    let system_time: std::time::SystemTime = offset_datetime.into();
-    Ok(DateTime::<Utc>::from(system_time))
+    Ok(offset_datetime)
 }
 
 /// Validates a CSCA certificate by checking its signature and trust chain
@@ -73,10 +72,10 @@ pub fn validate_csca_certificate(
 
 /// Validates certificate dates (not_before and not_after)
 pub fn validate_certificate_dates(
-    not_before: DateTime<Utc>,
-    not_after: DateTime<Utc>,
+    not_before: OffsetDateTime,
+    not_after: OffsetDateTime,
 ) -> Result<bool, TrustStoreError> {
-    let now = chrono::Utc::now();
+    let now = OffsetDateTime::now_utc();
 
     // Check if certificate is expired
     if now > not_after {
@@ -143,8 +142,8 @@ pub async fn validate_csca_certificates(
     for (i, cert_entry) in certificates.iter().enumerate() {
         if let Ok(cert) = cert_entry.parse() {
             // Check validity dates
-            let not_before = asn1_time_to_chrono(cert.validity().not_before)?;
-            let not_after = asn1_time_to_chrono(cert.validity().not_after)?;
+            let not_before = asn1_time_to_offset_datetime(cert.validity().not_before)?;
+            let not_after = asn1_time_to_offset_datetime(cert.validity().not_after)?;
 
             if !validate_certificate_dates(not_before, not_after)? {
                 continue; // Skip expired or not-yet-valid certificates

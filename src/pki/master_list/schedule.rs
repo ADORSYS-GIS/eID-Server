@@ -1,6 +1,6 @@
-use chrono::{DateTime, Datelike, Utc, Weekday};
 use std::sync::Arc;
 use std::time::Duration;
+use time::{OffsetDateTime, Time, Weekday};
 use tokio::sync::Mutex;
 use tokio::time::{Instant, interval, sleep_until};
 use tracing::{error, info};
@@ -16,9 +16,9 @@ pub struct SchedulerConfig {
     /// Day of the week to run the update (default: Sunday)
     pub update_day: Weekday,
     /// Hour of the day to run the update (0-23, default: 2 AM)
-    pub update_hour: u32,
+    pub update_hour: u8,
     /// Minute of the hour to run the update (0-59, default: 0)
-    pub update_minute: u32,
+    pub update_minute: u8,
     /// Path to trust store certificates directory
     pub trust_store_path: String,
     /// Master list configuration
@@ -29,7 +29,7 @@ impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            update_day: Weekday::Sun,
+            update_day: Weekday::Sunday,
             update_hour: 2,
             update_minute: 0,
             trust_store_path: "./test_certs".to_string(),
@@ -100,11 +100,11 @@ impl MasterListScheduler {
 
         // Sleep until the first scheduled time
         let now = Instant::now();
-        let duration_until_next =
-            (next_run.timestamp() as u64).saturating_sub(Utc::now().timestamp() as u64);
+        let now_utc = OffsetDateTime::now_utc();
+        let duration_until_next = (next_run - now_utc).whole_seconds();
 
         if duration_until_next > 0 {
-            sleep_until(now + Duration::from_secs(duration_until_next)).await;
+            sleep_until(now + Duration::from_secs(duration_until_next as u64)).await;
         }
 
         // Run the update immediately if we've passed the scheduled time
@@ -139,22 +139,19 @@ impl MasterListScheduler {
     }
 
     /// Calculates the next run time based on the configuration
-    fn calculate_next_run_time(config: &SchedulerConfig) -> DateTime<Utc> {
-        let now = Utc::now();
-        let mut next_run = now
-            .date_naive()
-            .and_hms_opt(config.update_hour, config.update_minute, 0)
-            .unwrap()
-            .and_utc();
+    fn calculate_next_run_time(config: &SchedulerConfig) -> OffsetDateTime {
+        let now = OffsetDateTime::now_utc();
+
+        // Create the target time for today
+        let target_time = Time::from_hms(config.update_hour, config.update_minute, 0)
+            .expect("Invalid time configuration");
+
+        let mut next_run = now.date().with_time(target_time).assume_utc();
 
         // Find the next occurrence of the target weekday
         while next_run.weekday() != config.update_day || next_run <= now {
-            next_run += chrono::Duration::days(1);
-            next_run = next_run
-                .date_naive()
-                .and_hms_opt(config.update_hour, config.update_minute, 0)
-                .unwrap()
-                .and_utc();
+            next_run = next_run.saturating_add(time::Duration::days(1));
+            next_run = next_run.date().with_time(target_time).assume_utc();
         }
 
         next_run
@@ -204,13 +201,13 @@ impl MasterListScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Timelike, Weekday};
+    use time::Weekday;
 
     #[test]
     fn test_calculate_next_run_time() {
         let config = SchedulerConfig {
             enabled: true,
-            update_day: Weekday::Sun,
+            update_day: Weekday::Sunday,
             update_hour: 2,
             update_minute: 0,
             trust_store_path: "./test_certs".to_string(),
@@ -220,12 +217,12 @@ mod tests {
         let next_run = MasterListScheduler::calculate_next_run_time(&config);
 
         // Verify it's a Sunday at 2:00 AM
-        assert_eq!(next_run.weekday(), Weekday::Sun);
+        assert_eq!(next_run.weekday(), Weekday::Sunday);
         assert_eq!(next_run.hour(), 2);
         assert_eq!(next_run.minute(), 0);
 
         // Verify it's in the future
-        assert!(next_run > Utc::now());
+        assert!(next_run > OffsetDateTime::now_utc());
     }
 
     #[test]
@@ -233,7 +230,7 @@ mod tests {
         let config = SchedulerConfig::default();
 
         assert!(config.enabled);
-        assert_eq!(config.update_day, Weekday::Sun);
+        assert_eq!(config.update_day, Weekday::Sunday);
         assert_eq!(config.update_hour, 2);
         assert_eq!(config.update_minute, 0);
     }

@@ -161,7 +161,7 @@ impl MasterListHandler {
     ) -> Result<MasterListScheduler, MasterListError> {
         let scheduler_config = super::schedule::SchedulerConfig {
             enabled: true,
-            update_day: chrono::Weekday::Sun,
+            update_day: time::Weekday::Sunday,
             update_hour: 2,
             update_minute: 0,
             trust_store_path: trust_store_path.to_string(),
