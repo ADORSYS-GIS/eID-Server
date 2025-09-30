@@ -7,7 +7,7 @@ pub mod domain;
 pub mod pki;
 pub mod server;
 pub mod session;
-pub mod signed_objects;
 pub mod setup;
+pub mod signed_objects;
 pub mod telemetry;
 pub mod tls;
