@@ -57,7 +57,6 @@ cmac = "0.7"
 secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
 x509-parser = { version = "0.18", features = ["verify", "verify-aws"] }
-chrono = "0.4.42"
 
 [dependencies.redis]
 version = "0.32"
