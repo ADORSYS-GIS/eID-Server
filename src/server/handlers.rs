@@ -34,13 +34,18 @@ enum IncomingReq {
     UseIDReq(UseIDRequest),
     #[serde(rename = "StartPAOS")]
     StartPaosReq(StartPaosReq),
+    #[serde(other)]
+    Other,
 }
 
 #[inline]
 async fn wrap_soap(
     fut: impl Future<Output = Result<String, AppError>> + Send,
 ) -> Result<Response, AppError> {
-    fut.await.map(|xml| SoapResponse::new(xml).into_response())
+    fut.await.map(|xml| {
+        debug!(xml = %xml, "Sending response\n");
+        SoapResponse::new(xml).into_response()
+    })
 }
 
 /// Processes an incoming request and routes to the appropriate handler
@@ -52,7 +57,7 @@ pub async fn process_authentication<T>(
 where
     T: TrustStore,
 {
-    debug!(req = %request, "Processing authentication request");
+    debug!(req = %request, "Processing authentication request\n");
 
     let envelope = Envelope::<IncomingReq>::parse(&request)?;
     let header = envelope.header().clone().unwrap_or_default();
@@ -72,5 +77,6 @@ where
             ))
             .await
         }
+        IncomingReq::Other => Err(AppError::InvalidRequest("Unsupported request type".into())),
     }
 }
