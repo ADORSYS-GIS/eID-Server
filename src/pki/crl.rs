@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use ::time::OffsetDateTime;
 use color_eyre::eyre::Result;
 use reqwest::Client;
 use thiserror::Error;
@@ -49,7 +49,7 @@ pub struct CrlEntry {
     /// The raw CRL data in DER format
     pub der_data: Vec<u8>,
     /// When this CRL was fetched
-    pub fetched_at: DateTime<Utc>,
+    pub fetched_at: OffsetDateTime,
     /// The issuer of this CRL
     pub issuer: String,
     /// Distribution point URL where this CRL was fetched from
@@ -66,7 +66,7 @@ impl CrlEntry {
 
         Ok(Self {
             der_data,
-            fetched_at: chrono::Utc::now(),
+            fetched_at: OffsetDateTime::now_utc(),
             issuer,
             distribution_point,
         })
@@ -99,12 +99,14 @@ impl CrlEntry {
             return false;
         };
 
-        let now = chrono::Utc::now();
+        let now = OffsetDateTime::now_utc();
 
         // Check if CRL has expired (next_update field)
         if let Some(next_update) = &crl.tbs_cert_list.next_update {
-            let next_update_chrono =
-                match crate::pki::master_list::validation::asn1_time_to_chrono(*next_update) {
+            let next_update_time =
+                match crate::pki::master_list::validation::asn1_time_to_offset_datetime(
+                    *next_update,
+                ) {
                     Ok(dt) => dt,
                     Err(_) => {
                         warn!("Failed to parse CRL next_update time");
@@ -112,8 +114,8 @@ impl CrlEntry {
                     }
                 };
 
-            if now > next_update_chrono {
-                warn!("CRL is expired (next_update: {})", next_update_chrono);
+            if now > next_update_time {
+                warn!("CRL is expired (next_update: {})", next_update_time);
                 return false;
             }
         }

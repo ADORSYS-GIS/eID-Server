@@ -249,8 +249,8 @@ pub async fn validate_single_certificate_comprehensive(
     let cert = cert_entry.parse()?;
 
     // 1. Validate certificate dates
-    let not_before = asn1_time_to_chrono(cert.validity().not_before)?;
-    let not_after = asn1_time_to_chrono(cert.validity().not_after)?;
+    let not_before = asn1_time_to_offset_datetime(cert.validity().not_before)?;
+    let not_after = asn1_time_to_offset_datetime(cert.validity().not_after)?;
 
     if !validate_certificate_dates(not_before, not_after)? {
         debug!("Certificate failed date validation");
