@@ -67,8 +67,8 @@ impl<T: TrustStore + Clone + Send + Sync + 'static> MasterListScheduler<T> {
         }
 
         info!(
-            "Starting master list scheduler - updates every {:?} at {:02}:{:02}",
-            self.config.update_day, self.config.update_hour, self.config.update_minute
+            "Starting master list scheduler - updates daily at {:02}:{:02}",
+            self.config.update_hour, self.config.update_minute
         );
 
         let handler = Arc::clone(&self.handler);
@@ -108,8 +108,8 @@ impl<T: TrustStore + Clone + Send + Sync + 'static> MasterListScheduler<T> {
         // Run the update immediately if we've passed the scheduled time
         Self::perform_update(&handler).await;
 
-        // Set up weekly interval
-        let mut interval = interval(Duration::from_secs(7 * 24 * 60 * 60)); // 1 week
+        // Set up daily interval
+        let mut interval = interval(Duration::from_secs(24 * 60 * 60)); // 1 day
         interval.tick().await; // Skip the first tick since we already ran
 
         loop {
@@ -146,10 +146,9 @@ impl<T: TrustStore + Clone + Send + Sync + 'static> MasterListScheduler<T> {
 
         let mut next_run = now.date().with_time(target_time).assume_utc();
 
-        // Find the next occurrence of the target weekday
-        while next_run.weekday() != config.update_day || next_run <= now {
+        // If the target time has passed today, schedule for tomorrow
+        if next_run <= now {
             next_run = next_run.saturating_add(time::Duration::days(1));
-            next_run = next_run.date().with_time(target_time).assume_utc();
         }
 
         next_run
@@ -245,8 +244,7 @@ mod tests {
 
         let next_run = MasterListScheduler::<crate::pki::truststore::MemoryTrustStore>::calculate_next_run_time(&config);
 
-        // Verify it's a Sunday at 2:00 AM
-        assert_eq!(next_run.weekday(), Weekday::Sunday);
+        // Verify it's at 2:00 AM
         assert_eq!(next_run.hour(), 2);
         assert_eq!(next_run.minute(), 0);
 
