@@ -1,6 +1,7 @@
 use eid_server::config::Config;
 use eid_server::server::Server;
 use eid_server::{setup::setup, telemetry};
+
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
