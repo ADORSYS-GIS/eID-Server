@@ -53,7 +53,7 @@ pub async fn setup(
     let service = EidService::new(session_manager, truststore.clone(), identity);
 
     // Create scheduler with integrated trust store management
-    tracing::info!("Creating master list scheduler...");
+    tracing::info!("Creating master list scheduler....");
     let scheduler_config = SchedulerConfig {
         enabled: true,
         update_day: time::Weekday::Sunday,
