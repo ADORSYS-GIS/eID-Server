@@ -13,8 +13,8 @@ async fn main() -> color_eyre::Result<()> {
     tracing::debug!("Loaded configuration: {:?}", config);
 
     // Setup server components
-    let components = setup(&config).await?;
+    let (service, tls_config) = setup(&config).await?;
 
-    let server = Server::new(components.service, &config, components.tls_config).await?;
+    let server = Server::new(service, &config, tls_config).await?;
     server.run().await
 }

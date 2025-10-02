@@ -13,13 +13,9 @@ pub struct SetupData {
     pub tls_store: Arc<dyn SessionStore>,
 }
 
-pub struct ServerComponents {
-    pub service: EidService<MemoryTrustStore>,
-    pub tls_config: TlsConfig,
-    pub scheduler: MasterListScheduler<MemoryTrustStore>,
-}
-
-pub async fn setup(config: &Config) -> color_eyre::Result<ServerComponents> {
+pub async fn setup(
+    config: &Config,
+) -> color_eyre::Result<(EidService<MemoryTrustStore>, TlsConfig)> {
     let (eid_store, tls_store): (Arc<dyn SessionStore>, Arc<dyn SessionStore>) =
         if let Some(redis_config) = &config.redis {
             tracing::info!("Redis URI provided, using Redis for session storage.");
@@ -66,7 +62,7 @@ pub async fn setup(config: &Config) -> color_eyre::Result<ServerComponents> {
         master_list_config: config.master_list.clone(),
     };
 
-    let scheduler = MasterListScheduler::<MemoryTrustStore>::new(scheduler_config, truststore);
+    let scheduler = MasterListScheduler::new(scheduler_config, truststore);
 
     // Perform initial master list processing
     tracing::info!("Performing initial master list processing...");
@@ -78,9 +74,5 @@ pub async fn setup(config: &Config) -> color_eyre::Result<ServerComponents> {
     scheduler.start().await;
     tracing::info!("Master list scheduler started for automatic updates");
 
-    Ok(ServerComponents {
-        service,
-        tls_config,
-        scheduler,
-    })
+    Ok((service, tls_config))
 }
