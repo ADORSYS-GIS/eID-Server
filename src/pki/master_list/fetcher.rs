@@ -1,6 +1,6 @@
 use crate::pki::truststore::CertificateEntry;
 use color_eyre::eyre::Result;
-use reqwest;
+use reqwest::Client;
 use scraper::{Html, Selector};
 use std::io::Read;
 use url::Url;
@@ -10,7 +10,7 @@ use super::MasterListError;
 
 /// Master list fetcher for downloading and processing CSCA certificates
 pub struct MasterListFetcher {
-    client: reqwest::Client,
+    client: Client,
     url: String,
 }
 
@@ -18,7 +18,7 @@ impl MasterListFetcher {
     /// Create a new master list fetcher with the specified URL
     pub fn new(url: String) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: Client::new(),
             url,
         }
     }
@@ -80,30 +80,40 @@ impl MasterListFetcher {
         // Iterate through all files in the ZIP archive
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
+            let file_name = file.name();
 
-            // Look for certificate files (common extensions)
-            let file_name = file.name().to_lowercase();
-            if file_name.ends_with(".cer")
-                || file_name.ends_with(".crt")
-                || file_name.ends_with(".der")
-            {
-                let mut contents = Vec::new();
-                file.read_to_end(&mut contents)?;
+            // Look for certificate files (common extensions) - case insensitive
+            if file_name.len() >= 4 {
+                let has_cert_extension = {
+                    let name_bytes = file_name.as_bytes();
+                    let len = name_bytes.len();
 
-                // Try to parse as DER-encoded certificate
-                match CertificateEntry::from_der(&contents) {
-                    Ok(cert_entry) => {
-                        certificates.push(cert_entry);
-                    }
-                    Err(_) => {
-                        // If DER parsing fails, try PEM
-                        if let Ok(pem_contents) = String::from_utf8(contents.clone())
-                            && let Ok(pem_parsed) = pem::parse(&pem_contents)
-                            && pem_parsed.tag() == "CERTIFICATE"
-                            && let Ok(cert_entry) =
-                                CertificateEntry::from_der(pem_parsed.contents())
-                        {
+                    // Check for .cer, .crt, or .der extensions
+                    !(len < 4
+                        || !name_bytes[len - 4..].eq_ignore_ascii_case(b".cer")
+                            && !name_bytes[len - 4..].eq_ignore_ascii_case(b".crt")
+                            && !name_bytes[len - 4..].eq_ignore_ascii_case(b".der"))
+                };
+
+                if has_cert_extension {
+                    let mut contents = Vec::new();
+                    file.read_to_end(&mut contents)?;
+
+                    // Try to parse as DER-encoded certificate
+                    match CertificateEntry::from_der(&contents) {
+                        Ok(cert_entry) => {
                             certificates.push(cert_entry);
+                        }
+                        Err(_) => {
+                            // If DER parsing fails, try PEM
+                            if let Ok(pem_contents) = String::from_utf8(contents.clone())
+                                && let Ok(pem_parsed) = pem::parse(&pem_contents)
+                                && pem_parsed.tag() == "CERTIFICATE"
+                                && let Ok(cert_entry) =
+                                    CertificateEntry::from_der(pem_parsed.contents())
+                            {
+                                certificates.push(cert_entry);
+                            }
                         }
                     }
                 }

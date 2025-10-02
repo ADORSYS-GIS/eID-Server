@@ -6,7 +6,7 @@ use tokio::time::{Instant, interval, sleep_until};
 use tracing::{error, info};
 
 use crate::config::MasterListConfig;
-use crate::pki::truststore::MemoryTrustStore;
+use crate::pki::truststore::TrustStore;
 
 /// Configuration for the master list update scheduler
 #[derive(Debug, Clone)]
@@ -19,8 +19,6 @@ pub struct SchedulerConfig {
     pub update_hour: u8,
     /// Minute of the hour to run the update (0-59, default: 0)
     pub update_minute: u8,
-    /// Path to trust store certificates directory
-    pub trust_store_path: String,
     /// Master list configuration
     pub master_list_config: MasterListConfig,
 }
@@ -32,33 +30,33 @@ impl Default for SchedulerConfig {
             update_day: Weekday::Sunday,
             update_hour: 2,
             update_minute: 0,
-            trust_store_path: "./test_certs".to_string(),
             master_list_config: MasterListConfig::default(),
         }
     }
 }
 
 /// Scheduler for automatic master list updates
-pub struct MasterListScheduler {
-    trust_store: Arc<Mutex<MemoryTrustStore>>,
+pub struct MasterListScheduler<T: TrustStore> {
+    handler: Arc<super::MasterListHandler<T>>,
     config: SchedulerConfig,
     shutdown_signal: Arc<Mutex<bool>>,
 }
 
-impl MasterListScheduler {
+impl<T: TrustStore + Clone + Send + Sync + 'static> MasterListScheduler<T> {
     /// Creates a new MasterListScheduler
-    pub async fn new(config: SchedulerConfig) -> color_eyre::Result<Self> {
-        let trust_store = MemoryTrustStore::new(&config.trust_store_path).await?;
-        Ok(Self {
-            trust_store: Arc::new(Mutex::new(trust_store)),
+    pub fn new(config: SchedulerConfig, truststore: T) -> Self {
+        let handler = super::MasterListHandler::new(&config.master_list_config, truststore);
+
+        Self {
+            handler: Arc::new(handler),
             config,
             shutdown_signal: Arc::new(Mutex::new(false)),
-        })
+        }
     }
 
-    /// Get a reference to the trust store for external access
-    pub fn trust_store(&self) -> Arc<Mutex<MemoryTrustStore>> {
-        Arc::clone(&self.trust_store)
+    /// Get a reference to the handler for external access
+    pub fn handler(&self) -> Arc<super::MasterListHandler<T>> {
+        Arc::clone(&self.handler)
     }
 
     /// Starts the scheduler in a background task
@@ -69,16 +67,16 @@ impl MasterListScheduler {
         }
 
         info!(
-            "Starting master list scheduler - updates every {:?} at {:02}:{:02}",
-            self.config.update_day, self.config.update_hour, self.config.update_minute
+            "Starting master list scheduler - updates daily at {:02}:{:02}",
+            self.config.update_hour, self.config.update_minute
         );
 
-        let trust_store = Arc::clone(&self.trust_store);
+        let handler = Arc::clone(&self.handler);
         let config = self.config.clone();
         let shutdown_signal = Arc::clone(&self.shutdown_signal);
 
         tokio::spawn(async move {
-            Self::run_scheduler(trust_store, config, shutdown_signal).await;
+            Self::run_scheduler(handler, config, shutdown_signal).await;
         })
     }
 
@@ -90,7 +88,7 @@ impl MasterListScheduler {
 
     /// Main scheduler loop
     async fn run_scheduler(
-        trust_store: Arc<Mutex<MemoryTrustStore>>,
+        handler: Arc<super::MasterListHandler<T>>,
         config: SchedulerConfig,
         shutdown_signal: Arc<Mutex<bool>>,
     ) {
@@ -108,10 +106,10 @@ impl MasterListScheduler {
         }
 
         // Run the update immediately if we've passed the scheduled time
-        Self::perform_update(&trust_store, &config).await;
+        Self::perform_update(&handler).await;
 
-        // Set up weekly interval
-        let mut interval = interval(Duration::from_secs(7 * 24 * 60 * 60)); // 1 week
+        // Set up daily interval
+        let mut interval = interval(Duration::from_secs(24 * 60 * 60)); // 1 day
         interval.tick().await; // Skip the first tick since we already ran
 
         loop {
@@ -123,7 +121,7 @@ impl MasterListScheduler {
                         break;
                     }
 
-                    Self::perform_update(&trust_store, &config).await;
+                    Self::perform_update(&handler).await;
                 }
                 _ = tokio::time::sleep(Duration::from_secs(60)) => {
                     // Check shutdown signal every minute
@@ -148,23 +146,19 @@ impl MasterListScheduler {
 
         let mut next_run = now.date().with_time(target_time).assume_utc();
 
-        // Find the next occurrence of the target weekday
-        while next_run.weekday() != config.update_day || next_run <= now {
+        // If the target time has passed today, schedule for tomorrow
+        if next_run <= now {
             next_run = next_run.saturating_add(time::Duration::days(1));
-            next_run = next_run.date().with_time(target_time).assume_utc();
         }
 
         next_run
     }
 
     /// Performs the actual master list update
-    async fn perform_update(trust_store: &Arc<Mutex<MemoryTrustStore>>, config: &SchedulerConfig) {
+    async fn perform_update(handler: &Arc<super::MasterListHandler<T>>) {
         info!("Starting scheduled master list update");
 
-        let handler = super::MasterListHandler::new(&config.master_list_config);
-        let trust_store_locked = trust_store.lock().await;
-
-        match handler.process_master_list(&*trust_store_locked).await {
+        match handler.process_master_list().await {
             Ok(count) => {
                 info!(
                     "✓ Scheduled master list update completed successfully, added {count} certificates",
@@ -180,10 +174,7 @@ impl MasterListScheduler {
     pub async fn trigger_immediate_update(&self) -> Result<(), String> {
         info!("Triggering immediate master list update");
 
-        let handler = super::MasterListHandler::new(&self.config.master_list_config);
-        let trust_store_locked = self.trust_store.lock().await;
-
-        match handler.process_master_list(&*trust_store_locked).await {
+        match self.handler.process_master_list().await {
             Ok(count) => {
                 info!(
                     "✓ Immediate master list update completed successfully, added {count} certificates",
@@ -195,6 +186,44 @@ impl MasterListScheduler {
                 Err(e.to_string())
             }
         }
+    }
+
+    /// Verify a certificate chain using the scheduler's handler
+    pub async fn verify_certificate_chain<I, D>(
+        &self,
+        der_chain: I,
+    ) -> Result<bool, super::MasterListError>
+    where
+        I: IntoIterator<Item = D> + Send,
+        D: AsRef<[u8]> + Send,
+    {
+        self.handler.verify_certificate_chain(der_chain).await
+    }
+
+    /// Get a CSCA certificate by its serial number
+    pub async fn get_certificate_by_serial(
+        &self,
+        serial_number: impl AsRef<[u8]> + Send,
+    ) -> Result<Option<crate::pki::truststore::CertificateEntry>, super::MasterListError> {
+        self.handler.get_certificate_by_serial(serial_number).await
+    }
+
+    /// Get a CSCA certificate by its subject DN
+    pub async fn get_certificate_by_subject(
+        &self,
+        subject: &str,
+    ) -> Result<Option<crate::pki::truststore::CertificateEntry>, super::MasterListError> {
+        self.handler.get_certificate_by_subject(subject).await
+    }
+
+    /// Clear all certificates from the trust store
+    pub async fn clear_trust_store(&self) -> Result<(), super::MasterListError> {
+        self.handler.clear_trust_store().await
+    }
+
+    /// Remove expired CSCA certificates from the trust store
+    pub async fn cleanup_expired_certificates(&self) -> Result<usize, super::MasterListError> {
+        self.handler.cleanup_expired_certificates().await
     }
 }
 
@@ -210,14 +239,12 @@ mod tests {
             update_day: Weekday::Sunday,
             update_hour: 2,
             update_minute: 0,
-            trust_store_path: "./test_certs".to_string(),
             master_list_config: MasterListConfig::default(),
         };
 
-        let next_run = MasterListScheduler::calculate_next_run_time(&config);
+        let next_run = MasterListScheduler::<crate::pki::truststore::MemoryTrustStore>::calculate_next_run_time(&config);
 
-        // Verify it's a Sunday at 2:00 AM
-        assert_eq!(next_run.weekday(), Weekday::Sunday);
+        // Verify it's at 2:00 AM
         assert_eq!(next_run.hour(), 2);
         assert_eq!(next_run.minute(), 0);
 
