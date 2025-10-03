@@ -2,10 +2,11 @@ use std::collections::HashMap;
 
 use super::*;
 use crate::session::store::MemoryStore;
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use time::{Duration, UtcDateTime};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Decode, Encode)]
 struct TestData {
     data: String,
     map: HashMap<String, u32>,

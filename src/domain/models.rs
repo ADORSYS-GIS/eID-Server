@@ -1,10 +1,12 @@
 pub mod eid;
+pub mod paos;
 
-use serde::Serialize;
+use bincode::{Decode, Encode};
+use paos::ConnectionHandle;
+use serde::{Deserialize, Serialize};
 
 pub const RESULT_OK: &str = "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok";
 pub const RESULT_ERROR: &str = "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error";
-pub const RESULT_MINOR_PREFIX: &str = "http://www.bsi.bund.de/eid/server/2.0/resultminor/";
 
 /// Result type for error handling
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -26,11 +28,25 @@ impl ResultType {
         }
     }
 
-    pub fn error(minor: &str, message: Option<&str>) -> Self {
+    pub fn error(error_code: &str, message: Option<&str>) -> Self {
         Self {
             result_major: RESULT_ERROR.into(),
-            result_minor: Some(format!("{RESULT_MINOR_PREFIX}{minor}")),
+            result_minor: Some(error_code.into()),
             result_message: message.map(|s| s.into()),
         }
     }
+
+    pub fn is_ok(&self) -> bool {
+        self.result_major == RESULT_OK
+    }
+
+    pub fn is_error(&self) -> bool {
+        self.result_major == RESULT_ERROR
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Decode, Encode)]
+pub enum State {
+    Initial,
+    EAC1(ConnectionHandle),
 }

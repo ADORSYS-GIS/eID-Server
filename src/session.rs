@@ -11,12 +11,8 @@ pub use store::*;
 
 use std::{array::TryFromSliceError, fmt, result, sync::Arc};
 
-use bincode::{
-    config::standard,
-    serde::{decode_from_slice as bincode_decode, encode_to_vec as bincode_encode},
-};
+use bincode::{Decode, Encode, config::standard, decode_from_slice, encode_to_vec};
 use color_eyre::eyre::eyre;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use time::{Duration, UtcDateTime};
 
 pub(crate) const DEFAULT_DURATION: Duration = Duration::minutes(15);
@@ -129,14 +125,14 @@ impl SessionManager {
     /// manager.insert(key, value).await.unwrap();
     /// # })
     /// ```
-    pub async fn insert(&self, key: impl Into<Id>, value: impl Serialize) -> Result<()> {
+    pub async fn insert(&self, key: impl Into<Id>, value: impl Encode) -> Result<()> {
         if self.store.count().await? >= self.max_sessions {
             return Err(SessionError::MaxSessions);
         }
 
         let expiry_date = UtcDateTime::now().saturating_add(self.expiry);
         let expiry_bytes = expiry_date.unix_timestamp_nanos().to_le_bytes();
-        let data_bytes = bincode_encode(value, standard())?;
+        let data_bytes = encode_to_vec(value, standard())?;
         let ttl = self.expiry.whole_seconds().max(0) as u64;
 
         let mut session_bytes = Vec::with_capacity(TIMESTAMP_BYTES + data_bytes.len());
@@ -169,13 +165,13 @@ impl SessionManager {
     /// assert_eq!(value, Some("session_value".to_string()));
     /// # })
     /// ```
-    pub async fn get<T: DeserializeOwned>(&self, key: impl Into<Id>) -> Result<Option<T>> {
+    pub async fn get<T: Decode<()>>(&self, key: impl Into<Id>) -> Result<Option<T>> {
         let Some(session_bytes) = self.store.load(key.into().as_ref()).await? else {
             return Ok(None);
         };
 
         validate_session_data(&session_bytes)?;
-        let (data, _) = bincode_decode(&session_bytes[TIMESTAMP_BYTES..], standard())?;
+        let (data, _) = decode_from_slice(&session_bytes[TIMESTAMP_BYTES..], standard())?;
         Ok(Some(data))
     }
 
@@ -336,7 +332,7 @@ fn validate_session_data(session_bytes: &[u8]) -> Result<()> {
 /// ID type for sessions
 ///
 /// Wraps a vector of bytes
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Id(Vec<u8>);
 
 impl Id {
