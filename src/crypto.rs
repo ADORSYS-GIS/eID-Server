@@ -35,7 +35,8 @@ pub enum HashAlg {
 impl HashAlg {
     /// Hash the given data with this hash algorithm
     pub fn hash(&self, data: impl AsRef<[u8]>) -> CryptoResult<Vec<u8>> {
-        let mut hasher = Hasher::new(self.into())?;
+        let digest = Digest::from(*self);
+        let mut hasher = Hasher::new(digest)?;
         hasher.update(data.as_ref())?;
         Ok(hasher.finish()?.to_vec())
     }
@@ -52,8 +53,8 @@ impl HashAlg {
     }
 }
 
-impl From<&HashAlg> for Digest {
-    fn from(hash_alg: &HashAlg) -> Self {
+impl From<HashAlg> for Digest {
+    fn from(hash_alg: HashAlg) -> Self {
         match hash_alg {
             HashAlg::Sha1 => Digest::sha1(),
             HashAlg::Sha224 => Digest::sha224(),

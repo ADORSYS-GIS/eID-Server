@@ -1,11 +1,12 @@
-use bincode::{Decode, Encode};
-use serde::{Deserialize, Serialize};
-
 pub mod did_auth;
 pub mod startpaos;
 
 pub use did_auth::*;
 pub use startpaos::*;
+
+use crate::domain::models::ResultType;
+use bincode::{Decode, Encode};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Decode, Encode)]
 #[serde(rename_all = "PascalCase")]
@@ -21,4 +22,10 @@ pub struct ConnectionHandle {
     pub card_application: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub slot_handle: Option<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct StartPaosResponse {
+    pub result: ResultType,
 }
