@@ -262,7 +262,7 @@ impl CrlManager {
         let removed = initial_size - self.crl_cache.len();
 
         if removed > 0 {
-            info!("Removed {} expired CRLs from cache", removed);
+            info!("Removed {} expired CRLs from cache.", removed);
         }
 
         removed
