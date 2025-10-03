@@ -41,7 +41,7 @@ fn decode_hex(hex: &str) -> Result<Vec<u8>, DecodeError> {
     hex::decode(hex).map_err(|e| {
         DecodeError::from_kind(
             DecodeErrorKind::Custom {
-                msg: format!("Hex decode error: {e}").into(),
+                msg: format!("Hex decode error: {e}"),
             },
             Codec::Der,
         )

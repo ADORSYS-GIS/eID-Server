@@ -49,10 +49,10 @@ async fn handle_error<E: Into<AppError>>(
     session_id: Option<&str>,
     error: E,
 ) -> Result<String, AppError> {
-    if let Some(session_id) = session_id {
-        if let Err(e) = session_mgr.remove(session_id).await {
-            tracing::warn!("Failed to remove session {session_id}: {e:?}");
-        }
+    if let Some(session_id) = session_id
+        && let Err(e) = session_mgr.remove(session_id).await
+    {
+        tracing::warn!("Failed to remove session {session_id}: {e:?}");
     }
     let env = Envelope::new(StartPaosResp::error(error));
     env.serialize_paos(true).map_err(AppError::paos_internal)
@@ -121,7 +121,7 @@ async fn handle_inner<T: TrustStore>(
     }
 
     // Build DIDAuthenticate with EAC2InputType
-    let resp = build_did_auth_eac2(&state, aux_data, &ecdh_keypair, &conn_handle, &data).await?;
+    let resp = build_did_auth_eac2(state, aux_data, &ecdh_keypair, &conn_handle, &data).await?;
 
     let message_id = uuid::Uuid::new_v4().urn().to_string();
     // remove old message id
