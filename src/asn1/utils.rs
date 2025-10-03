@@ -33,7 +33,7 @@ pub enum Error {
     Invalid(String),
 }
 
-/// Try to extract Chip Authentication v2 information from the SecurityInfos
+/// Try to extract Chip Authentication v2 informations from the SecurityInfos
 ///
 /// Returns an empty vector if no supported Chip Authentication information is found
 pub fn extract_chip_auth_info(hex: impl AsRef<str>) -> Result<Vec<ChipAuthenticationInfo>> {
@@ -69,7 +69,7 @@ fn try_parse_chip_auth_info(security_info: &SecurityInfo) -> Option<ChipAuthenti
     })
 }
 
-/// Try to find Chip Authentication v2 Domain Parameter information from the SecurityInfos
+/// Try to find Chip Authentication v2 Domain Parameter informations from the SecurityInfos
 ///
 /// Returns an empty vector if no supported Chip Authentication Domain Parameter information is found
 pub fn find_chip_auth_domain_param_info(
@@ -101,7 +101,7 @@ fn try_parse_domain_param_info(
     let params = domain_parameter.parameters.as_ref()?;
     let curve_int = der_decode::<Integer>(params.as_ref()).ok()?;
     let curve_val: u8 = curve_int.try_into().ok()?;
-    // Parse a curve from its integer identifier
+    // Parse a curve from its integer identifier (Table 4 in TR-03110-3)
     let curve = match curve_val {
         12 => Curve::NistP256,
         13 => Curve::BrainpoolP256r1,
