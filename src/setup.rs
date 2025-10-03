@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::domain::service::EidService;
+use crate::domain::service::Service;
 use crate::pki::identity::{FileIdentity, Identity};
 use crate::pki::master_list::schedule::{MasterListScheduler, SchedulerConfig};
 use crate::pki::truststore::MemoryTrustStore;
@@ -7,15 +7,14 @@ use crate::session::{MemoryStore, RedisStore, SessionManager, SessionStore};
 use crate::tls::{TLS_SESSION_PREFIX, TlsConfig};
 use color_eyre::eyre::Context;
 use std::sync::Arc;
+use time::Duration;
 
 pub struct SetupData {
     pub eid_store: Arc<dyn SessionStore>,
     pub tls_store: Arc<dyn SessionStore>,
 }
 
-pub async fn setup(
-    config: &Config,
-) -> color_eyre::Result<(EidService<MemoryTrustStore>, TlsConfig)> {
+pub async fn setup(config: &Config) -> color_eyre::Result<(Service<MemoryTrustStore>, TlsConfig)> {
     let (eid_store, tls_store): (Arc<dyn SessionStore>, Arc<dyn SessionStore>) =
         if let Some(redis_config) = &config.redis {
             tracing::info!("Redis URI provided, using Redis for session storage.");
@@ -37,7 +36,9 @@ pub async fn setup(
     let server_cert = include_bytes!("../test_certs/identity/server_chain.pem");
     let server_key = include_bytes!("../test_certs/identity/server.key");
 
-    let session_manager = SessionManager::new(eid_store);
+    let session_manager = SessionManager::new(eid_store)
+        .with_max_sessions(100)
+        .with_expiry(Duration::minutes(5));
 
     // Build the TLS configuration
     let tls_config = TlsConfig::from_pem(server_cert, server_key)

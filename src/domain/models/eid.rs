@@ -2,10 +2,11 @@ pub mod useid;
 
 pub use useid::*;
 
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 // Operations types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Decode, Encode)]
 pub struct Operations<T: Default> {
     #[serde(rename(serialize = "eid:DocumentType"))]
     #[serde(rename(deserialize = "DocumentType"), default)]

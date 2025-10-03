@@ -39,7 +39,7 @@ fn test_envelope_with_header() {
         },
         actions: vec!["action".to_string()],
     };
-    let header = Header;
+    let header = Header::default();
 
     let envelope = Envelope::new(request.clone()).with_header(header);
 

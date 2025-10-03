@@ -1,8 +1,9 @@
-use crate::domain::models::eid::UseIDRequest;
-use serde::{Deserialize, Serialize};
+use crate::domain::models::{State, eid::UseIDRequest};
+use bincode::{Decode, Encode};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Decode, Encode)]
 pub struct SessionData {
     pub request_data: UseIDRequest,
     pub psk: Vec<u8>,
+    pub state: State,
 }

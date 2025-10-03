@@ -6,7 +6,7 @@ use std::net::TcpListener;
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::domain::service::EidService;
+use crate::domain::service::Service;
 use crate::pki::truststore::TrustStore;
 use crate::server::handlers::health::health_check;
 use crate::tls::TlsConfig;
@@ -23,7 +23,7 @@ use tower_http::{
 
 #[derive(Debug, Clone)]
 pub struct AppState<T: TrustStore> {
-    pub service: EidService<T>,
+    pub service: Service<T>,
 }
 
 pub struct Server {
@@ -35,7 +35,7 @@ pub struct Server {
 impl Server {
     /// Creates a new HTTPS server.
     pub async fn new<T: TrustStore>(
-        service: EidService<T>,
+        service: Service<T>,
         config: &Config,
         tls_config: TlsConfig,
     ) -> Result<Self> {
