@@ -144,7 +144,7 @@ mod tests {
         let config = SchedulerConfig::default();
 
         assert!(config.enabled);
-        assert_eq!(config.cron_expression, "0 0 2 * * *");
+        assert_eq!(config.cron_expression, "0 0 0 * * *");
     }
 
     #[test]
