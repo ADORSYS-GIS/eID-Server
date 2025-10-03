@@ -10,12 +10,14 @@ pub use errors::Error;
 pub use types::{AccessRight, AccessRights, AccessRole, Date};
 
 use rasn::der::{decode as der_decode, encode as der_encode};
+use rasn::types::{ObjectIdentifier as Oid, OctetString};
 use types::CvcResult;
 
 use crate::asn1::cvcert::{
     Chat, CvCertificate as Asn1CVCertificate, CvCertificateBody as Asn1CVCertificateBody,
     EcdsaPublicKey,
 };
+use crate::asn1::oid::CHAT_OID;
 
 /// A Card Verifiable Certificate according to TR-03110-3
 #[derive(Debug, Clone)]
@@ -283,6 +285,38 @@ impl CvCertificateBody {
 }
 
 impl Chat {
+    /// Create a new CHAT from a template
+    pub fn new(template: [u8; 5]) -> Self {
+        Self {
+            oid: Oid::new_unchecked(CHAT_OID.into()),
+            template: OctetString::from(template),
+        }
+    }
+
+    /// Decode a CHAT from DER format
+    pub fn from_der(der: impl AsRef<[u8]>) -> CvcResult<Self> {
+        Ok(der_decode(der.as_ref())?)
+    }
+
+    /// Decode a CHAT from hex format
+    pub fn from_hex(hex: impl AsRef<str>) -> CvcResult<Self> {
+        let der = hex::decode(hex.as_ref())?;
+        Self::from_der(&der)
+    }
+
+    /// Get the DER representation of the CHAT
+    pub fn to_der(&self) -> Vec<u8> {
+        // safe to unwrap because Chat is a valid ASN.1 type
+        // we ensure that in the constructor
+        der_encode(self).unwrap()
+    }
+
+    /// Get the hex representation of the DER encoded CHAT
+    pub fn to_hex(&self) -> String {
+        let der = self.to_der();
+        hex::encode(der)
+    }
+
     /// Get the access role of this CHAT
     pub fn access_role(&self) -> AccessRole {
         if let Some(first_byte) = self.template.first() {

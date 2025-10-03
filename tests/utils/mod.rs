@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use eid_server::domain::service::EidService;
+use eid_server::domain::service::Service;
 use eid_server::pki::identity::{FileIdentity, Identity};
 use eid_server::pki::truststore::MemoryTrustStore;
 use eid_server::session::{MemoryStore, SessionManager};
@@ -23,7 +23,7 @@ pub async fn spawn_server(session_store: MemoryStore, tls_config: TlsConfig) -> 
     let identity = Identity::new(file_identity.clone(), file_identity);
     let trust_store = MemoryTrustStore::new("./test_certs").await.unwrap();
 
-    let service = EidService::new(session_manager, trust_store, identity);
+    let service = Service::new(session_manager, trust_store, identity);
     let server = Server::new(service, &config, tls_config).await.unwrap();
 
     let port = server.port();
