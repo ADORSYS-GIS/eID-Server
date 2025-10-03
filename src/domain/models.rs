@@ -9,7 +9,7 @@ pub const RESULT_OK: &str = "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok
 pub const RESULT_ERROR: &str = "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error";
 
 /// Result type for error handling
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ResultType {
     pub result_major: String,
@@ -48,5 +48,13 @@ impl ResultType {
 #[derive(Debug, Clone, Serialize, Deserialize, Decode, Encode)]
 pub enum State {
     Initial,
-    EAC1(ConnectionHandle),
+    EAC1 {
+        conn_handle: ConnectionHandle,
+        aux_data: Option<String>,
+    },
+    EAC2 {
+        slot_handle: String,
+        chat: Option<String>,
+        eph_key: Vec<u8>,
+    },
 }
