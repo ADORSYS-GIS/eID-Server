@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
-use time::{OffsetDateTime, Time, Weekday};
+use time::{OffsetDateTime, Time};
 use tokio::sync::Mutex;
 use tokio::time::{Instant, interval, sleep_until};
 use tracing::{error, info};
@@ -14,8 +14,6 @@ pub struct SchedulerConfig {
     /// Whether the scheduler is enabled
     pub enabled: bool,
     /// Day of the week to run the update (default: Sunday)
-    pub update_day: Weekday,
-    /// Hour of the day to run the update (0-23, default: 2 AM)
     pub update_hour: u8,
     /// Minute of the hour to run the update (0-59, default: 0)
     pub update_minute: u8,
@@ -27,7 +25,6 @@ impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            update_day: Weekday::Sunday,
             update_hour: 2,
             update_minute: 0,
             master_list_config: MasterListConfig::default(),
@@ -230,13 +227,11 @@ impl<T: TrustStore + Clone + Send + Sync + 'static> MasterListScheduler<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use time::Weekday;
 
     #[test]
     fn test_calculate_next_run_time() {
         let config = SchedulerConfig {
             enabled: true,
-            update_day: Weekday::Sunday,
             update_hour: 2,
             update_minute: 0,
             master_list_config: MasterListConfig::default(),
@@ -257,7 +252,6 @@ mod tests {
         let config = SchedulerConfig::default();
 
         assert!(config.enabled);
-        assert_eq!(config.update_day, Weekday::Sunday);
         assert_eq!(config.update_hour, 2);
         assert_eq!(config.update_minute, 0);
     }

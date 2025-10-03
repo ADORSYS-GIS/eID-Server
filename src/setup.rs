@@ -54,10 +54,10 @@ pub async fn setup(
 
     // Create scheduler with integrated trust store management
     tracing::info!("Creating master list scheduler...");
+    // In your setup function
     let scheduler_config = SchedulerConfig {
         enabled: true,
-        update_day: time::Weekday::Sunday,
-        update_hour: 2,
+        update_hour: 2, // Runs daily at 2:00 AM
         update_minute: 0,
         master_list_config: config.master_list.clone(),
     };
