@@ -34,8 +34,8 @@ mod paos {
 
 #[derive(Error, Debug)]
 pub enum AppError {
-    #[error("Unknown API function: {0}")]
-    InvalidRequest(String),
+    #[error("API function not supported")]
+    InvalidRequest,
     #[error(transparent)]
     Eid(EidError),
     #[error(transparent)]
@@ -58,7 +58,7 @@ impl AppError {
     /// Convert this error to a ResultType
     pub fn to_result(&self) -> ResultType {
         let error_code = match self {
-            AppError::InvalidRequest(_) => INVALID_REQUEST.into(),
+            AppError::InvalidRequest => INVALID_REQUEST.into(),
             AppError::Eid(eid_error) => eid_error.to_error_code(),
             AppError::Paos(paos_error) => paos_error.to_error_code(),
         };
@@ -67,8 +67,8 @@ impl AppError {
 }
 
 impl From<quick_xml::DeError> for AppError {
-    fn from(error: quick_xml::DeError) -> Self {
-        AppError::InvalidRequest(error.to_string())
+    fn from(_: quick_xml::DeError) -> Self {
+        AppError::InvalidRequest
     }
 }
 

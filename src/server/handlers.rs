@@ -88,6 +88,6 @@ where
             ))
             .await
         }
-        IncomingReq::Other => Err(AppError::InvalidRequest("Unsupported request type".into())),
+        IncomingReq::Other => Err(AppError::InvalidRequest),
     }
 }
