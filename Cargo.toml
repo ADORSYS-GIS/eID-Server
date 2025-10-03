@@ -44,8 +44,13 @@ hex-literal = "1"
 regex = "1"
 dotenvy = "0.15"
 walkdir = "2"
-mini-moka = "0.10"
+zip = "5.1"
+scraper = "0.20"
+pem = "3.0"
+url = "2.5"
 once_cell = "1.21"
+tokio-cron-scheduler = "0.15"
+mini-moka = "0.10"
 uuid = { version = "1.18", features = ["v4"] }
 validator = { version = "0.20", features = ["derive"] }
 time = { version = "0.3", features = ["serde", "parsing"] }

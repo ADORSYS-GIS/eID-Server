@@ -113,6 +113,11 @@ pub trait TrustStore: Clone + Send + Sync + 'static {
 
     /// Remove all certificates from the trust store.
     fn clear(&self) -> impl Future<Output = Result<(), TrustStoreError>> + Send;
+
+    /// Get all certificates from the trust store for iteration.
+    fn iter_all_certificates(
+        &self,
+    ) -> impl Future<Output = Result<Vec<CertificateEntry>, TrustStoreError>> + Send;
 }
 
 /// In-memory trust store implementation.
@@ -390,6 +395,14 @@ impl TrustStore for MemoryTrustStore {
     async fn clear(&self) -> Result<(), TrustStoreError> {
         self.cache.clear();
         Ok(())
+    }
+
+    async fn iter_all_certificates(&self) -> Result<Vec<CertificateEntry>, TrustStoreError> {
+        Ok(self
+            .cache
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect())
     }
 }
 
