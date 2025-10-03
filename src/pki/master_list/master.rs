@@ -30,6 +30,9 @@ pub enum MasterListError {
 
     #[error("No valid CSCA certificates found in master list")]
     NoValidCertificates,
+
+    #[error("Cron error: {0}")]
+    Cron(#[from] tokio_cron_scheduler::JobSchedulerError),
 }
 
 /// Master list handler for CSCA certificate validation
