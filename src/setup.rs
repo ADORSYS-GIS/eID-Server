@@ -52,9 +52,8 @@ pub async fn setup(
 
     let service = EidService::new(session_manager, truststore.clone(), identity);
 
-    // Create scheduler with integrated trust store management
     tracing::info!("Creating master list scheduler...");
-    // In your setup function
+    // The cron job will rerun everyday at midnight
     let scheduler_config = SchedulerConfig::default();
 
     let scheduler = MasterListScheduler::new(scheduler_config, truststore);
