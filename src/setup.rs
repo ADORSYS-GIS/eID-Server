@@ -51,7 +51,7 @@ pub async fn setup(config: &Config) -> color_eyre::Result<(Service<MemoryTrustSt
     tracing::info!("Initializing trust store...");
     let truststore = MemoryTrustStore::new("./test_certs").await?;
 
-    let service = EidService::new(session_manager, truststore.clone(), identity);
+    let service = Service::new(session_manager, truststore.clone(), identity);
 
     tracing::info!("Creating master list scheduler...");
     // The cron job will rerun everyday at midnight
