@@ -1,3 +1,4 @@
+pub mod did_auth;
 pub mod health;
 pub mod startpaos;
 pub mod useid;
@@ -14,8 +15,9 @@ use tracing::{debug, instrument};
 use useid::handle_useid;
 
 use crate::domain::models::eid::UseIDRequest;
-use crate::domain::models::paos::StartPaosReq;
+use crate::domain::models::paos::{DIDAuthenticateResponse, EAC1OutputType, StartPaosReq};
 use crate::pki::truststore::TrustStore;
+use crate::server::handlers::did_auth::handle_did_authenticate;
 use crate::server::{AppState, errors::AppError};
 use crate::soap::Envelope;
 
@@ -34,6 +36,8 @@ enum IncomingReq {
     UseIDReq(UseIDRequest),
     #[serde(rename = "StartPAOS")]
     StartPaosReq(StartPaosReq),
+    #[serde(rename = "DIDAuthenticateResponse")]
+    DidAuthRespEAC1(DIDAuthenticateResponse<EAC1OutputType>),
     #[serde(other)]
     Other,
 }
@@ -72,6 +76,13 @@ where
         }
         IncomingReq::StartPaosReq(request) => {
             wrap_soap(handle_start_paos(
+                state,
+                Envelope::new(request).with_header(header),
+            ))
+            .await
+        }
+        IncomingReq::DidAuthRespEAC1(request) => {
+            wrap_soap(handle_did_authenticate(
                 state,
                 Envelope::new(request).with_header(header),
             ))

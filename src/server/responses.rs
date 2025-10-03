@@ -30,7 +30,10 @@ impl<T: Into<String>> IntoResponse for SoapResponse<T> {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         match Envelope::new(self.to_result()).serialize_soap(true) {
-            Ok(xml) => SoapResponse::new(xml).into_response(),
+            Ok(xml) => {
+                tracing::debug!(xml = %xml, "Sending error response\n");
+                SoapResponse::new(xml).into_response()
+            }
             Err(e) => {
                 tracing::error!(error = ?e, "Failed to serialize XML error response");
                 (StatusCode::INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MESSAGE).into_response()

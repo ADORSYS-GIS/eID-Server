@@ -178,6 +178,24 @@ impl From<ValidationErrors> for PaosError {
     }
 }
 
+macro_rules! impl_paos_internal_error {
+    ($($error_type:ty),* $(,)?) => {
+        $(
+            impl From<$error_type> for AppError {
+                fn from(error: $error_type) -> Self {
+                    AppError::paos_internal(error)
+                }
+            }
+        )*
+    };
+}
+pub(crate) use impl_paos_internal_error;
+
+impl_paos_internal_error! {
+    crate::session::SessionError,
+    crate::pki::identity::Error,
+}
+
 #[inline]
 fn soap_error_code(suffix: &str) -> String {
     format!("{SOAP_MINOR_PREFIX}{suffix}")
