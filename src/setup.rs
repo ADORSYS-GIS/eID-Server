@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::domain::service::Service;
 use crate::pki::identity::{FileIdentity, Identity};
+use crate::pki::master_list::schedule::{MasterListScheduler, SchedulerConfig};
 use crate::pki::truststore::MemoryTrustStore;
 use crate::session::{MemoryStore, RedisStore, SessionManager, SessionStore};
 use crate::tls::{TLS_SESSION_PREFIX, TlsConfig};
@@ -46,10 +47,27 @@ pub async fn setup(config: &Config) -> color_eyre::Result<(Service<MemoryTrustSt
 
     let file_identity = FileIdentity::new();
     let identity = Identity::new(file_identity.clone(), file_identity);
-    let trust_store = MemoryTrustStore::new("./test_certs").await?;
 
-    Ok((
-        Service::new(session_manager, trust_store, identity),
-        tls_config,
-    ))
+    tracing::info!("Initializing trust store...");
+    let truststore = MemoryTrustStore::new("./test_certs").await?;
+
+    let service = Service::new(session_manager, truststore.clone(), identity);
+
+    tracing::info!("Creating master list scheduler...");
+    // The cron job will rerun everyday at midnight
+    let scheduler_config = SchedulerConfig::default();
+
+    let scheduler = MasterListScheduler::new(scheduler_config, truststore);
+
+    // Perform initial master list processing
+    tracing::info!("Performing initial master list processing...");
+    if let Err(e) = scheduler.trigger_immediate_update().await {
+        tracing::warn!("Failed to load master list: {e}. Continuing with local certificates only.")
+    }
+
+    // Start scheduler for automatic updates
+    scheduler.start().await?;
+    tracing::info!("Master list scheduler started for automatic updates");
+
+    Ok((service, tls_config))
 }
