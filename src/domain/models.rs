@@ -5,6 +5,8 @@ use bincode::{Decode, Encode};
 use paos::ConnectionHandle;
 use serde::{Deserialize, Serialize};
 
+use crate::{asn1::utils::ChipAuthAlg, crypto::Curve};
+
 pub const RESULT_OK: &str = "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok";
 pub const RESULT_ERROR: &str = "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error";
 
@@ -45,7 +47,7 @@ impl ResultType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Decode, Encode)]
+#[derive(Debug, Clone, Decode, Encode)]
 pub enum State {
     Initial,
     EAC1 {
@@ -56,5 +58,6 @@ pub enum State {
         slot_handle: String,
         chat: Option<String>,
         eph_key: Vec<u8>,
+        chip_auth: (Curve, ChipAuthAlg),
     },
 }
