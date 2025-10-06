@@ -1,4 +1,5 @@
 pub mod adapters;
+pub mod apdu;
 pub mod asn1;
 pub mod config;
 pub mod crypto;
