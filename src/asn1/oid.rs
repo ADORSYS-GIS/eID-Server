@@ -49,3 +49,8 @@ pub const STD_DOMAINPARAMS: &[u32] = &[0, 4, 0, 127, 0, 7, 1, 2];
 // OIDs for Cryptographic Message Syntax (CMS)
 pub const ID_SIGNED_DATA: &[u32] = &[1, 2, 840, 113549, 1, 7, 2];
 pub const ID_SECURITY_OBJECT: &[u32] = &[0, 4, 0, 127, 0, 7, 3, 2, 1];
+
+// OIDs for hash algorithms
+pub const SHA256_OID: &[u32] = &[2, 16, 840, 1, 101, 3, 4, 2, 1];
+pub const SHA384_OID: &[u32] = &[2, 16, 840, 1, 101, 3, 4, 2, 2];
+pub const SHA512_OID: &[u32] = &[2, 16, 840, 1, 101, 3, 4, 2, 3];
