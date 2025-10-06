@@ -1,7 +1,8 @@
+use crate::asn1::oid::{ID_SECURITY_OBJECT, ID_SIGNED_DATA};
 use rasn::error::DecodeError;
 use rasn::prelude::{ObjectIdentifier as Oid, *};
 use rasn::{Codec, error::DecodeErrorKind};
-use rasn_cms::AlgorithmIdentifier;
+use rasn_cms::{AlgorithmIdentifier, ContentType, SignedData};
 use rasn_pkix::SubjectPublicKeyInfo;
 
 /// EF.CardAccess is SecurityInfos defined in TR 3110 Part 3
@@ -89,4 +90,47 @@ pub struct ChipAuthPubKeyInfo {
 pub struct StdDomainParamAlgIdentifier {
     pub algorithm: Oid,
     pub std_domain_param: Integer,
+}
+
+/// EF.CardSecurity is ContentInfo with contentType id-signedData
+/// and the SignedData has eContentType id-SecurityObject
+#[derive(Debug, Clone, PartialEq, Eq, Hash, AsnType, Encode, Decode)]
+pub struct EFCardSecurity {
+    pub content_type: ContentType,
+    #[rasn(tag(explicit(0)))]
+    pub content: SignedData,
+}
+
+impl EFCardSecurity {
+    /// Decode the EF.CardSecurity from DER encoded data
+    pub fn from_der(der: impl AsRef<[u8]>) -> Result<Self, DecodeError> {
+        let value = rasn::der::decode::<Self>(der.as_ref())?;
+
+        // Validate content type is id-signedData
+        if value.content_type.as_ref() != ID_SIGNED_DATA {
+            return Err(DecodeError::from_kind(
+                DecodeErrorKind::Custom {
+                    msg: "Invalid content type, expected id-signedData".into(),
+                },
+                Codec::Der,
+            ));
+        }
+        // Validate encapsulated content type is id-securityObject
+        let encap_content_type = &value.content.encap_content_info.content_type;
+        if encap_content_type.as_ref() != ID_SECURITY_OBJECT {
+            return Err(DecodeError::from_kind(
+                DecodeErrorKind::Custom {
+                    msg: "Invalid content type, expected id-securityObject".into(),
+                },
+                Codec::Der,
+            ));
+        }
+        Ok(value)
+    }
+
+    /// Decode the EF.CardSecurity from hex representation of DER encoded data
+    pub fn from_hex(hex: impl AsRef<str>) -> Result<Self, DecodeError> {
+        let der = decode_hex(hex.as_ref())?;
+        Self::from_der(&der)
+    }
 }
