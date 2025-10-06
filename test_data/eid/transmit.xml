@@ -1,0 +1,27 @@
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">
+    <SOAP-ENV:Header>
+        <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">
+            urn:uuid:be3bd39a-e1c0-7fd3-548a-b7a1e1162a9f</RelatesTo>
+        <MessageID xmlns="http://www.w3.org/2005/03/addressing">
+            urn:uuid:2766d4a6-66fb-4443-92e2-6eb1158c1bf3</MessageID>
+    </SOAP-ENV:Header>
+    <SOAP-ENV:Body>
+        <ns4:Transmit xmlns:ns2="urn:oasis:names:tc:dss:1.0:core:schema"
+            xmlns:ns3="http://www.w3.org/2000/09/xmldsig#"
+            xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
+            <ns4:SlotHandle>00</ns4:SlotHandle>
+            <ns4:InputAPDUInfo>
+                <ns4:InputAPDU>
+                    0CA4040C1D871101A45BA74C24706733AC193D5CBCC9BDA88E080D80662E1F04EF3600</ns4:InputAPDU>
+            </ns4:InputAPDUInfo>
+            <ns4:InputAPDUInfo>
+                <ns4:InputAPDU>
+                    8C2080001D87110119B7C51898EB82C5CDB1EF1B51E90F378E08637D1682CF617CB400</ns4:InputAPDU>
+            </ns4:InputAPDUInfo>
+            <ns4:InputAPDUInfo>
+                <ns4:InputAPDU>
+                    0C2241A41D871101E37C3653DF5757D504EA7986AACFA3718E08EBC5475CB321747900</ns4:InputAPDU>
+            </ns4:InputAPDUInfo>
+        </ns4:Transmit>
+    </SOAP-ENV:Body>
+</SOAP-ENV:Envelope>
