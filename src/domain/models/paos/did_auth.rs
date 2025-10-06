@@ -105,6 +105,19 @@ pub struct EAC1OutputType {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Validate)]
+#[serde(rename_all = "PascalCase")]
+pub struct EAC2OutputType {
+    #[serde(rename = "EFCardSecurity")]
+    pub card_security: String,
+    #[serde(rename = "AuthenticationToken")]
+    #[validate(length(min = 8, max = 8))]
+    pub auth_token: String,
+    pub nonce: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub challenge: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Validate)]
 pub struct DIDAuthenticateResponse<T: Validate> {
     #[serde(rename = "Result")]
     pub result: ResultType,
@@ -215,11 +228,7 @@ mod tests {
     fn test_did_authenticate_eac2_input_parsing() {
         let req = include_str!("../../../../test_data/eid/didAuthenticateEAC2.xml");
         let result = Envelope::<DIDAuthenticate<EAC2InputType>>::parse(req);
-        assert!(
-            result.is_ok(),
-            "Failed to parse XML: {:?}",
-            result.unwrap_err()
-        );
+        assert!(result.is_ok());
 
         let request = result.unwrap();
         assert!(request.body().validate().is_ok());
@@ -272,11 +281,20 @@ mod tests {
     fn test_did_authenticate_eac1_response_parsing() {
         let req = include_str!("../../../../test_data/eid/didAuthEAC1Response.xml");
         let result = Envelope::<DIDAuthenticateResponse<EAC1OutputType>>::parse(req);
-        assert!(
-            result.is_ok(),
-            "Failed to parse XML: {:?}",
-            result.unwrap_err()
-        );
+        assert!(result.is_ok());
+
+        let request = result.unwrap();
+        assert!(request.body().validate().is_ok());
+        assert!(request.header().is_some());
+        assert!(request.header().as_ref().unwrap().message_id.is_some());
+        assert!(request.header().as_ref().unwrap().relates_to.is_some());
+    }
+
+    #[test]
+    fn test_did_authenticate_eac2_response_parsing() {
+        let req = include_str!("../../../../test_data/eid/didAuthEAC2Response.xml");
+        let result = Envelope::<DIDAuthenticateResponse<EAC2OutputType>>::parse(req);
+        assert!(result.is_ok());
 
         let request = result.unwrap();
         assert!(request.body().validate().is_ok());
