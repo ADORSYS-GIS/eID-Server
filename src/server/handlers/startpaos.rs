@@ -11,11 +11,10 @@ use crate::domain::models::State;
 use crate::domain::models::eid::AttributeReq;
 use crate::domain::models::paos::{
     AuthProtoData, ConnectionHandle, DIDAuthenticate, EAC1InputType, StartPaosReq,
-    StartPaosResponse,
 };
 use crate::pki::{identity::Material, truststore::TrustStore};
 use crate::server::errors::impl_paos_internal_error;
-use crate::server::handlers::SESSION_TRACKER;
+use crate::server::handlers::{SESSION_TRACKER, handle_paos_error};
 use crate::server::{
     AppState,
     errors::{AppError, PaosError},
@@ -29,39 +28,11 @@ const EAC1_TYPE: &str = "EAC1InputType";
 const KNOWN_AIDS: &[&str] = &["E80704007F00070302"];
 const EAC2_PROTOCOL_ID: &str = "urn:oid:1.3.162.15480.3.0.14.2";
 
-#[derive(Debug, Serialize)]
-struct StartPaosResp {
-    #[serde(rename = "StartPAOSResponse")]
-    resp: StartPaosResponse,
-}
-
 #[derive(Debug, Serialize, Validate)]
 struct DidAuthEac1 {
     #[validate(nested)]
     #[serde(rename = "DIDAuthenticate")]
     value: DIDAuthenticate<EAC1InputType>,
-}
-
-impl StartPaosResp {
-    pub fn error<T: Into<AppError>>(error: T) -> Self {
-        Self {
-            resp: StartPaosResponse {
-                result: error.into().to_result(),
-            },
-        }
-    }
-}
-
-async fn handle_error<E: Into<AppError>>(
-    session_mgr: &SessionManager,
-    session_id: &str,
-    error: E,
-) -> Result<String, AppError> {
-    if let Err(e) = session_mgr.remove(session_id).await {
-        tracing::warn!("Failed to remove session {session_id}: {e:?}");
-    }
-    let env = Envelope::new(StartPaosResp::error(error));
-    env.serialize_paos(true).map_err(AppError::paos_internal)
 }
 
 pub async fn handle_start_paos<T: TrustStore>(
@@ -73,7 +44,7 @@ pub async fn handle_start_paos<T: TrustStore>(
 
     match handle_inner(&state, envelope).await {
         Ok(result) => Ok(result),
-        Err(e) => handle_error(session_mgr, &session_id, e).await,
+        Err(e) => handle_paos_error(session_mgr, &session_id, e).await,
     }
 }
 
