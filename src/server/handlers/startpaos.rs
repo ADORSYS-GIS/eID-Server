@@ -86,9 +86,12 @@ async fn handle_inner<T: TrustStore>(
 
     // Update session state
     let aux_data = &resp.value.auth_protocol_data.data.auth_aux_data;
+    let required_chat = build_required_chat(&session_data);
+    let optional_chat = build_optional_chat(&session_data);
     session_data.state = State::EAC1 {
         conn_handle: conn_handle.clone(),
         aux_data: aux_data.clone(),
+        built_chat: (required_chat, optional_chat),
     };
     session_mgr.insert(session_id, &session_data).await?;
 

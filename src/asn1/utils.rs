@@ -1,10 +1,13 @@
-use crate::asn1::oid::ID_SECURITY_OBJECT;
 use crate::asn1::oid::{
     ID_CA_ECDH, ID_CA_ECDH_AES_CBC_CMAC_128, ID_CA_ECDH_AES_CBC_CMAC_192,
-    ID_CA_ECDH_AES_CBC_CMAC_256, ID_PK_ECDH, SHA256_OID, SHA384_OID, SHA512_OID, STD_DOMAINPARAMS,
+    ID_CA_ECDH_AES_CBC_CMAC_256, ID_PK_ECDH, ID_SECURITY_OBJECT, SHA256_OID, SHA384_OID,
+    SHA512_OID, STD_DOMAINPARAMS,
 };
-use crate::crypto::ecdsa::EcdsaSig;
-use crate::crypto::{Curve, Error as CryptoError, PublicKey, ecdsa};
+use crate::crypto::{
+    Curve, Error as CryptoError, PublicKey,
+    ecdsa::{self, EcdsaSig},
+    sym::Cipher,
+};
 use crate::pki::truststore::{TrustStore, TrustStoreError};
 use crate::{
     asn1::security_info::{
@@ -81,7 +84,7 @@ impl ChipAuthAlg {
         }
     }
 
-    pub fn to_cipher(&self) -> crate::crypto::sym::Cipher {
+    pub fn to_cipher(&self) -> Cipher {
         use crate::crypto::sym::Cipher;
         match self {
             ChipAuthAlg::EcdhAesCbcCmac128 => Cipher::Aes128Cbc,
