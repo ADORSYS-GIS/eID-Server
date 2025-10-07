@@ -1,0 +1,26 @@
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">
+    <SOAP-ENV:Header>
+        <RelatesTo xmlns="http://www.w3.org/2005/03/addressing">
+            urn:uuid:f4bb8ffe-e244-100d-738e-560e3399a16e</RelatesTo>
+        <MessageID xmlns="http://www.w3.org/2005/03/addressing">
+            urn:uuid:9d60348c-05b1-4e73-8971-777f6171787c</MessageID>
+    </SOAP-ENV:Header>
+    <SOAP-ENV:Body>
+        <ns4:DIDAuthenticate xmlns:ns2="urn:oasis:names:tc:dss:1.0:core:schema"
+            xmlns:ns3="http://www.w3.org/2000/09/xmldsig#"
+            xmlns:ns4="urn:iso:std:iso-iec:24727:tech:schema">
+            <ns4:ConnectionHandle>
+                <ns4:CardApplication>E80704007F00070302</ns4:CardApplication>
+                <ns4:SlotHandle>00</ns4:SlotHandle>
+            </ns4:ConnectionHandle>
+            <ns4:DIDName>PIN</ns4:DIDName>
+            <ns4:AuthenticationProtocolData xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                Protocol="urn:oid:1.3.162.15480.3.0.14.2" xsi:type="ns4:EAC2InputType">
+                <EphemeralPublicKey xmlns="urn:iso:std:iso-iec:24727:tech:schema">
+                    04646ceed8cd570dea4f5eda2a85b0e6bd45ad1de7a394b0fffab6ff0e7da8c79b6fb3d43ba8737366bcc3f06a538025c979593c3b42bf007d925d4c844cbc9aff</EphemeralPublicKey>
+                <Signature xmlns="urn:iso:std:iso-iec:24727:tech:schema">
+                    71f914880b5dc54f2aad66659f3fe13b25b1ff24cfe80bd7eadc5d961d3e1819313cb953661fda4ee029604ccc63de2dded3afb4ea70dc29ddbed3e8ff3665ab</Signature>
+            </ns4:AuthenticationProtocolData>
+        </ns4:DIDAuthenticate>
+    </SOAP-ENV:Body>
+</SOAP-ENV:Envelope>

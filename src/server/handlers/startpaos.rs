@@ -13,8 +13,8 @@ use crate::domain::models::paos::{
     AuthProtoData, ConnectionHandle, DIDAuthenticate, EAC1InputType, StartPaosReq,
     StartPaosResponse,
 };
-use crate::pki::identity::Material;
-use crate::pki::truststore::TrustStore;
+use crate::pki::{identity::Material, truststore::TrustStore};
+use crate::server::errors::impl_paos_internal_error;
 use crate::server::handlers::SESSION_TRACKER;
 use crate::server::{
     AppState,
@@ -114,7 +114,11 @@ async fn handle_inner<T: TrustStore>(
     };
 
     // Update session state
-    session_data.state = State::EAC1(conn_handle.clone());
+    let aux_data = &resp.value.auth_protocol_data.data.auth_aux_data;
+    session_data.state = State::EAC1 {
+        conn_handle: conn_handle.clone(),
+        aux_data: aux_data.clone(),
+    };
     session_mgr.insert(session_id, &session_data).await?;
 
     resp.validate().map_err(AppError::paos_internal)?;
@@ -257,21 +261,7 @@ fn build_chat(
     }
 }
 
-macro_rules! impl_paos_internal_error {
-    ($($error_type:ty),* $(,)?) => {
-        $(
-            impl From<$error_type> for AppError {
-                fn from(error: $error_type) -> Self {
-                    AppError::paos_internal(error)
-                }
-            }
-        )*
-    };
-}
-
 impl_paos_internal_error! {
-    crate::session::SessionError,
-    crate::pki::identity::Error,
     time::error::InvalidFormatDescription,
     time::error::ComponentRange,
     time::error::Format,
