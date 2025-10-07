@@ -59,7 +59,6 @@ time = { version = "0.3", features = ["serde", "parsing"] }
 rand = "0.9"
 aes = "0.8"
 cmac = "0.7"
-sha1 = "0.10"
 sha2 = "0.10"
 secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
