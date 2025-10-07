@@ -110,7 +110,7 @@ pub struct EAC2OutputType {
     #[serde(rename = "EFCardSecurity")]
     pub card_security: String,
     #[serde(rename = "AuthenticationToken")]
-    #[validate(length(min = 8, max = 8))]
+    #[validate(length(min = 16, max = 16))]
     pub auth_token: String,
     pub nonce: String,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -1,7 +1,6 @@
 pub mod did_auth;
 pub mod health;
 pub mod startpaos;
-pub mod transmit;
 pub mod useid;
 
 use std::time::Duration;
@@ -17,8 +16,7 @@ use useid::handle_useid;
 
 use crate::domain::models::paos::StartPaosResponse;
 use crate::pki::truststore::TrustStore;
-use crate::server::handlers::did_auth::handle_did_auth_eac1;
-use crate::server::handlers::transmit::handle_did_auth_eac2;
+use crate::server::handlers::did_auth::{handle_did_auth_eac1, handle_did_auth_eac2};
 use crate::server::responses::SoapResponse;
 use crate::server::{AppState, errors::AppError};
 use crate::session::SessionManager;

@@ -227,6 +227,7 @@ impl MemoryTrustStore {
             if let Ok(trusted_cert) = entry.value().parse() {
                 trusted_cert.subject() == cert.subject()
                     && trusted_cert.public_key().raw == cert.public_key().raw
+                    && trusted_cert.verify_signature(None).is_ok()
             } else {
                 false
             }
