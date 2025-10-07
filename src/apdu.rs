@@ -1,10 +1,14 @@
+mod builder;
 mod commands;
 mod tlv;
 
+use bincode::{Decode, Encode};
+pub use builder::*;
 pub use commands::*;
 pub use tlv::APDUTlv;
 
 use crate::asn1::utils::ChipAuthAlg;
+use crate::crypto::kdf::KdfParams;
 use crate::crypto::{
     PrivateKey, PublicKey, SecureBytes, iso_7816_pad, iso_7816_unpad,
     sym::{AesEncryptor, Cipher},
@@ -19,10 +23,13 @@ pub enum Error {
 
     #[error("Cryptographic error: {0}")]
     Crypto(#[from] crate::crypto::Error),
+
+    #[error("ASN.1 error: {0}")]
+    Asn1(#[from] rasn::error::EncodeError),
 }
 
 /// ISO7816 instructions
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[repr(u8)]
 pub enum Ins {
     Unknown = 0x00,
@@ -43,7 +50,7 @@ impl From<u8> for Ins {
 }
 
 /// APDU structure using iso7816 crate concepts
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct APDUCommand {
     pub cla: u8,
     pub ins: Ins,
@@ -124,6 +131,7 @@ pub struct StatusCode(pub u16);
 
 impl StatusCode {
     pub const SUCCESS: StatusCode = StatusCode(0x9000);
+    pub const INVALID_SM_OBJECTS: StatusCode = StatusCode(0x6988);
     pub const VERIFY_FAILED: StatusCode = StatusCode(0x6300);
     pub const NOT_FOUND: StatusCode = StatusCode(0x6A88);
     pub const NOT_AUTHORIZED: StatusCode = StatusCode(0x6982);
@@ -201,14 +209,14 @@ impl SessionKeys {
 
         let k_enc = kdf::derive_from_shared_secret(
             &shared_secret,
-            &kdf::KdfParams::new(hash_alg, cipher.key_size())
+            &KdfParams::new(hash_alg, cipher.key_size())
                 .with_nonce(nonce.as_ref())
                 .with_counter(1),
         )?;
 
         let k_mac = kdf::derive_from_shared_secret(
             &shared_secret,
-            &kdf::KdfParams::new(hash_alg, cipher.key_size())
+            &KdfParams::new(hash_alg, cipher.key_size())
                 .with_nonce(nonce.as_ref())
                 .with_counter(2),
         )?;
@@ -248,6 +256,11 @@ impl SecureMessaging {
         self.ssc += 1;
     }
 
+    /// Get the current Send Sequence Counter
+    pub fn ssc(&self) -> u32 {
+        self.ssc
+    }
+
     /// Calculate CMAC for the given data
     pub fn calculate_mac(&self, data: impl AsRef<[u8]>) -> Result<[u8; 8]> {
         let mac_bytes = self.encryptor.calculate_mac(self.k_mac(), data)?;
@@ -257,19 +270,19 @@ impl SecureMessaging {
     }
 
     /// Create a secure APDU command
-    pub fn create_command(&mut self, command: &APDUCommand) -> Result<APDUCommand> {
+    pub fn create_secure_command(&mut self, command: &APDUCommand) -> Result<APDUCommand> {
         let block_size = self.encryptor.cipher().block_size();
         let ssc_bytes = Self::ssc_to_bytes(self.ssc);
         let iv = self.derive_encrypted_iv(&ssc_bytes)?;
-        let header = [command.cla, command.ins as u8, command.p1, command.p2];
+        // Set secure messaging flag
+        let cla = command.cla | 0x0C;
+        let header = [cla, command.ins as u8, command.p1, command.p2];
 
         // Encrypt and add command data if present
         let mut encrypted_data = vec![];
         if !command.data.is_empty() {
             let encrypted = self.encrypt_data(&command.data, &iv)?;
-            let mut v = vec![0x01];
-            v.extend_from_slice(&encrypted);
-            let encrypted_tlv = APDUTlv::encrypted_data(v);
+            let encrypted_tlv = APDUTlv::encrypted_data(encrypted);
             encrypted_data.extend_from_slice(&encrypted_tlv.encode());
         }
 
@@ -309,13 +322,10 @@ impl SecureMessaging {
         } else {
             APDUCommand::SHORT_MAX_LE
         };
-
-        let mut secured_apdu = APDUCommand::from_components(header, secured_data, new_le);
-        secured_apdu.set_secure_messaging(true);
-        Ok(secured_apdu)
+        Ok(APDUCommand::from_components(header, secured_data, new_le))
     }
 
-    pub fn process_response(&mut self, response: &APDUResponse) -> Result<APDUResponse> {
+    pub fn process_secure_response(&mut self, response: &APDUResponse) -> Result<APDUResponse> {
         if response.data.is_empty() {
             return Err(Error::InvalidData("Empty response data".into()));
         }
@@ -470,7 +480,7 @@ mod tests {
         let mut sm = SecureMessaging::new(keys);
 
         let cmd = APDUCommand::new(Ins::Select, 0x04, 0x0C, vec![], 0x00);
-        let result = sm.create_command(&cmd);
+        let result = sm.create_secure_command(&cmd);
 
         assert!(result.is_ok());
         let secured = result.unwrap();
@@ -493,7 +503,7 @@ mod tests {
         let mut sm = SecureMessaging::new(keys);
 
         let cmd = APDUCommand::new(Ins::Select, 0x04, 0x0C, vec![0x01, 0x02, 0x03], 0x00);
-        let result = sm.create_command(&cmd);
+        let result = sm.create_secure_command(&cmd);
 
         assert!(result.is_ok());
         let secured = result.unwrap();
@@ -530,7 +540,7 @@ mod tests {
         response_data.extend_from_slice(&mac_tlv.encode());
 
         let response = APDUResponse::new(response_data, 0x90, 0x00);
-        let result = sm.process_response(&response);
+        let result = sm.process_secure_response(&response);
 
         assert!(result.is_ok());
         let processed = result.unwrap();
@@ -552,7 +562,7 @@ mod tests {
         response_data.extend_from_slice(&mac_tlv.encode());
 
         let response = APDUResponse::new(response_data, 0x90, 0x00);
-        let result = sm.process_response(&response);
+        let result = sm.process_secure_response(&response);
 
         assert!(result.is_err());
         if let Err(Error::InvalidData(msg)) = result {
@@ -584,7 +594,7 @@ mod tests {
         response_data.extend_from_slice(&mac_tlv.encode());
 
         let response = APDUResponse::new(response_data, 0x90, 0x00);
-        let result = sm.process_response(&response);
+        let result = sm.process_secure_response(&response);
 
         assert!(result.is_err());
     }

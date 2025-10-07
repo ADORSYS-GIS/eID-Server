@@ -1,7 +1,7 @@
 use crate::apdu::{APDUCommand, Ins};
 use hex_literal::hex;
 
-// Data Group definitions
+/// Data Group definitions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataGroup {
     /// Document Type
@@ -51,6 +51,7 @@ pub enum DataGroup {
 }
 
 impl DataGroup {
+    /// Get the File ID for the data group
     pub fn fid(&self) -> u16 {
         match self {
             DataGroup::DG1 => 0x0101,
@@ -78,6 +79,7 @@ impl DataGroup {
         }
     }
 
+    /// Get the Short File ID for the data group
     pub fn sfid(&self) -> u8 {
         *self as u8
     }
@@ -95,15 +97,20 @@ pub fn select_eid_application() -> APDUCommand {
     APDUCommand::new(Ins::Select, 0x04, 0x0C, eid_app_id, 0)
 }
 
-// Read binary data
+/// Read binary data from the card at the given offset and length
 pub fn read_binary(offset: u16, length: u8) -> APDUCommand {
     let p1 = ((offset >> 8) & 0xFF) as u8;
     let p2 = (offset & 0xFF) as u8;
-
-    APDUCommand::new(Ins::ReadBinary, p1, p2, Vec::new(), length as u16)
+    APDUCommand::new(Ins::ReadBinary, p1, p2, [], length as u16)
 }
 
-// Read data group
+/// Read data group on the card
 pub fn read_data_group(data_group: DataGroup) -> Vec<APDUCommand> {
     vec![select_file(data_group.fid()), read_binary(0, 0)]
+}
+
+/// Verify authenticated auxiliary data.
+/// The input data is the Object Identifier of the auxiliary data to be verified
+pub fn verify(data: impl Into<Vec<u8>>) -> APDUCommand {
+    APDUCommand::new(Ins::Verify, 0x80, 0x00, data.into(), 0)
 }
