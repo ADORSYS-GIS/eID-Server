@@ -33,9 +33,6 @@ pub enum CrlError {
     #[error("Issuer not authorized for CRL signing")]
     UnauthorizedIssuer,
 
-    #[error("CRL thisUpdate is in the future")]
-    FutureThisUpdate,
-
     #[error("Invalid CRL URL: {0}")]
     InvalidUrl(String),
 

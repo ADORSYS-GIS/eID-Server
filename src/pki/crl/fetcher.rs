@@ -17,7 +17,7 @@ pub async fn fetch_crl(
     info!("Fetching CRL from: {}", distribution_point);
 
     // Validate URL
-    let _url = Url::parse(distribution_point)
+    Url::parse(distribution_point)
         .map_err(|_| CrlError::InvalidUrl(distribution_point.to_string()))?;
 
     // Fetch CRL with timeout
