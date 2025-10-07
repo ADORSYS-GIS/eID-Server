@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use reqwest::Client;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use x509_parser::prelude::X509Certificate;
 
 use crate::pki::truststore::{CertificateEntry, MemoryTrustStore, TrustStore};
@@ -127,17 +127,16 @@ impl CrlManager {
                         Ok(true) => {
                             debug!("CRL signature verified successfully for {dp}");
 
-                            // ✅ ONLY cache after successful signature verification
                             self.crl_cache.insert(dp.clone(), crl_entry.clone());
 
                             // Check if certificate is revoked
-                            if let Some(revocation_info) = crl_entry.is_certificate_revoked(&serial)
+                            if let Some(revocation_info) = crl_entry.is_certificate_revoked(serial)
                                 && revocation_info.revoked
                             {
                                 if let Some(reason) = revocation_info.reason {
-                                    ("Certificate is revoked. Reason: {:?}", reason);
+                                    warn!("Certificate is revoked. Reason: {:?}", reason);
                                 } else {
-                                    ("Certificate is revoked (no reason provided)");
+                                    warn!("Certificate is revoked (no reason provided)");
                                 }
                                 return Ok(true); // Certificate is revoked
                             }
@@ -178,10 +177,10 @@ impl CrlManager {
         match self.check_certificate_revocation(&cert, trust_store).await {
             Ok(is_revoked) => {
                 if is_revoked {
-                    ("Certificate is revoked according to CRL");
+                    warn!("Certificate is revoked according to CRL");
                     Ok(false) // Certificate is not valid
                 } else {
-                    ("Certificate is not revoked according to CRL");
+                    debug!("Certificate is not revoked according to CRL");
                     Ok(true) // Certificate is valid
                 }
             }
@@ -224,10 +223,7 @@ impl CrlManager {
                     // Certificate is revoked, remove it
                     let serial = cert.tbs_certificate.serial.to_bytes_be();
                     if trust_store.remove_cert(&serial).await? {
-                        (
-                            "Removed revoked certificate with serial: {:?}",
-                            hex::encode(&serial),
-                        );
+                        debug!("Removed revoked certificate with serial: {:?}", serial);
                         removed_count += 1;
                     }
                 }
@@ -242,7 +238,7 @@ impl CrlManager {
             }
         }
 
-        (
+        info!(
             "Removed {} revoked certificates from trust store",
             removed_count,
         );
@@ -257,7 +253,7 @@ impl CrlManager {
     /// Clear the CRL cache
     pub fn clear_cache(&mut self) {
         self.crl_cache.clear();
-        ("CRL cache cleared");
+        info!("CRL cache cleared");
     }
 
     /// Remove expired CRLs from cache
@@ -267,7 +263,7 @@ impl CrlManager {
         let removed = initial_size - self.crl_cache.len();
 
         if removed > 0 {
-            ("Removed {removed} expired CRLs from cache.");
+            debug!("Removed {removed} expired CRLs from cache.");
         }
 
         removed
