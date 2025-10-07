@@ -108,17 +108,15 @@ fn infer_function_type(xml: &str) -> Result<APIFunction, AppError> {
                 b"StartPAOS" => return Ok(APIFunction::StartPaos),
                 b"DIDAuthenticateResponse" => found_did_auth = true,
                 b"AuthenticationProtocolData" if found_did_auth => {
-                    for attr in e.attributes() {
-                        if let Ok(attr) = attr {
-                            let val = attr
-                                .unescape_value()
-                                .map_err(|_| AppError::InvalidRequest)?;
-                            if attr.key.local_name().as_ref() == b"type" {
-                                if val.ends_with("EAC1OutputType") {
-                                    return Ok(APIFunction::DidAuthEAC1);
-                                } else if val.ends_with("EAC2OutputType") {
-                                    return Ok(APIFunction::DidAuthEAC2);
-                                }
+                    for attr in e.attributes().flatten() {
+                        let val = attr
+                            .unescape_value()
+                            .map_err(|_| AppError::InvalidRequest)?;
+                        if attr.key.local_name().as_ref() == b"type" {
+                            if val.ends_with("EAC1OutputType") {
+                                return Ok(APIFunction::DidAuthEAC1);
+                            } else if val.ends_with("EAC2OutputType") {
+                                return Ok(APIFunction::DidAuthEAC2);
                             }
                         }
                     }

@@ -327,7 +327,7 @@ async fn verify_signature(
     let public_key = PublicKey::from_der(&pub_key_der)?;
 
     // Verify the signature
-    let signature = EcdsaSig::from_der(public_key.curve(), &signer_info.signature.to_vec())?;
+    let signature = EcdsaSig::from_der(public_key.curve(), &signer_info.signature)?;
     if !ecdsa::verify(&public_key, &signed_attrs, &signature, hash_alg)? {
         return Err(Error::Invalid("Signature verification failed".into()));
     }
@@ -409,7 +409,7 @@ fn find_domain_param_info(
         .to_vec()
         .iter()
         .filter(|info| info.protocol.as_ref() == ID_CA_ECDH)
-        .filter_map(|info| parse_domain_param_info(*info))
+        .filter_map(|info| parse_domain_param_info(info))
         .find(|(_, curve)| *curve == target_curve)
         .ok_or_else(|| Error::Invalid(format!("No parameter found for curve {target_curve}")))
         .map(|(info, _)| info)
@@ -441,10 +441,8 @@ fn find_pubkey_info(
             if chip_auth_info.key_id.as_ref() == Some(id) {
                 return Ok(chip_auth_info);
             }
-        } else {
-            if detect_curve_from_pubkey(&chip_auth_info) == Some(curve) {
-                return Ok(chip_auth_info);
-            }
+        } else if detect_curve_from_pubkey(&chip_auth_info) == Some(curve) {
+            return Ok(chip_auth_info);
         }
     }
     Err(Error::Invalid(format!(

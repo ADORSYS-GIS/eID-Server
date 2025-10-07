@@ -329,7 +329,7 @@ async fn build_transmit(
     cmds: &[ProtectedAPDU],
 ) -> Result<TransmitReq, AppError> {
     let apdu_infos = cmds
-        .into_iter()
+        .iter()
         .map(|cmd| {
             let bytes = cmd.cmd.to_bytes();
             InputAPDUInfo {
