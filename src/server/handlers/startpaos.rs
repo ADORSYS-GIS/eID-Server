@@ -170,7 +170,7 @@ fn build_auth_aux_data(session_data: &SessionData) -> Result<Option<String>, App
     }
 
     if let Some(comm_id) = &session_data.request_data.place_verification {
-        aux.add_municipality_id(comm_id.community_id.as_bytes())?;
+        aux.add_municipality_id(hex::decode(&comm_id.community_id)?)?;
     }
 
     if aux.is_empty() {
