@@ -15,6 +15,9 @@ pub enum CrlError {
     #[error("Trust store error: {0}")]
     TrustStore(#[from] TrustStoreError),
 
+    #[error("Invalid CRL URL: {0}")]
+    UrlParse(#[from] url::ParseError),
+
     #[error("CRL validation failed: {0}")]
     Validation(String),
 
@@ -32,9 +35,6 @@ pub enum CrlError {
 
     #[error("Issuer not authorized for CRL signing")]
     UnauthorizedIssuer,
-
-    #[error("Invalid CRL URL: {0}")]
-    InvalidUrl(String),
 
     #[error("Custom error: {0}")]
     Custom(String),
