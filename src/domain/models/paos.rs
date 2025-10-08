@@ -1,8 +1,10 @@
 pub mod did_auth;
 pub mod startpaos;
+pub mod transmit;
 
 pub use did_auth::*;
 pub use startpaos::*;
+pub use transmit::*;
 
 use crate::domain::models::ResultType;
 use bincode::{Decode, Encode};
