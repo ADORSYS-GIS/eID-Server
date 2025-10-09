@@ -227,7 +227,7 @@ fn validate_eac1_body(
 
     // Validate presence of required data
     if data.card_access.is_none() || data.challenge.is_none() || data.id_picc.is_none() {
-        return Err(AppError::paos_internal(PaosError::Parameter(
+        return Err(AppError::Paos(PaosError::Parameter(
             "Missing EAC1OutputType required fields in AuthenticationProtocolData".into(),
         )));
     }
@@ -257,7 +257,7 @@ fn validate_eac2_body(
 
     // Validate presence of required data
     if data.card_security.is_none() || data.auth_token.is_none() || data.nonce.is_none() {
-        return Err(AppError::paos_internal(PaosError::Parameter(
+        return Err(AppError::Paos(PaosError::Parameter(
             "Missing EAC2OutputType required fields in AuthenticationProtocolData".into(),
         )));
     }
