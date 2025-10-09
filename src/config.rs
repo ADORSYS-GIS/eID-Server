@@ -1,11 +1,3 @@
-// FILE: src/config.rs
-//
-// CHANGES FROM ORIGINAL:
-// 1. Added CrlConfig struct with all CRL settings
-// 2. Added crl field to main Config struct
-// 3. Added CRL configuration defaults
-// 4. Added CRL configuration tests
-
 use std::{collections::HashMap, time::Duration};
 
 use config::{Config as ConfigLib, ConfigError, Environment, File};
@@ -39,19 +31,13 @@ pub struct CrlConfig {
     #[serde(default = "default_crl_timeout")]
     pub timeout_secs: u64,
 
-    /// Allow fallback when CRL is unavailable (default: true)
-    /// When true, certificates are allowed if CRL cannot be fetched
-    /// When false, certificates are rejected if CRL cannot be fetched
+
     #[serde(default = "default_crl_fallback")]
     pub allow_fallback: bool,
 
-    /// Revocation check interval in hours (default: 24)
-    /// How often to check for and remove revoked certificates from trust store
     #[serde(default = "default_check_interval")]
     pub check_interval_hours: u64,
 
-    /// Cache cleanup interval in hours (default: 12)
-    /// How often to remove expired CRLs from the cache
     #[serde(default = "default_cache_cleanup")]
     pub cache_cleanup_interval_hours: u64,
 }
