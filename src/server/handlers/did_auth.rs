@@ -112,7 +112,7 @@ async fn handle_eac1<T: TrustStore>(
     // Validate request body
     let data = validate_eac1_body(body)?;
 
-    let keypair_info = generate_eph_keypair(&data.card_access.as_ref().unwrap())?;
+    let keypair_info = generate_eph_keypair(data.card_access.as_ref().unwrap())?;
     // Build DIDAuthenticate with EAC2InputType
     let resp = build_did_auth_eac2(state, aux_data, &keypair_info.0, &conn_handle, &data).await?;
 
@@ -301,8 +301,8 @@ async fn generate_signature<T: TrustStore>(
     let (keypair, hash_alg) = get_signature_params(state).await?;
 
     let mut tbs_data = vec![];
-    tbs_data.extend_from_slice(&hex::decode(&data.id_picc.as_ref().unwrap())?);
-    tbs_data.extend_from_slice(&hex::decode(&data.challenge.as_ref().unwrap())?);
+    tbs_data.extend_from_slice(&hex::decode(data.id_picc.as_ref().unwrap())?);
+    tbs_data.extend_from_slice(&hex::decode(data.challenge.as_ref().unwrap())?);
     tbs_data.extend_from_slice(&ecdh_keypair.public_key().x_coordinate());
     if let Some(aux_data) = aux_data {
         tbs_data.extend_from_slice(&hex::decode(&aux_data)?);
@@ -386,18 +386,18 @@ async fn build_cmds<T: TrustStore>(
 ) -> Result<Vec<ProtectedAPDU>, AppError> {
     let (curve, alg) = *auth_params;
     // process card security and extract public key
-    let card_security = hex::decode(&data.card_security.as_ref().unwrap())?;
+    let card_security = hex::decode(data.card_security.as_ref().unwrap())?;
     let pub_bytes = process_card_security(&card_security, curve, trust_store).await?;
     let card_pubkey = PublicKey::from_bytes(curve, pub_bytes)?;
     // get ephemeral private key from serialized DER key bytes
     let eph_priv_key = PrivateKey::from_bytes(eph_key)?;
     // Initialize secure messaging
-    let nonce = hex::decode(&data.nonce.as_ref().unwrap())?;
+    let nonce = hex::decode(data.nonce.as_ref().unwrap())?;
     let session_keys = SessionKeys::derive(&eph_priv_key, &card_pubkey, alg, nonce)?;
     let mut sm = SecureMessaging::new(session_keys);
 
     // Validate authentication token
-    validate_auth_token(&sm, &eph_priv_key, &data.auth_token.as_ref().unwrap(), alg)?;
+    validate_auth_token(&sm, &eph_priv_key, data.auth_token.as_ref().unwrap(), alg)?;
 
     // Use the APDU builder to construct commands
     let commands = build_protected_cmds(access_rights, &mut sm).map_err(AppError::from)?;
