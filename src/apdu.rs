@@ -1,9 +1,9 @@
-mod builder;
+pub mod builder;
 mod commands;
 mod tlv;
 
 use bincode::{Decode, Encode};
-pub use builder::*;
+pub use builder::{ProtectedAPDU, CmdType, build_protected_cmds};
 pub use commands::*;
 pub use tlv::APDUTlv;
 

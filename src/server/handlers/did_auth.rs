@@ -177,7 +177,7 @@ async fn handle_eac2<T: TrustStore>(
 
     let access_rights = build_access_rights(restricted_chat, built_chat)?;
     let trust_store = &state.service.trust_store;
-    let cmds = build_cmds(&data, eph_key, chip_auth, trust_store, &access_rights).await?;
+    let (cmds, session_keys) = build_cmds(&data, eph_key, chip_auth, trust_store, &access_rights).await?;
 
     // Build Transmit response
     let resp = build_transmit(slot_handle.clone(), &cmds).await?;
@@ -192,11 +192,21 @@ async fn handle_eac2<T: TrustStore>(
         message_id: Some(message_id),
     };
 
-    // Update session state
+    // Update session state with secure keys for response processing
     let cmds_len = cmds.len();
+    
+    // Create secure messaging keys from the session keys used to build commands
+    let secure_keys = Some(crate::domain::models::SecureMessagingKeys::new(
+        session_keys.k_enc.expose_secret().to_vec(),
+        session_keys.k_mac.expose_secret().to_vec(),
+        session_keys.cipher(),
+        0, // Initial SSC starts at 0
+    ));
+    
     session_data.state = State::Transmit {
         apdu_cmds: cmds,
         cmds_len,
+        secure_keys,
     };
     session_mgr.insert(session_id, &session_data).await?;
 
@@ -385,7 +395,7 @@ async fn build_cmds<T: TrustStore>(
     auth_params: &(Curve, ChipAuthAlg),
     trust_store: &T,
     access_rights: &AccessRights,
-) -> Result<Vec<ProtectedAPDU>, AppError> {
+) -> Result<(Vec<ProtectedAPDU>, crate::apdu::SessionKeys), AppError> {
     let (curve, alg) = *auth_params;
     // process card security and extract public key
     let card_security = hex::decode(data.card_security.as_ref().unwrap())?;
@@ -396,14 +406,14 @@ async fn build_cmds<T: TrustStore>(
     // Initialize secure messaging
     let nonce = hex::decode(data.nonce.as_ref().unwrap())?;
     let session_keys = SessionKeys::derive(&eph_priv_key, &card_pubkey, alg, nonce)?;
-    let mut sm = SecureMessaging::new(session_keys);
+    let mut sm = SecureMessaging::new(session_keys.clone());
 
     // Validate authentication token
     validate_auth_token(&sm, &eph_priv_key, data.auth_token.as_ref().unwrap(), alg)?;
 
     // Use the APDU builder to construct commands
     let commands = build_protected_cmds(access_rights, &mut sm).map_err(AppError::from)?;
-    Ok(commands)
+    Ok((commands, session_keys))
 }
 
 fn build_access_rights(

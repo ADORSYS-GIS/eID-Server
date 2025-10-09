@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::domain::models::ResultType;
+
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct Transmit {
     #[serde(rename = "SlotHandle")]
@@ -15,6 +17,14 @@ pub struct InputAPDUInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "AcceptableStatusCode")]
     pub accept_statuses: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub struct TransmitResponse {
+    #[serde(rename = "Result")]
+    pub result: ResultType,
+    #[serde(rename = "OutputAPDU", default)]
+    pub output_apdus: Option<Vec<String>>,
 }
 
 #[cfg(test)]
@@ -66,5 +76,19 @@ mod tests {
                 .contains("<SlotHandle>00</SlotHandle>")
         );
         assert!(result.as_ref().unwrap().contains("<InputAPDUInfo>"));
+    }
+
+    #[test]
+    fn test_transmit_response_parsing() {
+        let req = include_str!("../../../../test_data/eid/transmitResponse.xml");
+        let result = Envelope::<TransmitResponse>::parse(req);
+        assert!(result.is_ok());
+
+        let request = result.unwrap();
+        assert!(request.header().is_some());
+        assert!(request.header().as_ref().unwrap().message_id.is_some());
+        assert!(request.header().as_ref().unwrap().relates_to.is_some());
+        assert!(request.body().result.result_major.contains("#ok"));
+        assert!(request.body().output_apdus.as_ref().unwrap().len() == 3);
     }
 }
