@@ -218,9 +218,9 @@ fn validate_eac1_body(
     }
 
     let data = body.data();
-    if data.challenge.is_some() {
+    if data.car.is_some() {
         return Err(AppError::Paos(PaosError::Parameter(
-            "Challenge should not be included in the payload".into(),
+            "CertificateHolderAuthorizationTemplate should not be present at this stage".into(),
         )));
     }
 
@@ -249,7 +249,7 @@ fn validate_eac2_body(
     let data = body.data();
     if data.challenge.is_some() {
         return Err(AppError::Paos(PaosError::Parameter(
-            "Challenge should not be included in the payload".into(),
+            "Challenge should not be present at this stage".into(),
         )));
     }
 
