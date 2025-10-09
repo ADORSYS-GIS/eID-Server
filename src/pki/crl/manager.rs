@@ -1,3 +1,12 @@
+// FILE: src/pki/crl/manager.rs
+//
+// CHANGES FROM ORIGINAL:
+// 1. Cache CRL AFTER signature verification (security fix)
+// 2. Move issuer lookup outside the loop (performance fix)
+// 3. Return CrlResult<Self> from constructors (no panics)
+// 4. Remove all .expect() calls
+// 5. Better error handling and logging
+
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -13,6 +22,7 @@ use super::parser::{extract_crl_distribution_points, is_valid_crl_url};
 use super::types::CrlEntry;
 
 /// CRL fetcher and validator
+#[derive(Debug, Clone)]
 pub struct CrlManager {
     client: Client,
     /// Cache of fetched CRLs indexed by distribution point URL
@@ -65,10 +75,13 @@ impl CrlManager {
         // Check if we have a cached CRL that's still valid
         if let Some(cached_crl) = self.crl_cache.get(distribution_point) {
             if cached_crl.is_valid() {
-                debug!("Using cached CRL from {distribution_point}");
+                debug!("Using cached CRL from {}", distribution_point);
                 return Ok(cached_crl.clone());
             } else {
-                debug!("Cached CRL from {distribution_point} is expired, fetching new one",);
+                debug!(
+                    "Cached CRL from {} is expired, fetching new one",
+                    distribution_point
+                );
             }
         }
 
@@ -95,7 +108,7 @@ impl CrlManager {
             return Err(CrlError::NoDistributionPoint);
         }
 
-        // Get issuer certificate from trust store
+        // Lookup issuer certificate ONCE (not in the loop)
         let issuer_subject = cert.tbs_certificate.issuer.to_string();
         let issuer_entry = match trust_store.get_cert_by_subject(&issuer_subject).await {
             Ok(Some(entry)) => entry,
@@ -106,7 +119,7 @@ impl CrlManager {
                 ));
             }
             Err(e) => {
-                warn!("Error retrieving issuer certificate: {e}");
+                warn!("Error retrieving issuer certificate: {}", e);
                 return Err(CrlError::TrustStore(e));
             }
         };
@@ -142,20 +155,23 @@ impl CrlManager {
                             }
 
                             // If we get here, certificate is not in this CRL
-                            debug!("Certificate not found in CRL from {dp}");
+                            debug!("Certificate not found in CRL from {}", dp);
                         }
                         Ok(false) => {
-                            warn!("CRL signature verification failed for {dp} - not caching");
+                            warn!("CRL signature verification failed for {} - not caching", dp);
                             // Continue to try other distribution points
                         }
                         Err(e) => {
-                            warn!("CRL signature verification error for {dp} - not caching: {e}",);
+                            warn!(
+                                "CRL signature verification error for {} - not caching: {}",
+                                dp, e
+                            );
                             // Continue to try other distribution points
                         }
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to fetch CRL from {dp}: {e}");
+                    warn!("Failed to fetch CRL from {}: {}", dp, e);
                     // Continue to try other distribution points
                 }
             }
@@ -177,10 +193,10 @@ impl CrlManager {
         match self.check_certificate_revocation(&cert, trust_store).await {
             Ok(is_revoked) => {
                 if is_revoked {
-                    warn!("Certificate is revoked according to CRL");
+                    info!("Certificate is revoked according to CRL");
                     Ok(false) // Certificate is not valid
                 } else {
-                    debug!("Certificate is not revoked according to CRL");
+                    info!("Certificate is not revoked according to CRL");
                     Ok(true) // Certificate is valid
                 }
             }
@@ -195,10 +211,13 @@ impl CrlManager {
             }
             Err(e) => {
                 if allow_fallback {
-                    warn!("CRL validation failed ({e}), allowing certificate (fallback mode)");
+                    warn!(
+                        "CRL validation failed ({}), allowing certificate (fallback mode)",
+                        e
+                    );
                     Ok(true) // Allow certificate when CRL is unavailable
                 } else {
-                    warn!("CRL validation failed ({e}), rejecting certificate");
+                    warn!("CRL validation failed ({}), rejecting certificate", e);
                     Err(e)
                 }
             }
@@ -223,7 +242,10 @@ impl CrlManager {
                     // Certificate is revoked, remove it
                     let serial = cert.tbs_certificate.serial.to_bytes_be();
                     if trust_store.remove_cert(&serial).await? {
-                        debug!("Removed revoked certificate with serial: {:?}", serial);
+                        info!(
+                            "Removed revoked certificate with serial: {:?}",
+                            hex::encode(&serial)
+                        );
                         removed_count += 1;
                     }
                 }
@@ -233,14 +255,14 @@ impl CrlManager {
                 }
                 Err(e) => {
                     // CRL check failed, log warning but don't remove certificate
-                    warn!("CRL check failed: {e}");
+                    warn!("CRL check failed: {}", e);
                 }
             }
         }
 
         info!(
             "Removed {} revoked certificates from trust store",
-            removed_count,
+            removed_count
         );
         Ok(removed_count)
     }
@@ -263,7 +285,7 @@ impl CrlManager {
         let removed = initial_size - self.crl_cache.len();
 
         if removed > 0 {
-            debug!("Removed {removed} expired CRLs from cache.");
+            info!("Removed {} expired CRLs from cache.", removed);
         }
 
         removed
@@ -275,7 +297,10 @@ impl Default for CrlManager {
         // Use a fallback configuration if new() fails
         // This should rarely fail, but we handle it gracefully
         Self::new().unwrap_or_else(|e| {
-            warn!("Failed to create default CRL manager: {e}. Using minimal fallback.");
+            warn!(
+                "Failed to create default CRL manager: {}. Using minimal fallback.",
+                e
+            );
             // Create a basic client without timeout as fallback
             Self {
                 client: Client::new(),

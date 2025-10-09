@@ -1,3 +1,11 @@
+// FILE: src/config.rs
+//
+// CHANGES FROM ORIGINAL:
+// 1. Added CrlConfig struct with all CRL settings
+// 2. Added crl field to main Config struct
+// 3. Added CRL configuration defaults
+// 4. Added CRL configuration tests
+
 use std::{collections::HashMap, time::Duration};
 
 use config::{Config as ConfigLib, ConfigError, Environment, File};
@@ -21,12 +29,73 @@ impl Default for MasterListConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrlConfig {
+    /// Enable CRL checking (default: true)
+    #[serde(default = "default_crl_enabled")]
+    pub enabled: bool,
+
+    /// HTTP timeout for CRL fetching in seconds (default: 30)
+    #[serde(default = "default_crl_timeout")]
+    pub timeout_secs: u64,
+
+    /// Allow fallback when CRL is unavailable (default: true)
+    /// When true, certificates are allowed if CRL cannot be fetched
+    /// When false, certificates are rejected if CRL cannot be fetched
+    #[serde(default = "default_crl_fallback")]
+    pub allow_fallback: bool,
+
+    /// Revocation check interval in hours (default: 24)
+    /// How often to check for and remove revoked certificates from trust store
+    #[serde(default = "default_check_interval")]
+    pub check_interval_hours: u64,
+
+    /// Cache cleanup interval in hours (default: 12)
+    /// How often to remove expired CRLs from the cache
+    #[serde(default = "default_cache_cleanup")]
+    pub cache_cleanup_interval_hours: u64,
+}
+
+fn default_crl_enabled() -> bool {
+    true
+}
+
+fn default_crl_timeout() -> u64 {
+    30
+}
+
+fn default_crl_fallback() -> bool {
+    true
+}
+
+fn default_check_interval() -> u64 {
+    24
+}
+
+fn default_cache_cleanup() -> u64 {
+    12
+}
+
+impl Default for CrlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_crl_enabled(),
+            timeout_secs: default_crl_timeout(),
+            allow_fallback: default_crl_fallback(),
+            check_interval_hours: default_check_interval(),
+            cache_cleanup_interval_hours: default_cache_cleanup(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
     #[serde(default)]
     pub redis: Option<RedisConfig>,
     pub master_list: MasterListConfig,
+    #[serde(default)]
+    pub crl: CrlConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +136,12 @@ impl Config {
             .set_default("server.host", "localhost")?
             .set_default("server.port", 3000)?
             .set_default("master_list.master_list_url", "https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/ElekAusweise/CSCA/GermanMasterList.html")?
+            // CRL defaults
+            .set_default("crl.enabled", true)?
+            .set_default("crl.timeout_secs", 30)?
+            .set_default("crl.allow_fallback", true)?
+            .set_default("crl.check_interval_hours", 24)?
+            .set_default("crl.cache_cleanup_interval_hours", 12)?
             .add_source(File::with_name("config/settings").required(false));
 
         // If env_vars is provided, we use it instead of system environment
@@ -77,7 +152,7 @@ impl Config {
             }
         } else {
             // Use system environment variables
-            // Should be in the format APP_SERVER__HOST or APP_SERVER__REDIS_URL
+            // Should be in the format APP_SERVER__HOST or APP_CRL__ENABLED
             builder = builder.add_source(
                 Environment::with_prefix("APP")
                     .prefix_separator("_")
@@ -101,6 +176,13 @@ mod tests {
         assert_eq!(config.server.host, "localhost");
         assert_eq!(config.server.port, 3000);
         assert!(config.redis.is_none());
+
+        // Check CRL defaults
+        assert!(config.crl.enabled);
+        assert_eq!(config.crl.timeout_secs, 30);
+        assert!(config.crl.allow_fallback);
+        assert_eq!(config.crl.check_interval_hours, 24);
+        assert_eq!(config.crl.cache_cleanup_interval_hours, 12);
     }
 
     #[test]
@@ -135,5 +217,30 @@ mod tests {
         // The other values should use default
         assert_eq!(config.server.port, 3000);
         assert!(config.redis.is_none());
+    }
+
+    #[test]
+    fn test_crl_config_override() {
+        let mut env_vars = HashMap::new();
+        env_vars.insert("crl.enabled".to_string(), "false".to_string());
+        env_vars.insert("crl.timeout_secs".to_string(), "60".to_string());
+        env_vars.insert("crl.allow_fallback".to_string(), "false".to_string());
+
+        let config = Config::load_with_sources(Some(env_vars)).expect("Failed to load config");
+
+        assert!(!config.crl.enabled);
+        assert_eq!(config.crl.timeout_secs, 60);
+        assert!(!config.crl.allow_fallback);
+    }
+
+    #[test]
+    fn test_crl_default_values() {
+        let crl_config = CrlConfig::default();
+
+        assert!(crl_config.enabled);
+        assert_eq!(crl_config.timeout_secs, 30);
+        assert!(crl_config.allow_fallback);
+        assert_eq!(crl_config.check_interval_hours, 24);
+        assert_eq!(crl_config.cache_cleanup_interval_hours, 12);
     }
 }
