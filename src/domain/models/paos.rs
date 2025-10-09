@@ -10,6 +10,10 @@ use crate::domain::models::ResultType;
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
+use crate::domain::models::ResultType;
+use bincode::{Decode, Encode};
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Decode, Encode)]
 #[serde(rename_all = "PascalCase")]
 pub struct ConnectionHandle {
