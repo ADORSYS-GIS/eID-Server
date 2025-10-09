@@ -212,9 +212,10 @@ fn validate_eac1_body(
 
     // Check for client errors
     if body.result.is_error() {
-        return Err(AppError::paos_internal(PaosError::Parameter(
-            "Client respond with error, aborting session".into(),
-        )));
+        return Err(AppError::paos_internal(PaosError::Parameter(format!(
+            "Client respond with error: {:?}\nAborting session",
+            body.result
+        ))));
     }
 
     let data = body.data();
@@ -241,9 +242,10 @@ fn validate_eac2_body(
 
     // Check for client errors
     if body.result.is_error() {
-        return Err(AppError::paos_internal(PaosError::Parameter(
-            "Client respond with error, aborting session".into(),
-        )));
+        return Err(AppError::paos_internal(PaosError::Parameter(format!(
+            "Client respond with error: {:?}\nAborting session",
+            body.result
+        ))));
     }
 
     let data = body.data();
