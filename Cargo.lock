@@ -979,6 +979,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "mini-moka",
+ "oid-registry",
  "once_cell",
  "openssl",
  "pem",
