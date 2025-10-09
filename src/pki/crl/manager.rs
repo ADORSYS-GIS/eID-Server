@@ -1,12 +1,3 @@
-// FILE: src/pki/crl/manager.rs
-//
-// CHANGES FROM ORIGINAL:
-// 1. Cache CRL AFTER signature verification (security fix)
-// 2. Move issuer lookup outside the loop (performance fix)
-// 3. Return CrlResult<Self> from constructors (no panics)
-// 4. Remove all .expect() calls
-// 5. Better error handling and logging
-
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -32,8 +23,6 @@ pub struct CrlManager {
 }
 
 impl CrlManager {
-    /// Create a new CRL manager with default settings
-    ///
     /// Returns an error if the HTTP client cannot be initialized
     pub fn new() -> CrlResult<Self> {
         let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
@@ -45,8 +34,6 @@ impl CrlManager {
         })
     }
 
-    /// Create a new CRL manager with custom timeout
-    ///
     /// Returns an error if the HTTP client cannot be initialized
     pub fn with_timeout(timeout_secs: u64) -> CrlResult<Self> {
         let client = Client::builder()

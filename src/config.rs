@@ -31,7 +31,6 @@ pub struct CrlConfig {
     #[serde(default = "default_crl_timeout")]
     pub timeout_secs: u64,
 
-
     #[serde(default = "default_crl_fallback")]
     pub allow_fallback: bool,
 
@@ -138,7 +137,7 @@ impl Config {
             }
         } else {
             // Use system environment variables
-            // Should be in the format APP_SERVER__HOST or APP_CRL__ENABLED
+            // Should be in the format APP_SERVER__HOST or APP_SERVER__REDIS_URL
             builder = builder.add_source(
                 Environment::with_prefix("APP")
                     .prefix_separator("_")
