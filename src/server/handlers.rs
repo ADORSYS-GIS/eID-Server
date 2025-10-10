@@ -45,6 +45,12 @@ impl StartPaosResp {
             },
         }
     }
+
+    pub fn ok() -> Self {
+        Self {
+            resp: StartPaosResponse::ok(),
+        }
+    }
 }
 
 async fn handle_paos_error<E: Into<AppError>>(
@@ -79,7 +85,7 @@ where
 {
     debug!(req = %request, "Processing authentication request\n");
 
-    let request_type = infer_function_type(&request)?;
+    let request_type = infer_request_type(&request)?;
     match request_type {
         APIFunction::UseIDRequest => {
             process_request(state, &request, |s, e| handle_useid(s, e)).await
@@ -99,13 +105,13 @@ where
     }
 }
 
-fn infer_function_type(xml: &str) -> Result<APIFunction, AppError> {
+fn infer_request_type(xml: &str) -> Result<APIFunction, AppError> {
     use quick_xml::events::Event;
 
     let mut reader = quick_xml::Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
-    let mut buf = Vec::new();
+    let mut buf = vec![];
     let mut found_did_auth = false;
     while let Ok(event) = reader.read_event_into(&mut buf) {
         match event {
@@ -150,11 +156,8 @@ where
     Fut: Future<Output = Result<String, AppError>> + Send,
 {
     let envelope = Envelope::<R>::parse(request)?;
-    let header = envelope.header().clone().unwrap_or_default();
-    handler(state, envelope.with_header(header))
-        .await
-        .map(|xml| {
-            debug!(xml = %xml, "Sending response\n");
-            SoapResponse::new(xml).into_response()
-        })
+    handler(state, envelope).await.map(|xml| {
+        debug!(xml = %xml, "Sending response\n");
+        SoapResponse::new(xml).into_response()
+    })
 }
