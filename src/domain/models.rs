@@ -5,7 +5,13 @@ use bincode::{Decode, Encode};
 use paos::ConnectionHandle;
 use serde::{Deserialize, Serialize};
 
-use crate::{apdu::ProtectedAPDU, asn1::utils::ChipAuthAlg, crypto::Curve};
+use crate::{
+    apdu::{
+        ProtectedAPDU, {APDUDecryptParams, DecryptedAPDU},
+    },
+    asn1::utils::ChipAuthAlg,
+    crypto::Curve,
+};
 
 pub const RESULT_OK: &str = "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok";
 pub const RESULT_ERROR: &str = "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error";
@@ -65,54 +71,9 @@ pub enum State {
     Transmit {
         apdu_cmds: Vec<ProtectedAPDU>,
         cmds_len: usize,
-        secure_keys: Option<SecureMessagingKeys>,
+        decrypt_params: APDUDecryptParams,
     },
     TransmitResponse {
-        responses: Vec<ProcessedAPDUResponse>,
+        responses: Vec<DecryptedAPDU>,
     },
-}
-
-/// Secure messaging keys for decrypting responses
-#[derive(Debug, Clone, Decode, Encode)]
-pub struct SecureMessagingKeys {
-    pub k_enc: Vec<u8>,
-    pub k_mac: Vec<u8>,
-    pub cipher_type: u8, // Store cipher type as u8 for serialization
-    pub initial_ssc: u32,
-}
-
-impl SecureMessagingKeys {
-    pub fn new(k_enc: Vec<u8>, k_mac: Vec<u8>, cipher: crate::crypto::sym::Cipher, initial_ssc: u32) -> Self {
-        let cipher_type = match cipher {
-            crate::crypto::sym::Cipher::Aes128Cbc => 1,
-            crate::crypto::sym::Cipher::Aes192Cbc => 2,
-            crate::crypto::sym::Cipher::Aes256Cbc => 3,
-        };
-        Self {
-            k_enc,
-            k_mac,
-            cipher_type,
-            initial_ssc,
-        }
-    }
-
-    pub fn to_cipher(&self) -> crate::crypto::sym::Cipher {
-        match self.cipher_type {
-            1 => crate::crypto::sym::Cipher::Aes128Cbc,
-            2 => crate::crypto::sym::Cipher::Aes192Cbc,
-            3 => crate::crypto::sym::Cipher::Aes256Cbc,
-            _ => crate::crypto::sym::Cipher::Aes128Cbc, // default
-        }
-    }
-}
-
-/// Processed APDU response with metadata for later decoding
-#[derive(Debug, Clone, Decode, Encode)]
-pub struct ProcessedAPDUResponse {
-    pub response_data: Vec<u8>,
-    pub cmd_type: crate::apdu::CmdType,
-    pub ssc_before_cmd: u32,
-    pub ssc_before_resp: u32,
-    pub status_code: u16,
-    pub is_success: bool,
 }

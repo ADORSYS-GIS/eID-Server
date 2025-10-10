@@ -1,4 +1,6 @@
-use crate::apdu::{ProtectedAPDU, SecureMessaging, SessionKeys, build_protected_cmds};
+use crate::apdu::{
+    APDUDecryptParams, ProtectedAPDU, SecureMessaging, SessionKeys, build_protected_cmds,
+};
 use crate::asn1::cvcert::Chat;
 use crate::asn1::utils::{
     ChipAuthAlg, extract_chip_auth_info, find_chip_auth_domain_params, process_card_security,
@@ -177,10 +179,11 @@ async fn handle_eac2<T: TrustStore>(
 
     let access_rights = build_access_rights(restricted_chat, built_chat)?;
     let trust_store = &state.service.trust_store;
-    let (cmds, session_keys) = build_cmds(&data, eph_key, chip_auth, trust_store, &access_rights).await?;
+    let (apdu_cmds, session_keys) =
+        build_cmds(&data, eph_key, chip_auth, trust_store, &access_rights).await?;
 
     // Build Transmit response
-    let resp = build_transmit(slot_handle.clone(), &cmds).await?;
+    let resp = build_transmit(slot_handle.clone(), &apdu_cmds).await?;
 
     let message_id = uuid::Uuid::new_v4().urn().to_string();
     // Update the session tracker
@@ -192,21 +195,18 @@ async fn handle_eac2<T: TrustStore>(
         message_id: Some(message_id),
     };
 
-    // Update session state with secure keys for response processing
-    let cmds_len = cmds.len();
-    
-    // Create secure messaging keys from the session keys used to build commands
-    let secure_keys = Some(crate::domain::models::SecureMessagingKeys::new(
-        session_keys.k_enc.expose_secret().to_vec(),
-        session_keys.k_mac.expose_secret().to_vec(),
+    // Create APDU decrypt parameters from the session keys used to build commands
+    let decrypt_params = APDUDecryptParams::new(
+        session_keys.k_enc.expose_secret(),
+        session_keys.k_mac.expose_secret(),
         session_keys.cipher(),
-        0, // Initial SSC starts at 0
-    ));
-    
+    );
+
+    let cmds_len = apdu_cmds.len();
     session_data.state = State::Transmit {
-        apdu_cmds: cmds,
+        apdu_cmds,
         cmds_len,
-        secure_keys,
+        decrypt_params,
     };
     session_mgr.insert(session_id, &session_data).await?;
 
@@ -370,7 +370,7 @@ async fn build_transmit(
     slot_handle: String,
     cmds: &[ProtectedAPDU],
 ) -> Result<TransmitReq, AppError> {
-    let apdu_infos = cmds
+    let input_apdus = cmds
         .iter()
         .map(|cmd| {
             let bytes = cmd.cmd.to_bytes();
@@ -384,7 +384,7 @@ async fn build_transmit(
     Ok(TransmitReq {
         value: Transmit {
             slot_handle,
-            input_apdus: apdu_infos,
+            input_apdus,
         },
     })
 }
@@ -395,14 +395,16 @@ async fn build_cmds<T: TrustStore>(
     auth_params: &(Curve, ChipAuthAlg),
     trust_store: &T,
     access_rights: &AccessRights,
-) -> Result<(Vec<ProtectedAPDU>, crate::apdu::SessionKeys), AppError> {
+) -> Result<(Vec<ProtectedAPDU>, SessionKeys), AppError> {
     let (curve, alg) = *auth_params;
     // process card security and extract public key
     let card_security = hex::decode(data.card_security.as_ref().unwrap())?;
     let pub_bytes = process_card_security(&card_security, curve, trust_store).await?;
     let card_pubkey = PublicKey::from_bytes(curve, pub_bytes)?;
+
     // get ephemeral private key from serialized DER key bytes
     let eph_priv_key = PrivateKey::from_bytes(eph_key)?;
+
     // Initialize secure messaging
     let nonce = hex::decode(data.nonce.as_ref().unwrap())?;
     let session_keys = SessionKeys::derive(&eph_priv_key, &card_pubkey, alg, nonce)?;
@@ -412,7 +414,7 @@ async fn build_cmds<T: TrustStore>(
     validate_auth_token(&sm, &eph_priv_key, data.auth_token.as_ref().unwrap(), alg)?;
 
     // Use the APDU builder to construct commands
-    let commands = build_protected_cmds(access_rights, &mut sm).map_err(AppError::from)?;
+    let commands = build_protected_cmds(access_rights, &mut sm)?;
     Ok((commands, session_keys))
 }
 
