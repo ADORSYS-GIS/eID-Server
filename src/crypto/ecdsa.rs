@@ -175,10 +175,9 @@ pub fn sign(
     data: impl AsRef<[u8]>,
     hash_alg: HashAlg,
 ) -> CryptoResult<EcdsaSig> {
-    let digest = hash_alg.hash(data.as_ref())?;
-
-    let mut signer = Signer::new_without_digest(private_key.as_openssl_pkey())?;
-    let signature_der = signer.sign_oneshot_to_vec(&digest)?;
+    let mut signer = Signer::new(hash_alg.into(), private_key.as_openssl_pkey())?;
+    signer.update(data.as_ref())?;
+    let signature_der = signer.sign_to_vec()?;
 
     EcdsaSig::from_der(private_key.curve(), signature_der)
 }
@@ -196,10 +195,9 @@ pub fn verify(
         ));
     }
 
-    let digest = hash_alg.hash(data.as_ref())?;
-
-    let mut verifier = Verifier::new_without_digest(public_key.as_openssl_pkey())?;
-    let result = verifier.verify_oneshot(signature.as_der(), &digest)?;
+    let mut verifier = Verifier::new(hash_alg.into(), public_key.as_openssl_pkey())?;
+    verifier.update(data.as_ref())?;
+    let result = verifier.verify(signature.as_der())?;
     Ok(result)
 }
 

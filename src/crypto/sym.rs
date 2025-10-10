@@ -66,9 +66,8 @@ impl AesEncryptor {
     }
 
     /// Override the cipher used by this encryptor
-    pub fn with_cipher(mut self, cipher: Cipher) -> Self {
-        self.cipher = cipher;
-        self
+    pub fn with_cipher(cipher: Cipher) -> Self {
+        Self { cipher }
     }
 
     /// Encrypt the plaintext using AES-CBC with the given key and IV
@@ -162,6 +161,11 @@ impl AesEncryptor {
 
         Ok(mac_result.to_vec())
     }
+
+    /// Get the cipher used by this encryptor
+    pub fn cipher(&self) -> Cipher {
+        self.cipher
+    }
 }
 
 impl Default for AesEncryptor {
@@ -221,13 +225,13 @@ mod tests {
 
     #[test]
     fn test_aes_encryptor_with_cipher() {
-        let encryptor = AesEncryptor::new().with_cipher(Cipher::Aes256Cbc);
+        let encryptor = AesEncryptor::with_cipher(Cipher::Aes256Cbc);
         assert_eq!(encryptor.cipher, Cipher::Aes256Cbc);
     }
 
     #[test]
     fn test_aes128_encrypt_decrypt() -> CryptoResult<()> {
-        let encryptor = AesEncryptor::new().with_cipher(Cipher::Aes128Cbc);
+        let encryptor = AesEncryptor::with_cipher(Cipher::Aes128Cbc);
 
         let ciphertext = encryptor.encrypt(AES128_KEY, TEST_IV, TEST_PLAINTEXT)?;
         assert!(!ciphertext.is_empty());
@@ -252,7 +256,7 @@ mod tests {
 
     #[test]
     fn test_aes192_encrypt_decrypt() -> CryptoResult<()> {
-        let encryptor = AesEncryptor::new().with_cipher(Cipher::Aes192Cbc);
+        let encryptor = AesEncryptor::with_cipher(Cipher::Aes192Cbc);
 
         let ciphertext = encryptor.encrypt(AES192_KEY, TEST_IV, TEST_PLAINTEXT)?;
         assert!(!ciphertext.is_empty());
@@ -266,7 +270,7 @@ mod tests {
 
     #[test]
     fn test_aes256_encrypt_decrypt() -> CryptoResult<()> {
-        let encryptor = AesEncryptor::new().with_cipher(Cipher::Aes256Cbc);
+        let encryptor = AesEncryptor::with_cipher(Cipher::Aes256Cbc);
 
         let ciphertext = encryptor.encrypt(AES256_KEY, TEST_IV, TEST_PLAINTEXT)?;
         assert!(!ciphertext.is_empty());
@@ -335,13 +339,13 @@ mod tests {
     fn test_calculate_mac_aes128() -> CryptoResult<()> {
         let data = b"test data for MAC calculation";
 
-        let mut encryptor = AesEncryptor::new().with_cipher(Cipher::Aes128Cbc);
+        let encryptor = AesEncryptor::with_cipher(Cipher::Aes128Cbc);
         let mac_aes128 = encryptor.calculate_mac(AES128_KEY, data)?;
 
-        encryptor = encryptor.with_cipher(Cipher::Aes192Cbc);
+        let encryptor = AesEncryptor::with_cipher(Cipher::Aes192Cbc);
         let mac_aes192 = encryptor.calculate_mac(AES192_KEY, data)?;
 
-        encryptor = encryptor.with_cipher(Cipher::Aes256Cbc);
+        let encryptor = AesEncryptor::with_cipher(Cipher::Aes256Cbc);
         let mac_aes256 = encryptor.calculate_mac(AES256_KEY, data)?;
 
         // Mac output lenght is always 16 bytes for AES
@@ -384,7 +388,7 @@ mod tests {
 
     #[test]
     fn test_wrong_key_size_for_cipher() {
-        let encryptor = AesEncryptor::new().with_cipher(Cipher::Aes256Cbc);
+        let encryptor = AesEncryptor::with_cipher(Cipher::Aes256Cbc);
 
         // 128-bit key for 256-bit cipher
         let result = encryptor.encrypt(AES128_KEY, TEST_IV, TEST_PLAINTEXT);
