@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::domain::service::Service;
-use crate::pki::crl::CrlManager;
+use crate::pki::crl::scheduler::{CrlScheduler, CrlSchedulerConfig};
 use crate::pki::identity::{FileIdentity, Identity};
 use crate::pki::master_list::schedule::{MasterListScheduler, SchedulerConfig};
 use crate::pki::truststore::MemoryTrustStore;
@@ -52,48 +52,12 @@ pub async fn setup(config: &Config) -> color_eyre::Result<(Service<MemoryTrustSt
     tracing::info!("Initializing trust store...");
     let truststore = MemoryTrustStore::new("./test_certs").await?;
 
-    // Initialize CRL Manager
-    let crl_manager = if config.crl.enabled {
-        info!(
-            "CRL checking is enabled (timeout: {}s, fallback: {})",
-            config.crl.timeout_secs, config.crl.allow_fallback
-        );
-
-        let mut manager = CrlManager::with_timeout(config.crl.timeout_secs)
-            .wrap_err("Failed to create CRL manager")?;
-
-        // Perform initial CRL cleanup (directly)
-        info!("Performing initial CRL revocation check...");
-        match manager.cleanup_revoked_certificates(&truststore).await {
-            Ok(count) => {
-                if count > 0 {
-                    info!("Removed {} revoked certificates from trust store", count);
-                } else {
-                    info!("No revoked certificates found in trust store");
-                }
-            }
-            Err(e) => {
-                warn!(
-                    "Initial CRL cleanup failed: {}. Continuing without initial cleanup.",
-                    e
-                );
-            }
-        }
-
-        manager
-    } else {
-        warn!(
-            "CRL checking is DISABLED in configuration. Certificates will not be checked for revocation."
-        );
-        CrlManager::with_timeout(30).wrap_err("Failed to create CRL manager")?
-    };
-
-    // Create service with CRL support (no Mutex)
-    let service = Service::new(session_manager, truststore.clone(), identity, crl_manager);
+    // Create service (no CRL manager needed anymore)
+    let service = Service::new(session_manager, truststore.clone(), identity);
 
     tracing::info!("Creating master list scheduler...");
     let scheduler_config = SchedulerConfig::default();
-    let scheduler = MasterListScheduler::new(scheduler_config, truststore);
+    let scheduler = MasterListScheduler::new(scheduler_config, truststore.clone());
 
     // Perform initial master list processing
     tracing::info!("Performing initial master list processing...");
@@ -103,6 +67,46 @@ pub async fn setup(config: &Config) -> color_eyre::Result<(Service<MemoryTrustSt
 
     scheduler.start().await?;
     tracing::info!("Master list scheduler started for automatic updates");
+
+    // Initialize CRL scheduler
+    if config.crl.enabled {
+        info!("CRL checking is enabled");
+
+        let crl_config = CrlSchedulerConfig {
+            check_interval_secs: config.crl.check_interval_secs,
+            distribution_points: config.crl.distribution_points.clone(),
+            timeout_secs: config.crl.timeout_secs,
+        };
+
+        let crl_scheduler = CrlScheduler::new(crl_config, truststore.clone())
+            .wrap_err("Failed to create CRL scheduler")?;
+
+        // Perform initial CRL check
+        info!("Performing initial CRL check...");
+        match crl_scheduler.trigger_immediate_update().await {
+            Ok(count) => {
+                if count > 0 {
+                    info!("Removed {} revoked certificates from trust store", count);
+                } else {
+                    info!("No revoked certificates found in initial CRL check");
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "Initial CRL check failed: {}. Continuing without initial cleanup.",
+                    e
+                );
+            }
+        }
+
+        // Start scheduled CRL checking
+        crl_scheduler.start().await?;
+        info!("CRL scheduler started for periodic revocation checking");
+    } else {
+        warn!(
+            "CRL checking is DISABLED in configuration. Certificates will not be checked for revocation."
+        );
+    }
 
     Ok((service, tls_config))
 }

@@ -15,28 +15,10 @@ pub enum CrlError {
     #[error("Trust store error: {0}")]
     TrustStore(#[from] TrustStoreError),
 
-    #[error("Invalid CRL URL: {0}")]
-    UrlParse(#[from] url::ParseError),
-
-    #[error("CRL validation failed: {0}")]
-    Validation(String),
-
-    #[error("CRL distribution point not found in certificate")]
-    NoDistributionPoint,
-
-    #[error("CRL signature verification failed")]
-    SignatureVerification,
-
-    #[error("CRL is expired")]
-    Expired,
-
-    #[error("Timeout while fetching CRL")]
+    #[error("CRL fetch timeout")]
     Timeout,
 
-    #[error("Issuer not authorized for CRL signing")]
-    UnauthorizedIssuer,
-
-    #[error("Custom error: {0}")]
+    #[error("{0}")]
     Custom(String),
 }
 

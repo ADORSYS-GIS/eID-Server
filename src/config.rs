@@ -21,54 +21,40 @@ impl Default for MasterListConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct CrlConfig {
-    /// Enable CRL checking (default: true)
-    #[serde(default = "default_crl_enabled")]
+    /// Enable CRL checking
+    #[serde(default)]
     pub enabled: bool,
 
-    /// HTTP timeout for CRL fetching in seconds (default: 30)
-    #[serde(default = "default_crl_timeout")]
-    pub timeout_secs: u64,
+    /// List of CRL distribution point URLs to fetch from
+    #[serde(default)]
+    pub distribution_points: Vec<String>,
 
-    #[serde(default = "default_crl_fallback")]
-    pub allow_fallback: bool,
-
+    /// How often to check CRLs (in seconds)
     #[serde(default = "default_check_interval")]
-    pub check_interval_hours: u64,
+    pub check_interval_secs: u64,
 
-    #[serde(default = "default_cache_cleanup")]
-    pub cache_cleanup_interval_hours: u64,
-}
-
-fn default_crl_enabled() -> bool {
-    true
-}
-
-fn default_crl_timeout() -> u64 {
-    30
-}
-
-fn default_crl_fallback() -> bool {
-    true
+    /// HTTP timeout for fetching CRLs (in seconds)
+    #[serde(default = "default_timeout")]
+    pub timeout_secs: u64,
 }
 
 fn default_check_interval() -> u64 {
-    24
+    3600 // 1 hour
 }
 
-fn default_cache_cleanup() -> u64 {
-    12
+fn default_timeout() -> u64 {
+    30
 }
 
 impl Default for CrlConfig {
     fn default() -> Self {
         Self {
-            enabled: default_crl_enabled(),
-            timeout_secs: default_crl_timeout(),
-            allow_fallback: default_crl_fallback(),
-            check_interval_hours: default_check_interval(),
-            cache_cleanup_interval_hours: default_cache_cleanup(),
+            enabled: false,
+            distribution_points: Vec::new(),
+            check_interval_secs: default_check_interval(),
+            timeout_secs: default_timeout(),
         }
     }
 }
@@ -124,11 +110,8 @@ impl Config {
             // CRL defaults
             .set_default("crl.enabled", true)?
             .set_default("crl.timeout_secs", 30)?
-            .set_default("crl.allow_fallback", true)?
             .set_default("crl.check_interval_hours", 24)?
-            .set_default("crl.cache_cleanup_interval_hours", 12)?
             .add_source(File::with_name("config/settings").required(false));
-
         // If env_vars is provided, we use it instead of system environment
         // This is to avoid systems variables pollution across tests
         if let Some(vars) = env_vars {
@@ -161,13 +144,6 @@ mod tests {
         assert_eq!(config.server.host, "localhost");
         assert_eq!(config.server.port, 3000);
         assert!(config.redis.is_none());
-
-        // Check CRL defaults
-        assert!(config.crl.enabled);
-        assert_eq!(config.crl.timeout_secs, 30);
-        assert!(config.crl.allow_fallback);
-        assert_eq!(config.crl.check_interval_hours, 24);
-        assert_eq!(config.crl.cache_cleanup_interval_hours, 12);
     }
 
     #[test]
@@ -202,30 +178,5 @@ mod tests {
         // The other values should use default
         assert_eq!(config.server.port, 3000);
         assert!(config.redis.is_none());
-    }
-
-    #[test]
-    fn test_crl_config_override() {
-        let mut env_vars = HashMap::new();
-        env_vars.insert("crl.enabled".to_string(), "false".to_string());
-        env_vars.insert("crl.timeout_secs".to_string(), "60".to_string());
-        env_vars.insert("crl.allow_fallback".to_string(), "false".to_string());
-
-        let config = Config::load_with_sources(Some(env_vars)).expect("Failed to load config");
-
-        assert!(!config.crl.enabled);
-        assert_eq!(config.crl.timeout_secs, 60);
-        assert!(!config.crl.allow_fallback);
-    }
-
-    #[test]
-    fn test_crl_default_values() {
-        let crl_config = CrlConfig::default();
-
-        assert!(crl_config.enabled);
-        assert_eq!(crl_config.timeout_secs, 30);
-        assert!(crl_config.allow_fallback);
-        assert_eq!(crl_config.check_interval_hours, 24);
-        assert_eq!(crl_config.cache_cleanup_interval_hours, 12);
     }
 }
