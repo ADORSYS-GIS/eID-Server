@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Blacklist>
+    <version>1.0</version>
+    <last_updated>2024-01-15T10:30:00Z</last_updated>
+    <entries>
+        <BlacklistEntry>
+            <serial_number>0123456789abcdef</serial_number>
+            <reason>compromised</reason>
+            <date_added>2024-01-15T10:00:00Z</date_added>
+            <description>Private key compromised in data breach</description>
+        </BlacklistEntry>
+        <BlacklistEntry>
+            <serial_number>fedcba9876543210</serial_number>
+            <reason>revoked</reason>
+            <date_added>2024-01-14T12:00:00Z</date_added>
+            <description>Certificate revoked by issuing authority</description>
+        </BlacklistEntry>
+        <BlacklistEntry>
+            <serial_number>aabbccdd11223344</serial_number>
+            <reason>compromised</reason>
+            <date_added>2024-01-13T14:30:00Z</date_added>
+            <description>Key holder's credentials compromised</description>
+        </BlacklistEntry>
+        <BlacklistEntry>
+            <serial_number>1234567890abcdef</serial_number>
+            <reason>revoked</reason>
+            <date_added>2024-01-12T09:15:00Z</date_added>
+            <description>Issuer requested revocation</description>
+        </BlacklistEntry>
+        <BlacklistEntry>
+            <serial_number>deadbeefcafebabe</serial_number>
+            <reason>compromised</reason>
+            <date_added>2024-01-11T16:45:00Z</date_added>
+            <description>Unauthorized use detected</description>
+        </BlacklistEntry>
+    </entries>
+</Blacklist>

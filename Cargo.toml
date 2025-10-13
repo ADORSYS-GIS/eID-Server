@@ -57,6 +57,7 @@ time = { version = "0.3", features = ["serde", "parsing"] }
 rand = "0.9"
 aes = "0.8"
 cmac = "0.7"
+csv = "1.3"
 secrecy = { version = "0.10", features = ["serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
 x509-parser = { version = "0.18", features = ["verify", "verify-aws"] }

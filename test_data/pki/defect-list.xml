@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DefectList>
+    <version>1.0</version>
+    <last_updated>2024-01-15T10:30:00Z</last_updated>
+    <entries>
+        <DefectEntry>
+            <document_number>DE-2024-001</document_number>
+            <serial_number>0123456789abcdef</serial_number>
+            <issuer>CN=German Authority CA</issuer>
+            <defect_type>manufacturing</defect_type>
+            <date_discovered>2024-01-15T10:00:00Z</date_discovered>
+            <severity>3</severity>
+            <description>Minor manufacturing defect in RFID chip</description>
+        </DefectEntry>
+        <DefectEntry>
+            <document_number>DE-2024-002</document_number>
+            <serial_number>fedcba9876543210</serial_number>
+            <issuer>CN=German Authority CA</issuer>
+            <defect_type>cryptographic_weakness</defect_type>
+            <date_discovered>2024-01-14T12:00:00Z</date_discovered>
+            <severity>5</severity>
+            <description>Weak key generation algorithm identified</description>
+        </DefectEntry>
+        <DefectEntry>
+            <document_number>DE-2024-003</document_number>
+            <serial_number>aabbccdd11223344</serial_number>
+            <issuer>CN=German Authority CA</issuer>
+            <defect_type>invalid_signature</defect_type>
+            <date_discovered>2024-01-13T14:30:00Z</date_discovered>
+            <severity>4</severity>
+            <description>Invalid signature detected during verification</description>
+        </DefectEntry>
+        <DefectEntry>
+            <document_number>DE-2024-004</document_number>
+            <serial_number>1234567890abcdef</serial_number>
+            <defect_type>invalid_validity</defect_type>
+            <date_discovered>2024-01-12T09:15:00Z</date_discovered>
+            <severity>4</severity>
+            <description>Certificate validity period contains impossible dates</description>
+        </DefectEntry>
+        <DefectEntry>
+            <document_number>DE-2024-005</document_number>
+            <serial_number>deadbeefcafebabe</serial_number>
+            <defect_type>data_integrity</defect_type>
+            <date_discovered>2024-01-11T16:45:00Z</date_discovered>
+            <severity>4</severity>
+            <description>Data integrity check failed</description>
+        </DefectEntry>
+    </entries>
+</DefectList>
