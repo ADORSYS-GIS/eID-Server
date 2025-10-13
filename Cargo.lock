@@ -986,6 +986,8 @@ dependencies = [
  "quick-xml",
  "rand 0.9.2",
  "rasn",
+ "rasn-cms",
+ "rasn-pkix",
  "rcgen",
  "redis",
  "regex",
@@ -994,6 +996,7 @@ dependencies = [
  "secrecy",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror",
  "time",
@@ -2543,6 +2546,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rasn-cms"
+version = "0.27.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "884cc78c00763a9456cf2c56c0d775c7ad394920fd8df675f0fa82600b43db3e"
+dependencies = [
+ "rasn",
+ "rasn-pkix",
+]
+
+[[package]]
 name = "rasn-derive"
 version = "0.27.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2565,6 +2578,15 @@ dependencies = [
  "quote",
  "syn",
  "uuid",
+]
+
+[[package]]
+name = "rasn-pkix"
+version = "0.27.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ca8f6f4bb1d48645759b1b93c94940d7394d2e549d6c07424edae725bd13ae5"
+dependencies = [
+ "rasn",
 ]
 
 [[package]]
