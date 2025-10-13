@@ -33,7 +33,8 @@ pub async fn setup(config: &Config) -> color_eyre::Result<(Service<MemoryTrustSt
             (Arc::new(MemoryStore::new()), Arc::new(MemoryStore::new()))
         };
 
-    // Load server certificate chain and key
+    // load server certificate chain and key
+    // TODO : Use real data to build the config
     let server_cert = include_bytes!("../test_certs/identity/server_chain.pem");
     let server_key = include_bytes!("../test_certs/identity/server.key");
 
@@ -41,7 +42,7 @@ pub async fn setup(config: &Config) -> color_eyre::Result<(Service<MemoryTrustSt
         .with_max_sessions(100)
         .with_expiry(Duration::minutes(5));
 
-    // Build TLS configuration
+    // Build the TLS configuration
     let tls_config = TlsConfig::from_pem(server_cert, server_key)
         .with_psk(session_manager.clone())
         .with_session_store(tls_store);
@@ -56,15 +57,18 @@ pub async fn setup(config: &Config) -> color_eyre::Result<(Service<MemoryTrustSt
     let service = Service::new(session_manager, truststore.clone(), identity);
 
     tracing::info!("Creating master list scheduler...");
+    // The cron job will rerun everyday at midnight
     let scheduler_config = SchedulerConfig::default();
+
     let scheduler = MasterListScheduler::new(scheduler_config, truststore.clone());
 
     // Perform initial master list processing
     tracing::info!("Performing initial master list processing...");
     if let Err(e) = scheduler.trigger_immediate_update().await {
-        tracing::warn!("Failed to load master list: {e}. Continuing with local certificates only.");
+        tracing::warn!("Failed to load master list: {e}. Continuing with local certificates only.")
     }
 
+    // Start scheduler for automatic updates
     scheduler.start().await?;
     tracing::info!("Master list scheduler started for automatic updates");
 
