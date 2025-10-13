@@ -1,7 +1,7 @@
 use reqwest::Client;
 use std::time::Duration;
 use tokio::time::timeout;
-use tracing::{info, warn};
+use tracing::{debug, warn};
 
 use crate::pki::truststore::{MemoryTrustStore, TrustStore};
 
@@ -29,7 +29,7 @@ impl CrlProcessor {
 
     /// Fetch a CRL from a distribution point URL
     async fn fetch_crl(&self, url: &str) -> CrlResult<CrlData> {
-        info!("Fetching CRL from: {}", url);
+        debug!("Fetching CRL from: {}", url);
 
         let response = match timeout(self.timeout, self.client.get(url).send()).await {
             Ok(result) => result?,
@@ -59,11 +59,11 @@ impl CrlProcessor {
         for dp_url in distribution_points {
             match self.fetch_crl(dp_url).await {
                 Ok(crl) => {
-                    info!("Successfully fetched CRL from {}", dp_url);
+                    debug!("Successfully fetched CRL from {}", dp_url);
 
                     match crl.get_revoked_serials() {
                         Ok(revoked_serials) => {
-                            info!(
+                            debug!(
                                 "Found {} revoked certificates in CRL",
                                 revoked_serials.len()
                             );
@@ -72,7 +72,7 @@ impl CrlProcessor {
                             for serial in revoked_serials {
                                 match trust_store.remove_cert(&serial).await {
                                     Ok(true) => {
-                                        info!(
+                                        debug!(
                                             "Removed revoked certificate with serial: {}",
                                             hex::encode(&serial)
                                         );
@@ -106,7 +106,7 @@ impl CrlProcessor {
             }
         }
 
-        info!(
+        debug!(
             "CRL processing complete. Removed {} revoked certificates",
             total_removed
         );
