@@ -1,10 +1,11 @@
 use crate::crypto::errors::Error;
+use bincode::{Decode, Encode};
 use openssl::ec::{EcGroup, EcGroupRef};
 use openssl::nid::Nid;
 use std::fmt;
 
 /// Supported elliptic curves for eID operations
-#[derive(Debug, Clone, Default, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Encode, Decode)]
 pub enum Curve {
     /// NIST P-256 (secp256r1)
     NistP256,

@@ -1,5 +1,5 @@
-use crate::domain::models::ResultType;
 use crate::domain::models::paos::ConnectionHandle;
+use crate::domain::models::{ResultType, paos::StartPaosResponse};
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
@@ -65,12 +65,6 @@ impl StartPaosReq {
             .collect();
         matches.first().copied()
     }
-}
-
-#[derive(Debug, Serialize, PartialEq)]
-#[serde(rename_all = "PascalCase")]
-pub struct StartPaosResponse {
-    pub result: ResultType,
 }
 
 impl StartPaosResponse {
