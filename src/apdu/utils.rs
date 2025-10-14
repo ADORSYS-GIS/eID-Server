@@ -112,6 +112,7 @@ pub fn build_protected_cmds(
 ) -> Result<Vec<ProtectedAPDU>> {
     let mut commands = vec![];
 
+    // Advance SSC for the command
     sm.update_ssc();
     let select_eid_cmd = apdu::select_eid_application();
     let secured_select_eid = sm.create_secure_command(&select_eid_cmd)?;
@@ -120,6 +121,7 @@ pub fn build_protected_cmds(
         cmd: secured_select_eid,
         cmd_type: CmdType::SelectEidApp,
     });
+    // Advance again to account for the card's response
     sm.update_ssc();
 
     for right in access_rights.rights() {
