@@ -1,12 +1,10 @@
-use crate::domain::models::{ResultType, eid::Operations};
+use crate::domain::models::{
+    ResultType,
+    eid::{LevelOfAssurance, Operations, Session},
+};
 use bincode::{Decode, Encode};
-use once_cell::sync::Lazy;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
-
-static COMM_ID_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^0[0-9]{3}([0-9]{2}(0[0-9]([0-9]{2}(0[0-9]{3})?)?)?)?$").unwrap());
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, Decode, Encode)]
 pub enum AttrRequest {
@@ -46,7 +44,7 @@ pub struct AgeVerifReq {
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, Decode, Encode)]
 pub struct PlaceVerifReq {
     #[serde(rename = "CommunityID")]
-    #[validate(regex(path = *COMM_ID_REGEX))]
+    #[validate(regex(path = *super::COMM_ID_REGEX))]
     pub community_id: String,
 }
 
@@ -60,25 +58,7 @@ pub struct TransactionAttestReq {
     pub transaction_context: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Decode, Encode)]
-pub enum LevelOfAssurance {
-    #[serde(rename = "http://eidas.europa.eu/LoA/low")]
-    EidasLow,
-    #[serde(rename = "http://eidas.europa.eu/LoA/substantial")]
-    EidasSubstantial,
-    #[serde(rename = "http://eidas.europa.eu/LoA/high")]
-    EidasHigh,
-    #[serde(rename = "http://bsi.bund.de/eID/LoA/normal")]
-    BsiNormal,
-    #[serde(rename = "http://bsi.bund.de/eID/LoA/substantiell")]
-    BsiSubstantiell,
-    #[serde(rename = "http://bsi.bund.de/eID/LoA/hoch")]
-    BsiHoch,
-    #[serde(rename = "http://bsi.bund.de/eID/LoA/undefined")]
-    BsiUndefined,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Decode, Encode)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Decode, Encode)]
 pub enum EIDTypeSelection {
     ALLOWED,
     DENIED,
@@ -148,13 +128,6 @@ pub struct UseIDRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(nested)]
     pub psk: Option<PreSharedKey>,
-}
-
-#[derive(Debug, Serialize, Validate)]
-pub struct Session {
-    #[serde(rename = "eid:ID")]
-    #[validate(length(min = 32))]
-    pub id: String,
 }
 
 #[derive(Debug, Serialize, Validate)]

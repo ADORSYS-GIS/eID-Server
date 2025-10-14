@@ -1,12 +1,20 @@
+pub mod result;
 pub mod useid;
 
+pub use result::*;
 pub use useid::*;
 
 use bincode::{Decode, Encode};
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use validator::Validate;
+
+static COMM_ID_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^0[0-9]{3}([0-9]{2}(0[0-9]([0-9]{2}(0[0-9]{3})?)?)?)?$").unwrap());
 
 // Operations types
-#[derive(Debug, Clone, Serialize, Deserialize, Decode, Encode)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Decode, Encode)]
 pub struct Operations<T: Default> {
     #[serde(rename(serialize = "eid:DocumentType"))]
     #[serde(rename(deserialize = "DocumentType"), default)]
@@ -59,4 +67,29 @@ pub struct Operations<T: Default> {
     #[serde(rename(serialize = "eid:PlaceVerification"))]
     #[serde(rename(deserialize = "PlaceVerification"), default)]
     pub place_verification: T,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Decode, Encode)]
+pub enum LevelOfAssurance {
+    #[serde(rename = "http://eidas.europa.eu/LoA/low")]
+    EidasLow,
+    #[serde(rename = "http://eidas.europa.eu/LoA/substantial")]
+    EidasSubstantial,
+    #[serde(rename = "http://eidas.europa.eu/LoA/high")]
+    EidasHigh,
+    #[serde(rename = "http://bsi.bund.de/eID/LoA/normal")]
+    BsiNormal,
+    #[serde(rename = "http://bsi.bund.de/eID/LoA/substantiell")]
+    BsiSubstantiell,
+    #[serde(rename = "http://bsi.bund.de/eID/LoA/hoch")]
+    BsiHoch,
+    #[serde(rename = "http://bsi.bund.de/eID/LoA/undefined")]
+    BsiUndefined,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Validate)]
+pub struct Session {
+    #[serde(rename(serialize = "eid:ID", deserialize = "ID"))]
+    #[validate(length(min = 32))]
+    pub id: String,
 }
