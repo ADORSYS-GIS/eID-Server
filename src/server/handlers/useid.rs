@@ -45,6 +45,7 @@ pub async fn handle_useid<T: TrustStore>(
 
     let session_data = SessionData {
         request_data: body,
+        request_counter: 0,
         psk: key.clone(),
         state: State::Initial,
     };
