@@ -163,10 +163,10 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC...
 // In SOAP client configuration
 const tlsOptions = {
   rejectUnauthorized: true, // Strict validation
-  ca: fs.readFileSync('./certs/trusted-ca.crt'),
+  ca: fs.readFileSync("./certs/trusted-ca.crt"),
   checkServerIdentity: (host, cert) => {
     // Custom validation logic
     return undefined; // Accept connection
-  }
+  },
 };
 ```

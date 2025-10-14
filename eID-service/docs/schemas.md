@@ -333,7 +333,7 @@ The full provided XSD (TR-03130eID-Server.xsd) is included below for completenes
     default="PROHIBITED" />
    <element name="PlaceOfResidence"
     type="tns:AttributeSelectionType" default="PROHIBITED" />
-   <element name="CommunityID" 
+   <element name="CommunityID"
     type="tns:AttributeSelectionType" default="PROHIBITED"/>
    <element name="ResidencePermitI"
     type="tns:AttributeSelectionType" default="PROHIBITED" />
@@ -391,7 +391,7 @@ The full provided XSD (TR-03130eID-Server.xsd) is included below for completenes
     type="tns:TransactionAttestationResponseType" minOccurs="0" />
    <element name="LevelOfAssuranceResult"
     type="tns:LevelOfAssuranceType" minOccurs="0" />
-   <element name="EIDTypeResponse" 
+   <element name="EIDTypeResponse"
     type="tns:EIDTypeResponseType" minOccurs="0" />
    <element ref="dss:Result" />
   </sequence>
@@ -530,7 +530,7 @@ The full provided XSD (TR-03130eID-Server.xsd) is included below for completenes
     default="PROHIBITED" />
    <element name="PlaceOfResidence"
     type="tns:AttributeRequestType" default="PROHIBITED" />
-   <element name="CommunityID" type="tns:AttributeRequestType" 
+   <element name="CommunityID" type="tns:AttributeRequestType"
     default="PROHIBITED" />
    <element name="ResidencePermitI"
     type="tns:AttributeRequestType" default="PROHIBITED" />
@@ -568,7 +568,7 @@ The full provided XSD (TR-03130eID-Server.xsd) is included below for completenes
     default="PROHIBITED" />
    <element name="PlaceOfResidence"
     type="tns:AttributeResponseType" default="PROHIBITED" />
-   <element name="CommunityID" type="tns:AttributeResponseType" 
+   <element name="CommunityID" type="tns:AttributeResponseType"
     default="PROHIBITED"/>
    <element name="ResidencePermitI"
     type="tns:AttributeResponseType" default="PROHIBITED" />
@@ -580,13 +580,13 @@ The full provided XSD (TR-03130eID-Server.xsd) is included below for completenes
     type="tns:AttributeResponseType" default="PROHIBITED" />
   </sequence>
  </complexType>
- 
+
  <!-- Additional types used in SAML AuthnRequest according to eIDAS since Version 2.1.0 -->
- 
+
  <simpleType name="UseEidasType">
   <restriction base="boolean" />
  </simpleType>
- 
+
  <simpleType name="LevelOfAssuranceType">
   <restriction base="anyURI">
    <enumeration value="http://eidas.europa.eu/LoA/low" />
@@ -604,7 +604,7 @@ The full provided XSD (TR-03130eID-Server.xsd) is included below for completenes
    <pattern value="[A-Z]{2}" />
   </restriction>
  </simpleType>
- 
+
  <simpleType name="ICAOSex">
   <restriction base="string">
    <enumeration value="M" />
@@ -612,7 +612,7 @@ The full provided XSD (TR-03130eID-Server.xsd) is included below for completenes
    <enumeration value=" " />
   </restriction>
  </simpleType>
- 
+
  <complexType name="EidasExtensionType">
   <sequence>
    <element name="LevelOfAssurance" type="tns:LevelOfAssuranceType"
@@ -657,7 +657,7 @@ The full provided XSD (TR-03130eID-Server.xsd) is included below for completenes
    <element name="HWKeyStore" type="tns:EIDTypeSelectionType" minOccurs="0" />
   </sequence>
  </complexType>
- 
+
 
  <complexType name="EIDTypeResponseType">
   <choice>
@@ -667,7 +667,7 @@ The full provided XSD (TR-03130eID-Server.xsd) is included below for completenes
    <element name="HWKeyStore" type="tns:EIDTypeUsedType" />
   </choice>
  </complexType>
- 
+
 
     <simpleType name="EIDTypeSelectionType">
      <restriction base="string">

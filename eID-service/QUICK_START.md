@@ -65,11 +65,11 @@ http://localhost:3000
 
 ## Environment Variables Reference
 
-| Variable | Required | Description | Example |
-|----------|----------|-------------|---------|
-| `EID_SERVER_URL` | ✅ | eID-Server SOAP endpoint | `https://localhost:8443/eIDService` |
-| `NEXT_PUBLIC_BASE_URL` | ❌ | Your service URL | `http://localhost:3000` |
-| `NODE_ENV` | ❌ | Environment mode | `development` or `production` |
+| Variable               | Required | Description              | Example                             |
+| ---------------------- | -------- | ------------------------ | ----------------------------------- |
+| `EID_SERVER_URL`       | ✅       | eID-Server SOAP endpoint | `https://localhost:8443/eIDService` |
+| `NEXT_PUBLIC_BASE_URL` | ❌       | Your service URL         | `http://localhost:3000`             |
+| `NODE_ENV`             | ❌       | Environment mode         | `development` or `production`       |
 
 ## TLS/mTLS Configuration (Optional)
 

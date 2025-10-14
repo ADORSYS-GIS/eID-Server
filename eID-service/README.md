@@ -51,7 +51,7 @@ Test eService for testing eID authentication flows with eID-Server and eID-Clien
    ```bash
    # Generate a self-signed certificate for HTTPS
    openssl req -x509 -newkey rsa:2048 -nodes -keyout cert.key -out cert.pem -days 365 -subj "/CN=localhost"
-   
+
    # Update your .env.local with certificate paths
    echo "HTTPS_CERT_PATH=cert.pem" >> .env.local
    echo "HTTPS_KEY_PATH=cert.key" >> .env.local
@@ -72,30 +72,30 @@ Test eService for testing eID authentication flows with eID-Server and eID-Clien
 
 #### Basic Configuration
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `EID_SERVER_URL` | eID-Server SOAP endpoint | `https://localhost:8443/eIDService` |
-| `EID_SERVER_ADDRESS` | eID-Server address for TC Token | `https://localhost:8443/eIDService` |
-| `NEXT_PUBLIC_BASE_URL` | Your service base URL (for browser/client) | `https://localhost:3000` |
-| `PORT` | Server port (optional) | `3000` |
+| Variable               | Description                                | Default                             |
+| ---------------------- | ------------------------------------------ | ----------------------------------- |
+| `EID_SERVER_URL`       | eID-Server SOAP endpoint                   | `https://localhost:8443/eIDService` |
+| `EID_SERVER_ADDRESS`   | eID-Server address for TC Token            | `https://localhost:8443/eIDService` |
+| `NEXT_PUBLIC_BASE_URL` | Your service base URL (for browser/client) | `https://localhost:3000`            |
+| `PORT`                 | Server port (optional)                     | `3000`                              |
 
 #### HTTPS Server Configuration
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `HTTPS_CERT_PATH` | Path to HTTPS server certificate (PEM) | - |
-| `HTTPS_KEY_PATH` | Path to HTTPS server private key (PEM) | - |
-| `HTTPS_CA_PATH` | Path to HTTPS CA certificate (PEM) | - |
+| Variable          | Description                            | Default |
+| ----------------- | -------------------------------------- | ------- |
+| `HTTPS_CERT_PATH` | Path to HTTPS server certificate (PEM) | -       |
+| `HTTPS_KEY_PATH`  | Path to HTTPS server private key (PEM) | -       |
+| `HTTPS_CA_PATH`   | Path to HTTPS CA certificate (PEM)     | -       |
 
 #### eID-Server TLS Configuration
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `EID_SERVER_TLS_MODE` | TLS mode: 'normal' or 'mtls' | `normal` |
-| `EID_SERVER_CERT_PATH` | Path to client certificate (PEM) for mTLS | - |
-| `EID_SERVER_KEY_PATH` | Path to client private key (PEM) for mTLS | - |
-| `EID_SERVER_CA_PATH` | Path to eID-Server CA certificate (PEM) | - |
-| `EID_SERVER_REJECT_UNAUTHORIZED` | Validate certificates strictly | `false` (dev) |
+| Variable                         | Description                               | Default       |
+| -------------------------------- | ----------------------------------------- | ------------- |
+| `EID_SERVER_TLS_MODE`            | TLS mode: 'normal' or 'mtls'              | `normal`      |
+| `EID_SERVER_CERT_PATH`           | Path to client certificate (PEM) for mTLS | -             |
+| `EID_SERVER_KEY_PATH`            | Path to client private key (PEM) for mTLS | -             |
+| `EID_SERVER_CA_PATH`             | Path to eID-Server CA certificate (PEM)   | -             |
+| `EID_SERVER_REJECT_UNAUTHORIZED` | Validate certificates strictly            | `false` (dev) |
 
 ### eID-Server Integration
 

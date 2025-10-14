@@ -1,19 +1,19 @@
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/router';
-import { motion } from 'framer-motion';
-import { 
-  CheckCircle2, 
-  XCircle, 
-  AlertCircle, 
-  Loader2, 
-  User, 
-  MapPin, 
+import { useEffect, useState } from "react";
+import { useRouter } from "next/router";
+import { motion } from "framer-motion";
+import {
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  Loader2,
+  User,
+  MapPin,
   Calendar,
   Shield,
   FileText,
-  Home as HomeIcon
-} from 'lucide-react';
-import type { GetResultResponse, PersonalData } from '@/types/eid';
+  Home as HomeIcon,
+} from "lucide-react";
+import type { GetResultResponse, PersonalData } from "@/types/eid";
 
 interface ResultData {
   success: boolean;
@@ -45,10 +45,10 @@ export default function Results() {
     const fetchResult = async () => {
       try {
         const response = await fetch(`/api/auth/result?token=${token}`);
-        
+
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(errorData.error || 'Failed to fetch result');
+          throw new Error(errorData.error || "Failed to fetch result");
         }
 
         const data = await response.json();
@@ -64,12 +64,12 @@ export default function Results() {
   }, [token]);
 
   const formatDate = (dateStr?: string) => {
-    if (!dateStr) return 'N/A';
+    if (!dateStr) return "N/A";
     try {
-      return new Date(dateStr).toLocaleDateString('en-GB', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
+      return new Date(dateStr).toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
       });
     } catch {
       return dateStr;
@@ -78,15 +78,25 @@ export default function Results() {
 
   const getStatusBadge = (status: string) => {
     const badges = {
-      ALLOWED: { bg: 'bg-green-100', text: 'text-green-800', label: 'Allowed' },
-      PROHIBITED: { bg: 'bg-red-100', text: 'text-red-800', label: 'Prohibited' },
-      NOTONCHIP: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Not on Chip' },
+      ALLOWED: { bg: "bg-green-100", text: "text-green-800", label: "Allowed" },
+      PROHIBITED: {
+        bg: "bg-red-100",
+        text: "text-red-800",
+        label: "Prohibited",
+      },
+      NOTONCHIP: {
+        bg: "bg-gray-100",
+        text: "text-gray-800",
+        label: "Not on Chip",
+      },
     };
-    
+
     const badge = badges[status as keyof typeof badges] || badges.PROHIBITED;
-    
+
     return (
-      <span className={`px-3 py-1 rounded-full text-xs font-medium ${badge.bg} ${badge.text}`}>
+      <span
+        className={`px-3 py-1 rounded-full text-xs font-medium ${badge.bg} ${badge.text}`}
+      >
         {badge.label}
       </span>
     );
@@ -125,7 +135,7 @@ export default function Results() {
           </div>
           <p className="text-lg text-gray-700 mb-8">{error}</p>
           <button
-            onClick={() => router.push('/')}
+            onClick={() => router.push("/")}
             className="px-6 py-3 bg-blue-600 text-white rounded-full font-medium hover:bg-blue-700 transition-colors"
           >
             Return to Home
@@ -139,7 +149,17 @@ export default function Results() {
     return null;
   }
 
-  const { success, result, personalData, ageVerification, placeVerification, operationsAllowed, transactionAttestation, levelOfAssurance, eidType } = resultData;
+  const {
+    success,
+    result,
+    personalData,
+    ageVerification,
+    placeVerification,
+    operationsAllowed,
+    transactionAttestation,
+    levelOfAssurance,
+    eidType,
+  } = resultData;
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
@@ -159,7 +179,7 @@ export default function Results() {
               )}
               <div>
                 <h1 className="text-4xl font-semibold text-gray-900">
-                  Authentication {success ? 'Successful' : 'Failed'}
+                  Authentication {success ? "Successful" : "Failed"}
                 </h1>
                 <p className="text-sm text-gray-600 mt-1">
                   {result.ResultMajor}
@@ -167,7 +187,7 @@ export default function Results() {
               </div>
             </div>
             <button
-              onClick={() => router.push('/')}
+              onClick={() => router.push("/")}
               className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-700 font-medium transition-colors"
             >
               <HomeIcon className="w-5 h-5" />
@@ -195,77 +215,104 @@ export default function Results() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {personalData.GivenNames && (
-                <DataField label="Given Names" value={personalData.GivenNames} />
+                <DataField
+                  label="Given Names"
+                  value={personalData.GivenNames}
+                />
               )}
               {personalData.FamilyNames && (
-                <DataField label="Family Names" value={personalData.FamilyNames} />
+                <DataField
+                  label="Family Names"
+                  value={personalData.FamilyNames}
+                />
               )}
               {personalData.BirthName && (
                 <DataField label="Birth Name" value={personalData.BirthName} />
               )}
               {personalData.ArtisticName && (
-                <DataField label="Artistic Name" value={personalData.ArtisticName} />
+                <DataField
+                  label="Artistic Name"
+                  value={personalData.ArtisticName}
+                />
               )}
               {personalData.AcademicTitle && (
-                <DataField label="Academic Title" value={personalData.AcademicTitle} />
+                <DataField
+                  label="Academic Title"
+                  value={personalData.AcademicTitle}
+                />
               )}
               {personalData.DateOfBirth && (
-                <DataField 
-                  label="Date of Birth" 
-                  value={personalData.DateOfBirth.DateValue || personalData.DateOfBirth.DateString}
+                <DataField
+                  label="Date of Birth"
+                  value={
+                    personalData.DateOfBirth.DateValue ||
+                    personalData.DateOfBirth.DateString
+                  }
                   icon={<Calendar className="w-5 h-5 text-gray-400" />}
                 />
               )}
               {personalData.PlaceOfBirth && (
-                <DataField 
-                  label="Place of Birth" 
+                <DataField
+                  label="Place of Birth"
                   value={
-                    personalData.PlaceOfBirth.FreetextPlace || 
+                    personalData.PlaceOfBirth.FreetextPlace ||
                     personalData.PlaceOfBirth.StructuredPlace?.City ||
-                    'Unknown'
+                    "Unknown"
                   }
                   icon={<MapPin className="w-5 h-5 text-gray-400" />}
                 />
               )}
               {personalData.Nationality && (
-                <DataField label="Nationality" value={personalData.Nationality} />
+                <DataField
+                  label="Nationality"
+                  value={personalData.Nationality}
+                />
               )}
             </div>
           </motion.section>
         )}
 
         {/* Document Information */}
-        {personalData && (personalData.DocumentType || personalData.IssuingState || personalData.DateOfExpiry) && (
-          <motion.section
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="mb-8 bg-white rounded-3xl shadow-sm border border-gray-200 p-8"
-          >
-            <div className="flex items-center gap-3 mb-6">
-              <FileText className="w-6 h-6 text-purple-600" />
-              <h2 className="text-2xl font-semibold text-gray-900">
-                Document Information
-              </h2>
-            </div>
+        {personalData &&
+          (personalData.DocumentType ||
+            personalData.IssuingState ||
+            personalData.DateOfExpiry) && (
+            <motion.section
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+              className="mb-8 bg-white rounded-3xl shadow-sm border border-gray-200 p-8"
+            >
+              <div className="flex items-center gap-3 mb-6">
+                <FileText className="w-6 h-6 text-purple-600" />
+                <h2 className="text-2xl font-semibold text-gray-900">
+                  Document Information
+                </h2>
+              </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {personalData.DocumentType && (
-                <DataField label="Document Type" value={personalData.DocumentType} />
-              )}
-              {personalData.IssuingState && (
-                <DataField label="Issuing State" value={personalData.IssuingState} />
-              )}
-              {personalData.DateOfExpiry && (
-                <DataField
-                  label="Date of Expiry"
-                  value={formatDate(personalData.DateOfExpiry)}
-                  icon={<Calendar className="w-5 h-5 text-gray-400" />}
-                />
-              )}
-            </div>
-          </motion.section>
-        )}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {personalData.DocumentType && (
+                  <DataField
+                    label="Document Type"
+                    value={personalData.DocumentType}
+                  />
+                )}
+                {personalData.IssuingState && (
+                  <DataField
+                    label="Issuing State"
+                    value={personalData.IssuingState}
+                  />
+                )}
+                {personalData.DateOfExpiry && (
+                  <DataField
+                    label="Date of Expiry"
+                    value={formatDate(personalData.DateOfExpiry)}
+                    icon={<Calendar className="w-5 h-5 text-gray-400" />}
+                  />
+                )}
+              </div>
+            </motion.section>
+          )}
 
         {/* Residence Information */}
         {personalData && personalData.PlaceOfResidence && (
@@ -287,7 +334,10 @@ export default function Results() {
                 <>
                   <DataField
                     label="Street"
-                    value={personalData.PlaceOfResidence.StructuredPlace.Street || 'N/A'}
+                    value={
+                      personalData.PlaceOfResidence.StructuredPlace.Street ||
+                      "N/A"
+                    }
                   />
                   <DataField
                     label="City"
@@ -295,11 +345,16 @@ export default function Results() {
                   />
                   <DataField
                     label="Country"
-                    value={personalData.PlaceOfResidence.StructuredPlace.Country}
+                    value={
+                      personalData.PlaceOfResidence.StructuredPlace.Country
+                    }
                   />
                   <DataField
                     label="Zip Code"
-                    value={personalData.PlaceOfResidence.StructuredPlace.ZipCode || 'N/A'}
+                    value={
+                      personalData.PlaceOfResidence.StructuredPlace.ZipCode ||
+                      "N/A"
+                    }
                   />
                 </>
               )}
@@ -364,9 +419,12 @@ export default function Results() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {Object.entries(operationsAllowed).map(([key, status]) => (
-                <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-gray-50">
+                <div
+                  key={key}
+                  className="flex items-center justify-between p-3 rounded-lg bg-gray-50"
+                >
                   <span className="text-sm font-medium text-gray-700">
-                    {key.replace(/([A-Z])/g, ' $1').trim()}
+                    {key.replace(/([A-Z])/g, " $1").trim()}
                   </span>
                   {getStatusBadge(status)}
                 </div>
@@ -392,12 +450,19 @@ export default function Results() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {levelOfAssurance && (
-                <DataField label="Level of Assurance" value={levelOfAssurance} />
+                <DataField
+                  label="Level of Assurance"
+                  value={levelOfAssurance}
+                />
               )}
               {eidType && (
                 <DataField
                   label="eID Type Used"
-                  value={Object.keys(eidType).find(key => eidType[key] === 'USED') || 'Unknown'}
+                  value={
+                    Object.keys(eidType).find(
+                      (key) => eidType[key] === "USED",
+                    ) || "Unknown"
+                  }
                 />
               )}
               {transactionAttestation && (
@@ -454,8 +519,10 @@ function VerificationField({ label, fulfilled, icon }: VerificationFieldProps) {
         ) : (
           <XCircle className="w-5 h-5 text-red-600" />
         )}
-        <span className={`font-semibold ${fulfilled ? 'text-green-900' : 'text-red-900'}`}>
-          {fulfilled ? 'Fulfilled' : 'Not Fulfilled'}
+        <span
+          className={`font-semibold ${fulfilled ? "text-green-900" : "text-red-900"}`}
+        >
+          {fulfilled ? "Fulfilled" : "Not Fulfilled"}
         </span>
       </div>
     </div>

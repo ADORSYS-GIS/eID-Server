@@ -12,20 +12,20 @@ const nextConfig = {
   async rewrites() {
     return [
       {
-        source: '/api/auth/start',
-        destination: '/api/auth/start',
+        source: "/api/auth/start",
+        destination: "/api/auth/start",
       },
       {
-        source: '/api/auth/result',
-        destination: '/api/auth/result',
+        source: "/api/auth/result",
+        destination: "/api/auth/result",
       },
       {
-        source: '/api/tctoken',
-        destination: '/api/tctoken',
+        source: "/api/tctoken",
+        destination: "/api/tctoken",
       },
       {
-        source: '/api/refresh',
-        destination: '/api/refresh',
+        source: "/api/refresh",
+        destination: "/api/refresh",
       },
     ];
   },
@@ -33,11 +33,11 @@ const nextConfig = {
   async headers() {
     return [
       {
-        source: '/api/tctoken',
+        source: "/api/tctoken",
         headers: [
           {
-            key: 'Content-Type',
-            value: 'text/xml; charset=UTF-8',
+            key: "Content-Type",
+            value: "text/xml; charset=UTF-8",
           },
         ],
       },

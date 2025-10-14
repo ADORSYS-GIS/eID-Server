@@ -5,6 +5,7 @@
 This guide describes how to implement a minimal **eService** to test the authentication flow between an **eID-Client** and an **eID-Server** using **SOAP interfaces only**. XML Signature verification and generation are **explicitly omitted for now**, but placeholders are shown where they would normally apply.
 
 The eService acts as:
+
 - A **Web Application** providing an entry point for the user.
 - A **TC Token Provider** responding to `tcTokenURL` requests from the eID-Client.
 - A **SOAP Client** communicating with the eID-Server via `useID` and `getResult`.
@@ -35,10 +36,15 @@ The eService acts as:
 The eService must provide a link/object that forwards a `tcTokenURL` to the eID-Client.
 
 **Example (HTML):**
+
 ```html
-<object type="application/vnd.eid-client"
-        data="https://service.example.de/tctoken?ABC123">
-  <a href="http://127.0.0.1:24727/eID-Client?tcTokenURL=https%3A%2F%2Fservice.example.de%2Ftctoken%3FABC123">
+<object
+  type="application/vnd.eid-client"
+  data="https://service.example.de/tctoken?ABC123"
+>
+  <a
+    href="http://127.0.0.1:24727/eID-Client?tcTokenURL=https%3A%2F%2Fservice.example.de%2Ftctoken%3FABC123"
+  >
     Start eID Authentication
   </a>
 </object>
@@ -52,6 +58,7 @@ The eService must provide a link/object that forwards a `tcTokenURL` to the eID-
 The eService must request a session and PSK from the eID-Server before issuing a TC Token.
 
 **Example SOAP Request:**
+
 ```xml
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
                   xmlns:eid="http://bsi.bund.de/eID/">
@@ -65,6 +72,7 @@ The eService must request a session and PSK from the eID-Server before issuing a
 ```
 
 **Example SOAP Response (from eID-Server):**
+
 ```xml
 <eid:useIDResponse xmlns:eid="http://bsi.bund.de/eID/">
   <eid:Session>
@@ -85,6 +93,7 @@ The eService must request a session and PSK from the eID-Server before issuing a
 Return XML **without header**, ordered elements exactly as defined.
 
 **Example Response to eID-Client:**
+
 ```xml
 <tcToken>
   <ServerAddress>https://eid-server.example.de/eIDService</ServerAddress>
@@ -103,6 +112,7 @@ Return XML **without header**, ordered elements exactly as defined.
 ### 3.4 SOAP `getResult`
 
 **Example Request:**
+
 ```xml
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
                   xmlns:eid="http://bsi.bund.de/eID/">
@@ -117,6 +127,7 @@ Return XML **without header**, ordered elements exactly as defined.
 ```
 
 **Example Response:**
+
 ```xml
 <eid:getResultResponse>
   <eid:Result>OK</eid:Result>

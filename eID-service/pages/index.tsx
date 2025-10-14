@@ -102,7 +102,7 @@ export default function Home() {
 
   const handleOperationChange = (
     key: keyof OperationsRequest,
-    value: AttributeRequestType
+    value: AttributeRequestType,
   ) => {
     setOperations((prev) => ({ ...prev, [key]: value }));
   };
@@ -158,7 +158,7 @@ export default function Home() {
 
       const data = await response.json();
       const eidClientUrl = `http://127.0.0.1:24727/eID-Client?tcTokenURL=${encodeURIComponent(
-        data.tcTokenUrl
+        data.tcTokenUrl,
       )}`;
       window.location.href = eidClientUrl;
     } catch (err: any) {
@@ -208,11 +208,11 @@ export default function Home() {
                     onChange={(e) =>
                       handleOperationChange(
                         key as keyof OperationsRequest,
-                        e.target.value as AttributeRequestType
+                        e.target.value as AttributeRequestType,
                       )
                     }
                     className={`mt-auto px-3 py-2 backdrop-blur-sm border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition-all ${getSelectColor(
-                      value
+                      value,
                     )}`}
                   >
                     <option value="PROHIBITED">Prohibited</option>
