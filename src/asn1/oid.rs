@@ -54,3 +54,11 @@ pub const ID_SECURITY_OBJECT: &[u32] = &[0, 4, 0, 127, 0, 7, 3, 2, 1];
 pub const SHA256_OID: &[u32] = &[2, 16, 840, 1, 101, 3, 4, 2, 1];
 pub const SHA384_OID: &[u32] = &[2, 16, 840, 1, 101, 3, 4, 2, 2];
 pub const SHA512_OID: &[u32] = &[2, 16, 840, 1, 101, 3, 4, 2, 3];
+
+// OIDs for mobile eIDs
+pub const ID_EID_TYPE: &[u32] = &[0, 4, 0, 127, 0, 7, 3, 2, 3];
+pub const ID_CARD_EID_TYPE: &[u32] = &[0, 4, 0, 127, 0, 7, 3, 2, 3, 1];
+pub const ID_MOBILE_EID_TYPE: &[u32] = &[0, 4, 0, 127, 0, 7, 3, 2, 3, 2];
+pub const EID_TYPE_SE_CERTIFIED: &[u32] = &[0, 4, 0, 127, 0, 7, 3, 2, 3, 2, 1];
+pub const EID_TYPE_SE_ENDORSED: &[u32] = &[0, 4, 0, 127, 0, 7, 3, 2, 3, 2, 2];
+pub const EID_TYPE_HW_KEYSTORE: &[u32] = &[0, 4, 0, 127, 0, 7, 3, 2, 3, 2, 3];

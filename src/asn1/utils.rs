@@ -1,8 +1,9 @@
 use crate::asn1::oid::{
-    ID_CA_ECDH, ID_CA_ECDH_AES_CBC_CMAC_128, ID_CA_ECDH_AES_CBC_CMAC_192,
-    ID_CA_ECDH_AES_CBC_CMAC_256, ID_PK_ECDH, ID_SECURITY_OBJECT, SHA256_OID, SHA384_OID,
-    SHA512_OID, STD_DOMAINPARAMS,
+    EID_TYPE_HW_KEYSTORE, EID_TYPE_SE_CERTIFIED, EID_TYPE_SE_ENDORSED, ID_CA_ECDH,
+    ID_CA_ECDH_AES_CBC_CMAC_128, ID_CA_ECDH_AES_CBC_CMAC_192, ID_CA_ECDH_AES_CBC_CMAC_256,
+    ID_PK_ECDH, ID_SECURITY_OBJECT, SHA256_OID, SHA384_OID, SHA512_OID, STD_DOMAINPARAMS,
 };
+use crate::asn1::security_info::MobileEIDTypeInfo;
 use crate::crypto::{
     Curve, Error as CryptoError, PublicKey,
     ecdsa::{self, EcdsaSig},
@@ -29,6 +30,9 @@ type Result<T> = std::result::Result<T, Error>;
 
 // Chip Authentication version 2
 const CA_VERSION_2: u8 = 2;
+
+// Mobile EID version 1
+const MOBILE_EID_VERSION_1: u8 = 1;
 
 // Mapping of standardized domain parameter IDs to curves (TR-03110-3 Table 4)
 const DOMAIN_PARAM_ID_TO_CURVE: &[(u8, Curve)] = &[
@@ -94,6 +98,33 @@ impl ChipAuthAlg {
     }
 }
 
+/// Mobile eID Type per TR-03110 Amendment Section 2.2
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub enum MobileEIDType {
+    SECertified,
+    SEEndorsed,
+    HWKeyStore,
+}
+
+impl MobileEIDType {
+    pub fn from_oid(oid: &[u32]) -> Option<Self> {
+        match oid {
+            EID_TYPE_SE_CERTIFIED => Some(MobileEIDType::SECertified),
+            EID_TYPE_SE_ENDORSED => Some(MobileEIDType::SEEndorsed),
+            EID_TYPE_HW_KEYSTORE => Some(MobileEIDType::HWKeyStore),
+            _ => None,
+        }
+    }
+
+    pub fn to_oid(&self) -> &'static [u32] {
+        match self {
+            MobileEIDType::SECertified => EID_TYPE_SE_CERTIFIED,
+            MobileEIDType::SEEndorsed => EID_TYPE_SE_ENDORSED,
+            MobileEIDType::HWKeyStore => EID_TYPE_HW_KEYSTORE,
+        }
+    }
+}
+
 /// Extract Chip Authentication v2 informations from SecurityInfos
 ///
 /// Returns an empty vector if no supported information is found
@@ -143,11 +174,10 @@ pub fn find_chip_auth_domain_params(
 /// # Errors
 /// Returns an error if validation fails or required information is not found.
 pub async fn process_card_security<T: TrustStore>(
-    data: impl AsRef<[u8]>,
+    card_security: &EFCardSecurity,
     curve: Curve,
     trust_store: &T,
 ) -> Result<Vec<u8>> {
-    let card_security = EFCardSecurity::from_der(data.as_ref())?;
     let signed_data = &card_security.content;
 
     // Validate structure has required components
@@ -165,6 +195,34 @@ pub async fn process_card_security<T: TrustStore>(
 
     // Extract and return the public point
     extract_chip_public_key(&security_infos, curve)
+}
+
+/// Parse Mobile eID information SecurityInfo from EFCardSecurity
+pub fn parse_mobile_eid_info(
+    card_security: &EFCardSecurity,
+) -> Option<(MobileEIDTypeInfo, MobileEIDType)> {
+    fn parse_mobile_eid(info: &SecurityInfo) -> Option<MobileEIDTypeInfo> {
+        let version = der_decode::<Integer>(info.required_data.as_ref()).ok()?;
+        if version != MOBILE_EID_VERSION_1.into() {
+            return None;
+        }
+        Some(MobileEIDTypeInfo {
+            protocol: info.protocol.clone(),
+            version,
+        })
+    }
+
+    let content = card_security.content.encap_content_info.content.as_ref()?;
+    let security_infos = SecurityInfos::from_der(content).ok()?;
+    security_infos
+        .0
+        .to_vec()
+        .iter()
+        .filter_map(|info| {
+            MobileEIDType::from_oid(info.protocol.as_ref())
+                .and_then(|alg| parse_mobile_eid(info).map(|info| (info, alg)))
+        })
+        .next()
 }
 
 /// Parse ChipAuthenticationInfo from a SecurityInfo
