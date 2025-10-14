@@ -1,4 +1,6 @@
-use crate::apdu::{ProtectedAPDU, SecureMessaging, SessionKeys, build_protected_cmds};
+use crate::apdu::{
+    APDUDecryptParams, ProtectedAPDU, SecureMessaging, SessionKeys, build_protected_cmds,
+};
 use crate::asn1::cvcert::Chat;
 use crate::asn1::utils::{
     ChipAuthAlg, extract_chip_auth_info, find_chip_auth_domain_params, process_card_security,
@@ -110,23 +112,9 @@ async fn handle_eac1<T: TrustStore>(
     let body = envelope.into_body();
 
     // Validate request body
-    body.validate().map_err(PaosError::from)?;
+    let data = validate_eac1_body(body)?;
 
-    // Check for client errors
-    if body.result.is_error() {
-        return Err(AppError::paos_internal(PaosError::Parameter(
-            "Client respond with error, aborting session".into(),
-        )));
-    }
-
-    let data = body.data();
-    if data.car.is_some() {
-        return Err(AppError::paos_internal(PaosError::Parameter(
-            "CertificationAuthorityReference should not be present at this point".into(),
-        )));
-    }
-
-    let keypair_info = generate_eph_keypair(&data.card_access)?;
+    let keypair_info = generate_eph_keypair(data.card_access.as_ref().unwrap())?;
     // Build DIDAuthenticate with EAC2InputType
     let resp = build_did_auth_eac2(state, aux_data, &keypair_info.0, &conn_handle, &data).await?;
 
@@ -187,28 +175,15 @@ async fn handle_eac2<T: TrustStore>(
     let body = envelope.into_body();
 
     // Validate request body
-    body.validate().map_err(PaosError::from)?;
-
-    // Check for client errors
-    if body.result.is_error() {
-        return Err(AppError::paos_internal(PaosError::Parameter(
-            "Client respond with error, aborting session".into(),
-        )));
-    }
-
-    let data = body.data();
-    if data.challenge.is_some() {
-        return Err(AppError::Paos(PaosError::Parameter(
-            "Challenge should not be included in the payload".into(),
-        )));
-    }
+    let data = validate_eac2_body(body)?;
 
     let access_rights = build_access_rights(restricted_chat, built_chat)?;
     let trust_store = &state.service.trust_store;
-    let cmds = build_cmds(&data, eph_key, chip_auth, trust_store, &access_rights).await?;
+    let (apdu_cmds, session_keys) =
+        build_cmds(&data, eph_key, chip_auth, trust_store, &access_rights).await?;
 
     // Build Transmit response
-    let resp = build_transmit(slot_handle.clone(), &cmds).await?;
+    let resp = build_transmit(slot_handle.clone(), &apdu_cmds).await?;
 
     let message_id = uuid::Uuid::new_v4().urn().to_string();
     // Update the session tracker
@@ -220,16 +195,83 @@ async fn handle_eac2<T: TrustStore>(
         message_id: Some(message_id),
     };
 
-    // Update session state
-    let cmds_len = cmds.len();
+    // Create APDU decrypt parameters from the session keys used to build commands
+    let decrypt_params = APDUDecryptParams::new(
+        session_keys.k_enc.expose_secret(),
+        session_keys.k_mac.expose_secret(),
+        session_keys.cipher(),
+    );
+
+    let cmds_len = apdu_cmds.len();
     session_data.state = State::Transmit {
-        apdu_cmds: cmds,
+        apdu_cmds,
         cmds_len,
+        decrypt_params,
     };
     session_mgr.insert(session_id, &session_data).await?;
 
     let result = Envelope::new(resp).with_header(header).serialize_paos(true);
     result.map_err(AppError::paos_internal)
+}
+
+fn validate_eac1_body(
+    body: DIDAuthenticateResponse<EAC1OutputType>,
+) -> Result<EAC1OutputType, AppError> {
+    // Validate request body
+    body.validate().map_err(PaosError::from)?;
+
+    // Check for client errors
+    if body.result.is_error() {
+        return Err(AppError::paos_internal(PaosError::Parameter(format!(
+            "Client respond with error: {:?}\nAborting session",
+            body.result
+        ))));
+    }
+
+    let data = body.data();
+    if data.car.is_some() {
+        return Err(AppError::Paos(PaosError::Parameter(
+            "CertificateHolderAuthorizationTemplate should not be present at this stage".into(),
+        )));
+    }
+
+    // Validate presence of required data
+    if data.card_access.is_none() || data.challenge.is_none() || data.id_picc.is_none() {
+        return Err(AppError::Paos(PaosError::Parameter(
+            "Missing EAC1OutputType required fields in AuthenticationProtocolData".into(),
+        )));
+    }
+    Ok(data)
+}
+
+fn validate_eac2_body(
+    body: DIDAuthenticateResponse<EAC2OutputType>,
+) -> Result<EAC2OutputType, AppError> {
+    // Validate request body
+    body.validate().map_err(PaosError::from)?;
+
+    // Check for client errors
+    if body.result.is_error() {
+        return Err(AppError::paos_internal(PaosError::Parameter(format!(
+            "Client respond with error: {:?}\nAborting session",
+            body.result
+        ))));
+    }
+
+    let data = body.data();
+    if data.challenge.is_some() {
+        return Err(AppError::Paos(PaosError::Parameter(
+            "Challenge should not be present at this stage".into(),
+        )));
+    }
+
+    // Validate presence of required data
+    if data.card_security.is_none() || data.auth_token.is_none() || data.nonce.is_none() {
+        return Err(AppError::Paos(PaosError::Parameter(
+            "Missing EAC2OutputType required fields in AuthenticationProtocolData".into(),
+        )));
+    }
+    Ok(data)
 }
 
 async fn build_did_auth_eac2<T: TrustStore>(
@@ -271,8 +313,8 @@ async fn generate_signature<T: TrustStore>(
     let (keypair, hash_alg) = get_signature_params(state).await?;
 
     let mut tbs_data = vec![];
-    tbs_data.extend_from_slice(&hex::decode(&data.id_picc)?);
-    tbs_data.extend_from_slice(&hex::decode(&data.challenge)?);
+    tbs_data.extend_from_slice(&hex::decode(data.id_picc.as_ref().unwrap())?);
+    tbs_data.extend_from_slice(&hex::decode(data.challenge.as_ref().unwrap())?);
     tbs_data.extend_from_slice(&ecdh_keypair.public_key().x_coordinate());
     if let Some(aux_data) = aux_data {
         tbs_data.extend_from_slice(&hex::decode(&aux_data)?);
@@ -328,7 +370,7 @@ async fn build_transmit(
     slot_handle: String,
     cmds: &[ProtectedAPDU],
 ) -> Result<TransmitReq, AppError> {
-    let apdu_infos = cmds
+    let input_apdus = cmds
         .iter()
         .map(|cmd| {
             let bytes = cmd.cmd.to_bytes();
@@ -342,7 +384,7 @@ async fn build_transmit(
     Ok(TransmitReq {
         value: Transmit {
             slot_handle,
-            input_apdus: apdu_infos,
+            input_apdus,
         },
     })
 }
@@ -353,25 +395,27 @@ async fn build_cmds<T: TrustStore>(
     auth_params: &(Curve, ChipAuthAlg),
     trust_store: &T,
     access_rights: &AccessRights,
-) -> Result<Vec<ProtectedAPDU>, AppError> {
+) -> Result<(Vec<ProtectedAPDU>, SessionKeys), AppError> {
     let (curve, alg) = *auth_params;
     // process card security and extract public key
-    let card_security = hex::decode(&data.card_security)?;
+    let card_security = hex::decode(data.card_security.as_ref().unwrap())?;
     let pub_bytes = process_card_security(&card_security, curve, trust_store).await?;
     let card_pubkey = PublicKey::from_bytes(curve, pub_bytes)?;
+
     // get ephemeral private key from serialized DER key bytes
     let eph_priv_key = PrivateKey::from_bytes(eph_key)?;
+
     // Initialize secure messaging
-    let nonce = hex::decode(&data.nonce)?;
+    let nonce = hex::decode(data.nonce.as_ref().unwrap())?;
     let session_keys = SessionKeys::derive(&eph_priv_key, &card_pubkey, alg, nonce)?;
-    let mut sm = SecureMessaging::new(session_keys);
+    let mut sm = SecureMessaging::new(session_keys.clone());
 
     // Validate authentication token
-    validate_auth_token(&sm, &eph_priv_key, &data.auth_token, alg)?;
+    validate_auth_token(&sm, &eph_priv_key, data.auth_token.as_ref().unwrap(), alg)?;
 
     // Use the APDU builder to construct commands
-    let commands = build_protected_cmds(access_rights, &mut sm).map_err(AppError::from)?;
-    Ok(commands)
+    let commands = build_protected_cmds(access_rights, &mut sm)?;
+    Ok((commands, session_keys))
 }
 
 fn build_access_rights(

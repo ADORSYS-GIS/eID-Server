@@ -96,23 +96,29 @@ pub struct EAC1OutputType {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "CertificationAuthorityReference", default)]
     pub car: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "EFCardAccess")]
-    pub card_access: String,
+    pub card_access: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "IDPICC")]
-    pub id_picc: String,
+    pub id_picc: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "Challenge")]
-    pub challenge: String,
+    pub challenge: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Validate)]
 #[serde(rename_all = "PascalCase")]
 pub struct EAC2OutputType {
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "EFCardSecurity")]
-    pub card_security: String,
+    pub card_security: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "AuthenticationToken")]
     #[validate(length(min = 16, max = 16))]
-    pub auth_token: String,
-    pub nonce: String,
+    pub auth_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub challenge: Option<String>,
 }
