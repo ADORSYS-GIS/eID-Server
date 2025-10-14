@@ -1,8 +1,9 @@
 use crate::apdu::{APDUCommand, Ins};
+use bincode::{Decode, Encode};
 use hex_literal::hex;
 
 /// Data Group definitions
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 pub enum DataGroup {
     /// Document Type
     DG1 = 0x01,
