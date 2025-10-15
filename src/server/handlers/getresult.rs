@@ -186,17 +186,14 @@ fn is_eid_type_allowed(request_data: &UseIDRequest, eid_type: EIDType) -> bool {
     }
 }
 
-fn extract_response_data(
-    responses: &Vec<DecryptedAPDU>,
-) -> Result<
-    (
-        PersonalData,
-        Operations<AttributeResp>,
-        Option<VerificationResult>,
-        Option<VerificationResult>,
-    ),
-    AppError,
-> {
+type ResultData = (
+    PersonalData,
+    Operations<AttributeResp>,
+    Option<VerificationResult>,
+    Option<VerificationResult>,
+);
+
+fn extract_response_data(responses: &Vec<DecryptedAPDU>) -> Result<ResultData, AppError> {
     let mut personal_data = PersonalData::default();
     let mut ops_allowed = Operations::default();
     let mut age_verification_result = None;
@@ -236,14 +233,14 @@ fn process_response(
             *age_result = Some(VerificationResult {
                 fulfils_request: response.is_success,
             });
-            ops_allowed.age_verification.value = status;
+            ops_allowed.age_verification = Some(AttributeResp { value: status });
             return Ok(());
         }
         CmdType::VerifyPlace => {
             *place_result = Some(VerificationResult {
                 fulfils_request: response.is_success,
             });
-            ops_allowed.place_verification.value = status;
+            ops_allowed.place_verification = Some(AttributeResp { value: status });
             return Ok(());
         }
         CmdType::SelectFile(dg) => {
@@ -260,10 +257,10 @@ fn process_response(
             }
             update_ops_allowed(ops_allowed, dg, status);
 
-            if response.is_success {
-                if let Err(e) = store_datagroup(dg, &response.response_data, personal_data) {
-                    tracing::warn!("Failed to parse {dg:?}: {e:?}");
-                }
+            if response.is_success
+                && let Err(e) = store_datagroup(dg, &response.response_data, personal_data)
+            {
+                tracing::warn!("Failed to parse {dg:?}: {e:?}");
             }
         }
         _ => {}
@@ -301,7 +298,7 @@ fn update_ops_allowed(ops: &mut Operations<AttributeResp>, dg: DataGroup, status
     };
 
     if let Some(attr) = attr {
-        attr.value = status;
+        *attr = Some(AttributeResp { value: status });
     }
 }
 
