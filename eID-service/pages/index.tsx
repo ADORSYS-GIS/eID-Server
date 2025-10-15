@@ -1,16 +1,15 @@
-// pages/index.tsx
-
 import Image from "next/image";
+import { useRouter } from 'next/router';
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Shield, CheckCircle2, Loader2, ChevronRight } from "lucide-react";
+import { Shield, CheckCircle2, Loader2, ChevronRight, Server } from "lucide-react";
 import type {
   AuthenticationConfig,
   OperationsRequest,
   AttributeRequestType,
   EIDTypeSelection,
   LevelOfAssurance,
-} from "@/types/eid";
+} from "../types/eid";
 
 const attributeLabels: Record<keyof OperationsRequest, string> = {
   DocumentType: "Document Type",
@@ -57,6 +56,7 @@ const getEidSelectColor = (value: EIDTypeSelection | "") => {
 };
 
 export default function Home() {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -221,19 +221,24 @@ export default function Home() {
               Attribute Requests
             </h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {Object.entries(operations).map(([key, value]) => (
+              {(
+                Object.entries(operations) as [
+                  keyof OperationsRequest,
+                  AttributeRequestType,
+                ][]
+              ).map(([key, value]) => (
                 <div
                   key={key}
                   className="flex flex-col justify-between min-h-[90px] p-3 bg-white/40 rounded-lg shadow-sm"
                 >
                   <label className="text-xs font-medium text-gray-700">
-                    {attributeLabels[key as keyof OperationsRequest]}
+                    {attributeLabels[key]}
                   </label>
                   <select
                     value={value}
                     onChange={(e) =>
                       handleOperationChange(
-                        key as keyof OperationsRequest,
+                        key,
                         e.target.value as AttributeRequestType
                       )
                     }
@@ -498,7 +503,12 @@ export default function Home() {
                 eID Types
               </h3>
               <div className="grid grid-cols-2 gap-3">
-                {Object.entries(eidTypes).map(([key, value]) => (
+                {(
+                  Object.entries(eidTypes) as [
+                    keyof typeof eidTypes,
+                    EIDTypeSelection | "",
+                  ][]
+                ).map(([key, value]) => (
                   <div
                     key={key}
                     className="flex flex-col justify-between min-h-[90px] p-3 bg-white/40 rounded-lg shadow-sm"
@@ -512,7 +522,7 @@ export default function Home() {
                       value={value}
                       onChange={(e) =>
                         handleEidTypeChange(
-                          key as keyof typeof eidTypes,
+                          key,
                           e.target.value as EIDTypeSelection | ""
                         )
                       }
@@ -547,8 +557,17 @@ export default function Home() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.5 }}
-          className="flex justify-center"
+          className="flex justify-center items-center gap-4"
         >
+          <button
+            onClick={() => router.push('/serverinfo')}
+            className="group relative px-6 py-3 bg-gradient-to-r from-gray-700 to-gray-800 text-white text-base font-semibold rounded-full shadow-lg hover:shadow-xl hover:from-gray-600 hover:to-gray-700 backdrop-blur-sm border border-white/20 transition-all duration-300 hover:scale-105 active:scale-95"
+          >
+            <span className="flex items-center gap-3">
+              <Server className="w-5 h-5" />
+              Get Server Info
+            </span>
+          </button>
           <button
             onClick={startAuthentication}
             disabled={loading}
