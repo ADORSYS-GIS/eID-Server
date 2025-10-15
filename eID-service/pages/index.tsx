@@ -1,5 +1,6 @@
 // pages/index.tsx
 
+import Image from "next/image";
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Shield, CheckCircle2, Loader2, ChevronRight } from "lucide-react";
@@ -191,8 +192,14 @@ export default function Home() {
       {/* Compact Header */}
       <header className="sticky top-0 z-50 backdrop-blur-xl bg-gradient-to-r from-white/25 via-purple-50/15 to-pink-50/15 border-b border-white/15">
         <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center gap-2">
-            <Shield className="w-7 h-7 text-blue-600" />
+          <div className="flex items-center gap-3">
+            <Image
+              src="/adorsys-logo.png"
+              alt="adorsys Logo"
+              width={60}
+              height={30}
+              priority
+            />
             <h1 className="text-2xl font-semibold text-gray-900">
               eID Test Service
             </h1>
