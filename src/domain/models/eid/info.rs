@@ -112,7 +112,6 @@ mod tests {
                 place_verification: Some(AttributeSelect {
                     value: AttrSelect::ALLOWED,
                 }),
-                ..Default::default()
             },
         };
 
