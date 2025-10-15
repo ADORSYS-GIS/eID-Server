@@ -36,7 +36,7 @@ where
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+            Ok(Event::Start(e)) => {
                 let mut start = e.into_owned();
                 if is_root {
                     for (prefix, uri) in config.namespaces.iter() {
@@ -50,6 +50,21 @@ where
                     is_root = false;
                 }
                 writer.write_event(Event::Start(start))?;
+            }
+            Ok(Event::Empty(e)) => {
+                let mut empty = e.into_owned();
+                if is_root {
+                    for (prefix, uri) in config.namespaces.iter() {
+                        let attr_name = if prefix.is_empty() {
+                            "xmlns".into()
+                        } else {
+                            format!("xmlns:{prefix}")
+                        };
+                        empty.push_attribute((attr_name.as_bytes(), uri.as_bytes()));
+                    }
+                    is_root = false;
+                }
+                writer.write_event(Event::Empty(empty))?;
             }
             Ok(Event::Eof) => break,
             Ok(event) => writer.write_event(event)?,
