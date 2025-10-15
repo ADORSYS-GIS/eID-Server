@@ -49,21 +49,6 @@ pub enum CmdType {
     VerifyPlace,
 }
 
-impl CmdType {
-    /// Returns the associated data group if this command operates on one
-    pub fn data_group(&self) -> Option<DataGroup> {
-        match self {
-            CmdType::SelectFile(dg) | CmdType::ReadBinary(dg) => Some(*dg),
-            _ => None,
-        }
-    }
-
-    /// Indicates if this is a data-carrying response
-    pub fn has_response_data(&self) -> bool {
-        matches!(self, CmdType::ReadBinary(_))
-    }
-}
-
 /// Protected APDU command that pairs the command with its decodable type
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct ProtectedAPDU {
@@ -78,31 +63,6 @@ pub struct DecryptedAPDU {
     pub cmd_type: CmdType,
     pub status_code: u16,
     pub is_success: bool,
-}
-
-/// Processed response grouped by data group
-#[derive(Debug, Clone)]
-pub enum DecodedAPDU {
-    SelectEidApp,
-    SelectFile(DataGroup),
-    ReadBinary {
-        data_group: DataGroup,
-        data: Vec<u8>,
-    },
-    VerifyAge,
-    VerifyPlace,
-}
-
-impl DecodedAPDU {
-    /// Returns the associated data group if this response operates on one
-    pub fn data_group(&self) -> Option<DataGroup> {
-        match self {
-            DecodedAPDU::SelectFile(dg) | DecodedAPDU::ReadBinary { data_group: dg, .. } => {
-                Some(*dg)
-            }
-            _ => None,
-        }
-    }
 }
 
 /// Build protected APDU commands based on access rights
