@@ -72,8 +72,12 @@ pub struct DocumentType(pub PrintableString);
 
 /// Issuing Entity - [APPLICATION 2] CHOICE
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode)]
-#[rasn(tag(application, 2), choice)]
-pub enum IssuingEntity {
+#[rasn(tag(application, 2))]
+pub struct IssuingEntity(pub IssuingEntityChoice);
+
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode)]
+#[rasn(choice)]
+pub enum IssuingEntityChoice {
     IssuingState(ICAOCountry),
     IssuingPlace(Place),
 }
@@ -145,8 +149,12 @@ pub struct DateOfIssuance(pub Date);
 
 /// Place of Residence - [APPLICATION 17] CHOICE
 #[derive(AsnType, Encode, Decode, Clone, Debug, PartialEq)]
-#[rasn(tag(application, 17), choice)]
-pub enum PlaceOfResidence {
+#[rasn(tag(application, 17))]
+pub struct PlaceOfResidence(pub PlaceOfResidenceChoice);
+
+#[derive(AsnType, Encode, Decode, Clone, Debug, PartialEq)]
+#[rasn(choice)]
+pub enum PlaceOfResidenceChoice {
     Residence(GeneralPlace),
     MultResidence(SetOf<GeneralPlace>),
 }
