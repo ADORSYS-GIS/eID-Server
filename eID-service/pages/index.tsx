@@ -44,6 +44,17 @@ const getSelectColor = (value: AttributeRequestType) => {
   }
 };
 
+const getEidSelectColor = (value: EIDTypeSelection | "") => {
+  switch (value) {
+    case "ALLOWED":
+      return "bg-green-500/10 text-green-800 border-green-500/20";
+    case "DENIED":
+      return "bg-gray-500/10 text-gray-800 border-gray-500/20";
+    default:
+      return "bg-white/50 text-gray-900 border-gray-300/50";
+  }
+};
+
 export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,22 +104,30 @@ export default function Home() {
     info: "Example transaction",
   });
 
-  const [eidTypes, setEidTypes] = useState({
-    CardCertified: false,
-    SECertified: false,
-    SEEndorsed: false,
-    HWKeyStore: false,
+  const [eidTypes, setEidTypes] = useState<{
+    CardCertified: EIDTypeSelection | "";
+    SECertified: EIDTypeSelection | "";
+    SEEndorsed: EIDTypeSelection | "";
+    HWKeyStore: EIDTypeSelection | "";
+  }>({
+    CardCertified: "",
+    SECertified: "",
+    SEEndorsed: "",
+    HWKeyStore: "",
   });
 
   const handleOperationChange = (
     key: keyof OperationsRequest,
-    value: AttributeRequestType,
+    value: AttributeRequestType
   ) => {
     setOperations((prev) => ({ ...prev, [key]: value }));
   };
 
-  const handleEidTypeChange = (key: string, checked: boolean) => {
-    setEidTypes((prev) => ({ ...prev, [key]: checked }));
+  const handleEidTypeChange = (
+    key: keyof typeof eidTypes,
+    value: EIDTypeSelection | ""
+  ) => {
+    setEidTypes((prev) => ({ ...prev, [key]: value }));
   };
 
   const startAuthentication = async () => {
@@ -119,12 +138,12 @@ export default function Home() {
       const config: AuthenticationConfig = {
         operations,
         levelOfAssurance: levelOfAssurance || undefined,
-        eidTypeRequest: {
-          ...(eidTypes.CardCertified && { CardCertified: "ALLOWED" }),
-          ...(eidTypes.SECertified && { SECertified: "ALLOWED" }),
-          ...(eidTypes.SEEndorsed && { SEEndorsed: "ALLOWED" }),
-          ...(eidTypes.HWKeyStore && { HWKeyStore: "ALLOWED" }),
-        },
+        eidTypeRequest: Object.entries(eidTypes)
+          .filter(([_, value]) => value)
+          .reduce((obj, [key, value]) => {
+            obj[key as keyof typeof eidTypes] = value as EIDTypeSelection;
+            return obj;
+          }, {} as { [key in keyof typeof eidTypes]?: EIDTypeSelection }),
       };
 
       if (ageVerification.enabled) {
@@ -158,7 +177,7 @@ export default function Home() {
 
       const data = await response.json();
       const eidClientUrl = `http://127.0.0.1:24727/eID-Client?tcTokenURL=${encodeURIComponent(
-        data.tcTokenUrl,
+        data.tcTokenUrl
       )}`;
       window.location.href = eidClientUrl;
     } catch (err: any) {
@@ -208,11 +227,11 @@ export default function Home() {
                     onChange={(e) =>
                       handleOperationChange(
                         key as keyof OperationsRequest,
-                        e.target.value as AttributeRequestType,
+                        e.target.value as AttributeRequestType
                       )
                     }
                     className={`mt-auto px-3 py-2 backdrop-blur-sm border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition-all ${getSelectColor(
-                      value,
+                      value
                     )}`}
                   >
                     <option value="PROHIBITED">Prohibited</option>
@@ -472,26 +491,33 @@ export default function Home() {
                 eID Types
               </h3>
               <div className="grid grid-cols-2 gap-3">
-                {Object.entries(eidTypes).map(([key, checked]) => (
-                  <label
+                {Object.entries(eidTypes).map(([key, value]) => (
+                  <div
                     key={key}
-                    className="flex items-center gap-2 p-3 rounded-xl bg-purple-400/10 cursor-pointer hover:bg-purple-500/10 transition-colors"
+                    className="flex flex-col justify-between min-h-[90px] p-3 bg-white/40 rounded-lg shadow-sm"
                   >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={(e) =>
-                        handleEidTypeChange(key, e.target.checked)
-                      }
-                      className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                    />
-                    <span className="text-sm font-medium text-gray-800">
+                    <label className="text-xs font-medium text-gray-700">
                       {key
-                        .replace(/([A-Z])/g, " $1")
-                        .trim()
-                        .replace(/\s/g, "")}
-                    </span>
-                  </label>
+                        .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+                        .replace(/([a-z\d])([A-Z])/g, "$1 $2")}
+                    </label>
+                    <select
+                      value={value}
+                      onChange={(e) =>
+                        handleEidTypeChange(
+                          key as keyof typeof eidTypes,
+                          e.target.value as EIDTypeSelection | ""
+                        )
+                      }
+                      className={`mt-auto px-3 py-2 backdrop-blur-sm border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition-all ${getEidSelectColor(
+                        value
+                      )}`}
+                    >
+                      <option value="">None</option>
+                      <option value="ALLOWED">Allowed</option>
+                      <option value="DENIED">Denied</option>
+                    </select>
+                  </div>
                 ))}
               </div>
             </motion.div>
