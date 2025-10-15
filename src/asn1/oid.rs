@@ -62,3 +62,13 @@ pub const ID_MOBILE_EID_TYPE: &[u32] = &[0, 4, 0, 127, 0, 7, 3, 2, 3, 2];
 pub const EID_TYPE_SE_CERTIFIED: &[u32] = &[0, 4, 0, 127, 0, 7, 3, 2, 3, 2, 1];
 pub const EID_TYPE_SE_ENDORSED: &[u32] = &[0, 4, 0, 127, 0, 7, 3, 2, 3, 2, 2];
 pub const EID_TYPE_HW_KEYSTORE: &[u32] = &[0, 4, 0, 127, 0, 7, 3, 2, 3, 2, 3];
+
+// OIDs for Restricted Identification
+pub const ID_RI_ECDH: &[u32] = &[0, 4, 0, 127, 0, 7, 2, 2, 5, 2];
+pub const ID_RI_ECDH_SHA_256: &[u32] = &[0, 4, 0, 127, 0, 7, 2, 2, 5, 2, 3];
+pub const ID_RI_ECDH_SHA_384: &[u32] = &[0, 4, 0, 127, 0, 7, 2, 2, 5, 2, 4];
+pub const ID_RI_ECDH_SHA_512: &[u32] = &[0, 4, 0, 127, 0, 7, 2, 2, 5, 2, 5];
+pub const ID_SECTOR_RI: &[u32] = &[0, 4, 0, 127, 0, 7, 3, 1, 3, 2];
+
+// OIDs for certificate description extensions
+pub const ID_DESCRIPTION: &[u32] = &[0, 4, 0, 127, 0, 7, 3, 1, 3, 1];

@@ -15,7 +15,6 @@ pub struct Chat {
 
 /// ECDSA Public Key
 #[derive(Debug, Clone, Decode, Encode, AsnType)]
-#[rasn(tag(application, 0x49))]
 pub struct EcdsaPublicKey {
     /// key object identifier
     pub oid: Oid,
@@ -45,8 +44,27 @@ pub struct EcdsaPublicKey {
 /// Certificate Extensions
 #[derive(Debug, Clone, Decode, Encode, AsnType)]
 #[rasn(tag(application, 0x05))]
-#[rasn(delegate)]
 pub struct CertificateExtensions(pub SequenceOf<Any>);
+
+/// Terminal Sector public key certificate extension
+#[derive(Debug, Clone, Decode, Encode, AsnType)]
+#[rasn(tag(application, 0x13))]
+pub struct TerminalSectorExt {
+    pub oid: Oid,
+    #[rasn(tag(context, 0))]
+    pub first_sector_hash: OctetString,
+    #[rasn(tag(context, 1))]
+    pub second_sector_hash: Option<OctetString>,
+}
+
+/// Certificate Description Extension
+#[derive(Debug, Clone, Decode, Encode, AsnType)]
+#[rasn(tag(application, 0x13))]
+pub struct CertificateDescriptionExt {
+    pub oid: Oid,
+    #[rasn(tag(context, 0))]
+    pub description: OctetString,
+}
 
 /// Card Verifiable Certificate Body
 #[derive(Debug, Clone, Decode, Encode, AsnType)]
@@ -59,9 +77,10 @@ pub struct CvCertificateBody {
     /// certificate authority reference
     pub car: OctetString,
     /// public key value and domain parameters
+    #[rasn(tag(application, 0x49))]
     pub public_key: EcdsaPublicKey,
-    #[rasn(tag(application, 0x20))]
     /// certificate holder reference
+    #[rasn(tag(application, 0x20))]
     pub chr: OctetString,
     /// certificate holder authorization template
     pub chat: Chat,
