@@ -1,16 +1,19 @@
+use serde::Serialize;
+use validator::Validate;
+
 use crate::apdu::{
-    APDUDecryptParams, ProtectedAPDU, SecureMessaging, SessionKeys, build_protected_cmds,
+    APDUDecryptParams, ProtectedAPDU, RestrictedIdParams, SecureMessaging, SessionKeys,
+    build_protected_cmds,
 };
-use crate::asn1::cvcert::Chat;
+use crate::asn1::cvcert::{Chat, CvCertificate, EcdsaPublicKey};
 use crate::asn1::security_info::EFCardSecurity;
 use crate::asn1::utils::{
     ChipAuthAlg, MobileEIDType, extract_chip_auth_info, find_chip_auth_domain_params,
     parse_mobile_eid_info, process_card_security,
 };
 use crate::crypto::ecdh::EcdhKeyPair;
-use crate::crypto::{Curve, PublicKey};
-use crate::crypto::{HashAlg, PrivateKey, ecdsa::EcdsaKeyPair};
-use crate::cvcert::{AccessRights, CvCertificate};
+use crate::crypto::{Curve, HashAlg, PrivateKey, PublicKey, ecdsa::EcdsaKeyPair};
+use crate::cvcert::AccessRights;
 use crate::domain::models::State;
 use crate::domain::models::paos::{
     AuthProtoData, ConnectionHandle, DIDAuthenticate, DIDAuthenticateResponse, EAC1OutputType,
@@ -23,8 +26,6 @@ use crate::server::errors::{AppError, PaosError, impl_paos_internal_error};
 use crate::server::handlers::{SESSION_TRACKER, handle_paos_error};
 use crate::session::SessionData;
 use crate::soap::{Envelope, Header};
-use serde::Serialize;
-use validator::Validate;
 
 const DID_NAME: &str = "PIN";
 const EAC2_TYPE: &str = "EAC2InputType";
@@ -176,9 +177,8 @@ async fn handle_eac2<T: TrustStore>(
     let data = validate_eac2_body(envelope.into_body())?;
 
     let access_rights = build_access_rights(&restricted_chat, &built_chat)?;
-    let trust_store = &state.service.trust_store;
     let (apdu_cmds, session_keys, mobile_eid_type) =
-        build_cmds(&data, &eph_key, &chip_auth, trust_store, &access_rights).await?;
+        build_cmds(state, &data, &eph_key, &chip_auth, &access_rights).await?;
 
     // Build Transmit response
     let resp = build_transmit(slot_handle, &apdu_cmds).await?;
@@ -336,7 +336,7 @@ async fn get_signature_params<T: TrustStore>(
     let priv_key = PrivateKey::from_bytes(&key_bytes)?;
     let keypair = EcdsaKeyPair::from_private_key(priv_key)?;
 
-    let term_cvc = CvCertificate::from_der(&term_cvc_bytes)?;
+    let term_cvc = crate::cvcert::CvCertificate::from_der(&term_cvc_bytes)?;
     let security_protocol = term_cvc.public_key().security_protocol();
     // safe to unwrap, because we will always generate
     // a key pair with a valid security protocol
@@ -390,13 +390,15 @@ async fn build_transmit(
 }
 
 async fn build_cmds<T: TrustStore>(
+    state: &AppState<T>,
     data: &EAC2OutputType,
     eph_key: &[u8],
     auth_params: &(Curve, ChipAuthAlg),
-    trust_store: &T,
     access_rights: &AccessRights,
 ) -> Result<(Vec<ProtectedAPDU>, SessionKeys, Option<MobileEIDType>), AppError> {
+    let trust_store = &state.service.trust_store;
     let (curve, alg) = *auth_params;
+
     // process card security and extract public key
     let card_security = EFCardSecurity::from_hex(data.card_security.as_ref().unwrap())?;
     let pub_bytes = process_card_security(&card_security, curve, trust_store).await?;
@@ -413,9 +415,10 @@ async fn build_cmds<T: TrustStore>(
     // Validate authentication token
     validate_auth_token(&sm, &eph_priv_key, data.auth_token.as_ref().unwrap(), alg)?;
 
-    // Use the APDU builder to construct commands
-    let commands = build_protected_cmds(access_rights, &mut sm)?;
     let mobile_eid_type = parse_mobile_eid_info(&card_security);
+    // Build protected APDU commands
+    let restricted_id_params = build_restricted_id_params(&card_security, state).await?;
+    let commands = build_protected_cmds(access_rights, &mut sm, restricted_id_params)?;
     Ok((commands, session_keys, mobile_eid_type.map(|(_, t)| t)))
 }
 
@@ -480,6 +483,61 @@ fn validate_auth_token(
     Ok(())
 }
 
+async fn build_restricted_id_params<T: TrustStore>(
+    card_security: &EFCardSecurity,
+    state: &AppState<T>,
+) -> Result<Option<RestrictedIdParams>, AppError> {
+    use crate::asn1::utils::{parse_terminal_sector, process_restricted_id};
+
+    let term_cvc_bytes = state.service.identity.get(Material::TermCvc).await?;
+    let term_cvc =
+        rasn::der::decode::<CvCertificate>(&term_cvc_bytes).map_err(AppError::paos_internal)?;
+
+    // Check if terminal CVC has restrictedID extensions
+    if parse_terminal_sector(&term_cvc.body.extensions.unwrap()).is_none() {
+        return Ok(None);
+    }
+
+    // Extract restrictedID infos from card security
+    let Some((id_info, alg, _)) = process_restricted_id(card_security) else {
+        return Ok(None);
+    };
+    let Some(sector_pubkey) = extract_sector_pubkey(state).await? else {
+        return Ok(None);
+    };
+
+    // We don't support authorizations extensions for now
+    if id_info.params.authorized_only {
+        return Ok(None);
+    }
+    // Get private key reference from the RestrictedIdInfo params
+    let priv_key_ref = id_info.params.key_id.clone();
+
+    Ok(Some(RestrictedIdParams {
+        alg,
+        priv_key_ref,
+        pubkey_sector1: sector_pubkey,
+        pubkey_sector2: None,
+    }))
+}
+
+async fn extract_sector_pubkey<T: TrustStore>(
+    state: &AppState<T>,
+) -> Result<Option<EcdsaPublicKey>, AppError> {
+    use rasn::{AsnType, Decode};
+
+    #[derive(Debug, AsnType, Decode)]
+    #[rasn(tag(context, 0), delegate)]
+    struct SectorPublicKey(EcdsaPublicKey);
+
+    let sector_bytes = state.service.identity.get(Material::SectorPubKey).await?;
+    // Parse the sector public key from DER data
+    if let Ok(pubkey) = rasn::der::decode::<SectorPublicKey>(&sector_bytes) {
+        return Ok(Some(pubkey.0));
+    }
+    Ok(None)
+}
+
 impl_paos_internal_error! {
     crate::crypto::Error,
     crate::cvcert::Error,
@@ -487,6 +545,12 @@ impl_paos_internal_error! {
 
 impl From<hex::FromHexError> for AppError {
     fn from(error: hex::FromHexError) -> Self {
+        AppError::Paos(PaosError::Parameter(error.to_string()))
+    }
+}
+
+impl From<rasn::error::DecodeError> for AppError {
+    fn from(error: rasn::error::DecodeError) -> Self {
         AppError::Paos(PaosError::Parameter(error.to_string()))
     }
 }
@@ -509,11 +573,5 @@ impl From<crate::apdu::Error> for AppError {
             Error::Asn1(e) => AppError::paos_internal(e),
             _ => AppError::Paos(PaosError::Parameter(error.to_string())),
         }
-    }
-}
-
-impl From<rasn::error::DecodeError> for AppError {
-    fn from(error: rasn::error::DecodeError) -> Self {
-        AppError::Paos(PaosError::Parameter(error.to_string()))
     }
 }
