@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use rasn::der::decode as der_decode;
 use serde::Serialize;
 use tracing::instrument;
@@ -34,7 +36,7 @@ pub async fn handle_get_result<T: TrustStore>(
     let body = envelope.into_body();
     let session_mgr = &state.service.session_manager;
 
-    // Validate the request
+    // Validate the request body
     body.validate().map_err(EidError::from)?;
 
     let mut session_data: SessionData = session_mgr
@@ -101,19 +103,19 @@ async fn build_response(
     let eid_type = mobile_eid_type
         .map(EIDType::from_mobile_type)
         .unwrap_or(EIDType::CardCertified);
-    let mut level_of_assurance = None;
 
     // Validate eID type selection
     validate_eid_type(&request_data, eid_type)?;
 
     // Validate Level of Assurance requirements
-    if request_data.level_of_assurance.is_some() {
-        level_of_assurance = Some(validate_and_get_loa(eid_type, &request_data)?);
-    }
+    let level_of_assurance = request_data
+        .level_of_assurance
+        .map(|_| validate_and_get_loa(eid_type, &request_data))
+        .transpose()?;
 
     // Extract data from responses
-    let (personal_data, ops_allowed) = extract_response_data(&responses)?;
-    let (fulfils_age, fulfils_place) = extract_verification_results(&responses);
+    let (personal_data, ops_allowed, fulfils_age, fulfils_place) =
+        extract_response_data(&responses)?;
 
     let eid_type_resp = request_data
         .eid_type
@@ -134,17 +136,19 @@ async fn build_response(
 }
 
 fn validate_eid_type(request_data: &UseIDRequest, eid_type: EIDType) -> Result<(), AppError> {
-    if let Some(req) = &request_data.eid_type {
-        let is_denied = match eid_type {
-            EIDType::CardCertified => req.card_certified == Some(EIDTypeSelection::DENIED),
-            EIDType::SECertified => req.se_certified == Some(EIDTypeSelection::DENIED),
-            EIDType::SEEndorsed => req.se_endorsed == Some(EIDTypeSelection::DENIED),
-            EIDType::HWKeyStore => req.hw_key_store == Some(EIDTypeSelection::DENIED),
-        };
+    let Some(req) = &request_data.eid_type else {
+        return Ok(());
+    };
 
-        if is_denied {
-            return Err(AppError::Eid(EidError::DeniedDocument));
-        }
+    let is_denied = match eid_type {
+        EIDType::CardCertified => req.card_certified == Some(EIDTypeSelection::DENIED),
+        EIDType::SECertified => req.se_certified == Some(EIDTypeSelection::DENIED),
+        EIDType::SEEndorsed => req.se_endorsed == Some(EIDTypeSelection::DENIED),
+        EIDType::HWKeyStore => req.hw_key_store == Some(EIDTypeSelection::DENIED),
+    };
+
+    if is_denied {
+        return Err(AppError::Eid(EidError::DeniedDocument));
     }
     Ok(())
 }
@@ -184,46 +188,97 @@ fn is_eid_type_allowed(request_data: &UseIDRequest, eid_type: EIDType) -> bool {
 
 fn extract_response_data(
     responses: &Vec<DecryptedAPDU>,
-) -> Result<(PersonalData, Operations<AttributeResp>), AppError> {
+) -> Result<
+    (
+        PersonalData,
+        Operations<AttributeResp>,
+        Option<VerificationResult>,
+        Option<VerificationResult>,
+    ),
+    AppError,
+> {
     let mut personal_data = PersonalData::default();
     let mut ops_allowed = Operations::default();
+    let mut age_verification_result = None;
+    let mut place_verification_result = None;
+    let mut failed_selects = HashSet::new();
 
     for response in responses {
-        process_response(response, &mut personal_data, &mut ops_allowed)?;
+        process_response(
+            response,
+            &mut personal_data,
+            &mut ops_allowed,
+            &mut age_verification_result,
+            &mut place_verification_result,
+            &mut failed_selects,
+        )?;
     }
-    Ok((personal_data, ops_allowed))
+    Ok((
+        personal_data,
+        ops_allowed,
+        age_verification_result,
+        place_verification_result,
+    ))
 }
 
 fn process_response(
     response: &DecryptedAPDU,
     personal_data: &mut PersonalData,
     ops_allowed: &mut Operations<AttributeResp>,
+    age_result: &mut Option<VerificationResult>,
+    place_result: &mut Option<VerificationResult>,
+    failed_selects: &mut HashSet<DataGroup>,
 ) -> Result<(), AppError> {
-    fn compute_response_status(response: &DecryptedAPDU) -> AttrResponse {
-        if response.is_success {
-            AttrResponse::ALLOWED
-        } else if response.status_code == StatusCode::NOT_FOUND.0 {
-            AttrResponse::NOTONCHIP
-        } else {
-            AttrResponse::PROHIBITED
-        }
-    }
-
-    if matches!(response.cmd_type, CmdType::VerifyAge | CmdType::VerifyPlace) {
-        return Ok(());
-    }
-
-    let Some(dg) = response.cmd_type.data_group() else {
-        return Ok(());
-    };
-
     let status = compute_response_status(response);
-    update_ops_allowed(ops_allowed, dg, status);
 
-    if response.is_success {
-        store_datagroup(dg, &response.response_data, personal_data)?;
+    match response.cmd_type {
+        CmdType::VerifyAge => {
+            *age_result = Some(VerificationResult {
+                fulfils_request: response.is_success,
+            });
+            ops_allowed.age_verification.value = status;
+            return Ok(());
+        }
+        CmdType::VerifyPlace => {
+            *place_result = Some(VerificationResult {
+                fulfils_request: response.is_success,
+            });
+            ops_allowed.place_verification.value = status;
+            return Ok(());
+        }
+        CmdType::SelectFile(dg) => {
+            // Track failed selects and update ops_allowed
+            if !response.is_success {
+                failed_selects.insert(dg);
+                update_ops_allowed(ops_allowed, dg, status);
+            }
+            return Ok(());
+        }
+        CmdType::ReadBinary(dg) => {
+            if failed_selects.contains(&dg) {
+                return Ok(());
+            }
+            update_ops_allowed(ops_allowed, dg, status);
+
+            if response.is_success {
+                if let Err(e) = store_datagroup(dg, &response.response_data, personal_data) {
+                    tracing::warn!("Failed to parse {dg:?}: {e:?}");
+                }
+            }
+        }
+        _ => {}
     }
     Ok(())
+}
+
+fn compute_response_status(response: &DecryptedAPDU) -> AttrResponse {
+    if response.is_success {
+        AttrResponse::ALLOWED
+    } else if response.status_code == StatusCode::FILE_NOT_FOUND.0 {
+        AttrResponse::NOTONCHIP
+    } else {
+        AttrResponse::PROHIBITED
+    }
 }
 
 fn update_ops_allowed(ops: &mut Operations<AttributeResp>, dg: DataGroup, status: AttrResponse) {
@@ -262,7 +317,7 @@ fn store_datagroup(
         }
         DataGroup::DG2 => {
             let issuing = der_decode::<IssuingEntity>(data)?;
-            if let IssuingEntity::IssuingState(country) = issuing {
+            if let IssuingEntityChoice::IssuingState(country) = issuing.0 {
                 perso_data.issuing_state = Some(String::from_utf8_lossy(&country).to_string());
             }
         }
@@ -312,7 +367,7 @@ fn store_datagroup(
         }
         DataGroup::DG18 => {
             let mun_id = der_decode::<MunicipalityID>(data)?;
-            perso_data.community_id = Some(String::from_utf8_lossy(&mun_id.0).to_string());
+            perso_data.community_id = Some(hex::encode_upper(&mun_id.0));
         }
         DataGroup::DG19 => {
             let permit = der_decode::<ResidencePermitI>(data)?;
@@ -323,30 +378,6 @@ fn store_datagroup(
         _ => {}
     }
     Ok(())
-}
-
-fn extract_verification_results(
-    responses: &Vec<DecryptedAPDU>,
-) -> (Option<VerificationResult>, Option<VerificationResult>) {
-    let mut age = None;
-    let mut place = None;
-
-    for response in responses {
-        match response.cmd_type {
-            CmdType::VerifyAge => {
-                age = Some(VerificationResult {
-                    fulfils_request: response.is_success,
-                });
-            }
-            CmdType::VerifyPlace => {
-                place = Some(VerificationResult {
-                    fulfils_request: response.is_success,
-                });
-            }
-            _ => {}
-        }
-    }
-    (age, place)
 }
 
 fn build_eid_type_resp(eid_type: EIDType) -> EIDTypeResp {
@@ -400,8 +431,8 @@ fn convert_general_place(general_place: GeneralPlace) -> ResultGeneralPlace {
 }
 
 fn convert_place_of_residence(place: PlaceOfResidence) -> ResultGeneralPlace {
-    match place {
-        PlaceOfResidence::Residence(gp) => convert_general_place(gp),
+    match place.0 {
+        PlaceOfResidenceChoice::Residence(gp) => convert_general_place(gp),
         _ => ResultGeneralPlace {
             structured_place: None,
             freetext_place: None,
