@@ -65,54 +65,53 @@ pub struct RestrictedID {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
 pub struct PersonalData {
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "eid:DocumentType")]
     #[validate(regex(path = *DOC_TYPE_REGEX))]
-    pub document_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_type: Option<String>,
     #[serde(rename = "eid:IssuingState")]
     #[validate(regex(path = *ICAO_COUNTRY_REGEX))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub issuing_state: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "eid:DateOfExpiry")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub date_of_expiry: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "eid:GivenNames")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub given_names: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "eid:FamilyNames")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub family_names: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "eid:ArtisticName")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub artistic_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "eid:AcademicTitle")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub academic_title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "eid:DateOfBirth")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub date_of_birth: Option<GeneralDate>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "eid:PlaceOfBirth")]
-    pub place_of_birth: Option<GeneralPlace>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub place_of_birth: Option<GeneralPlace>,
     #[serde(rename = "eid:Nationality")]
     #[validate(regex(path = *ICAO_COUNTRY_REGEX))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub nationality: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "eid:BirthName")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub birth_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "eid:PlaceOfResidence")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub place_of_residence: Option<GeneralPlace>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "eid:CommunityID")]
-    #[validate(regex(path = *super::COMM_ID_REGEX))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub community_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "eid:ResidencePermitI")]
-    pub residence_permit_i: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub residence_permit_i: Option<String>,
     #[serde(rename = "eid:RestrictedID")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub restricted_id: Option<RestrictedID>,
 }
 
@@ -182,26 +181,27 @@ pub struct GetResultRequest {
 #[derive(Debug, Serialize, Deserialize, Validate)]
 #[serde(rename = "getResultResponse")]
 pub struct GetResultResponse {
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "eid:PersonalData")]
     #[validate(nested)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub personal_data: Option<PersonalData>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "eid:FulfilsAgeVerification")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fulfils_age: Option<VerificationResult>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "eid:FulfilsPlaceVerification")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fulfils_place: Option<VerificationResult>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "eid:OperationsAllowedByUser")]
-    pub ops_allowed: Option<Operations<AttributeResp>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub ops_allowed: Option<Operations<AttributeResp>>,
     #[serde(rename = "eid:TransactionAttestationResponse")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub trans_attest_resp: Option<TransactionAttestResp>,
     #[serde(rename = "eid:LevelOfAssuranceResult")]
-    pub level_of_assurance: Option<LevelOfAssurance>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub level_of_assurance: Option<LevelOfAssurance>,
     #[serde(rename = "eid:EIDTypeResponse")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub eid_type_resp: Option<EIDTypeResp>,
     #[serde(rename = "dss:Result")]
     pub result: ResultType,

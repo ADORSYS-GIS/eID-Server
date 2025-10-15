@@ -3,8 +3,13 @@ use crate::domain::models::{
     eid::{LevelOfAssurance, Operations, Session},
 };
 use bincode::{Decode, Encode};
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
+
+static COMM_ID_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^0[0-9]{3}([0-9]{2}(0[0-9]([0-9]{2}(0[0-9]{3})?)?)?)?$").unwrap());
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, Decode, Encode)]
 pub enum AttrRequest {
@@ -44,7 +49,7 @@ pub struct AgeVerifReq {
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, Decode, Encode)]
 pub struct PlaceVerifReq {
     #[serde(rename = "CommunityID")]
-    #[validate(regex(path = *super::COMM_ID_REGEX))]
+    #[validate(regex(path = *COMM_ID_REGEX))]
     pub community_id: String,
 }
 
@@ -169,11 +174,11 @@ mod tests {
         let request = result.unwrap();
         assert!(request.body().validate().is_ok());
         #[rustfmt::skip]
-        assert!(request.body().use_operations.document_type.is_required());
+        assert!(request.body().use_operations.document_type.as_ref().unwrap().is_required());
         #[rustfmt::skip]
-        assert!(request.body().use_operations.academic_title.is_allowed());
+        assert!(request.body().use_operations.academic_title.as_ref().unwrap().is_allowed());
         #[rustfmt::skip]
-        assert!(request.body().use_operations.community_id.is_prohibited());
+        assert!(request.body().use_operations.community_id.as_ref().unwrap().is_prohibited());
         #[rustfmt::skip]
         assert_eq!(request.body().age_verification.as_ref().unwrap().age, 18);
         #[rustfmt::skip]
