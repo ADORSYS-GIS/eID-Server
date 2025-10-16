@@ -79,6 +79,7 @@ impl Config {
             .set_default("crl.enabled", true)?
             .set_default("crl.timeout_secs", 30)?
             .set_default("crl.check_interval_hours", 24)?
+            .set_default("crl.distribution_points", Vec::<String>::new())?
             .add_source(File::with_name("config/settings").required(false));
         // If env_vars is provided, we use it instead of system environment
         // This is to avoid systems variables pollution across tests
