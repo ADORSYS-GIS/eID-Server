@@ -134,3 +134,12 @@ impl EFCardSecurity {
         Self::from_der(&der)
     }
 }
+
+/// Security mechanism used by the mobile electronic identity
+#[derive(Debug, Clone, PartialEq, Eq, Hash, AsnType, Encode, Decode)]
+pub struct MobileEIDTypeInfo {
+    /// (d-mobileEIDType-SECertified | id-mobileEIDType-SEEndorsed | id-mobileEIDType-HWKeyStore)
+    pub protocol: Oid,
+    /// Version -- should be 1
+    pub version: Integer,
+}

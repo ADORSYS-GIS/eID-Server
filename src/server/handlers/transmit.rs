@@ -34,25 +34,24 @@ async fn handle_inner<T: TrustStore>(
 
     let mut session_data: SessionData = session_mgr
         .get(&*session_id)
-        .await
-        .map_err(AppError::paos_internal)?
+        .await?
         .ok_or(PaosError::Timeout)?;
 
     let State::Transmit {
         apdu_cmds,
         cmds_len,
         decrypt_params,
-    } = &session_data.state
+        mobile_eid_type,
+    } = session_data.state
     else {
         return Err(PaosError::Parameter("Expected state TransmitResponse".into()).into());
     };
-    let body = envelope.into_body();
 
     // Validate request body
-    let data = validate_transmit_body(body)?;
+    let data = validate_transmit_body(envelope.into_body())?;
 
     // Process the APDU responses
-    let decrypted_apdu = process_responses(&data, apdu_cmds, *cmds_len, decrypt_params)?;
+    let decrypted_apdu = process_responses(&data, &apdu_cmds, cmds_len, &decrypt_params)?;
 
     // Clean up the session tracker
     SESSION_TRACKER.invalidate(&mapped_session_id);
@@ -62,9 +61,10 @@ async fn handle_inner<T: TrustStore>(
         message_id: None,
     };
 
-    // Update session state with processed APDU responses
+    // Update session state with decrypted APDU responses
     session_data.state = State::TransmitResponse {
         responses: decrypted_apdu,
+        mobile_eid_type,
     };
     session_mgr.insert(session_id, &session_data).await?;
 
@@ -151,8 +151,6 @@ fn process_responses(
         let processed_response = DecryptedAPDU {
             response_data: decrypted_response.data,
             cmd_type: sent_cmd.cmd_type.clone(),
-            ssc_before_cmd: sent_cmd.ssc_before_cmd,
-            ssc_before_resp: sent_cmd.ssc_before_resp,
             status_code,
             is_success,
         };
