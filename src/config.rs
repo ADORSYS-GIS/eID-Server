@@ -21,42 +21,10 @@ impl Default for MasterListConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct CrlConfig {
-    /// Enable CRL checking
-    #[serde(default)]
-    pub enabled: bool,
-
     /// List of CRL distribution point URLs to fetch from
-    #[serde(default)]
     pub distribution_points: Vec<String>,
-
-    /// How often to check CRLs (in seconds)
-    #[serde(default = "default_check_interval")]
-    pub check_interval_secs: u64,
-
-    /// HTTP timeout for fetching CRLs (in seconds)
-    #[serde(default = "default_timeout")]
-    pub timeout_secs: u64,
-}
-
-fn default_check_interval() -> u64 {
-    3600 // 1 hour
-}
-
-fn default_timeout() -> u64 {
-    30
-}
-
-impl Default for CrlConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            distribution_points: Vec::new(),
-            check_interval_secs: default_check_interval(),
-            timeout_secs: default_timeout(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::domain::service::Service;
-use crate::pki::crl::scheduler::{CrlScheduler, CrlSchedulerConfig};
+use crate::pki::crl::{CrlScheduler, CrlSchedulerConfig};
 use crate::pki::identity::{FileIdentity, Identity};
 use crate::pki::master_list::schedule::{MasterListScheduler, SchedulerConfig};
 use crate::pki::truststore::MemoryTrustStore;
@@ -9,7 +9,6 @@ use crate::tls::{TLS_SESSION_PREFIX, TlsConfig};
 use color_eyre::eyre::Context;
 use std::sync::Arc;
 use time::Duration;
-use tracing::{info, warn};
 
 pub struct SetupData {
     pub eid_store: Arc<dyn SessionStore>,
@@ -72,44 +71,18 @@ pub async fn setup(config: &Config) -> color_eyre::Result<(Service<MemoryTrustSt
     tracing::info!("Master list scheduler started for automatic updates");
 
     // Initialize CRL scheduler
-    if config.crl.enabled {
-        info!("CRL checking is enabled");
+    let crl_config = CrlSchedulerConfig::default();
 
-        let crl_config = CrlSchedulerConfig {
-            check_interval_secs: config.crl.check_interval_secs,
-            distribution_points: config.crl.distribution_points.clone(),
-            timeout_secs: config.crl.timeout_secs,
-        };
+    let crl_scheduler = CrlScheduler::new(crl_config, truststore.clone()).await?;
 
-        let crl_scheduler = CrlScheduler::new(crl_config, truststore.clone())
-            .wrap_err("Failed to create CRL scheduler")?;
-
-        // Perform initial CRL check
-        info!("Performing initial CRL check...");
-        match crl_scheduler.trigger_immediate_update().await {
-            Ok(count) => {
-                if count > 0 {
-                    info!("Removed {} revoked certificates from trust store", count);
-                } else {
-                    info!("No revoked certificates found in initial CRL check");
-                }
-            }
-            Err(e) => {
-                warn!(
-                    "Initial CRL check failed: {}. Continuing without initial cleanup.",
-                    e
-                );
-            }
-        }
-
-        // Start scheduled CRL checking
-        crl_scheduler.start().await?;
-        info!("CRL scheduler started for periodic revocation checking");
-    } else {
-        warn!(
-            "CRL checking is DISABLED in configuration. Certificates will not be checked for revocation."
-        );
+    tracing::info!("Performing initial CRL check...");
+    if let Err(e) = crl_scheduler.trigger_immediate_update().await {
+        tracing::warn!("Initial CRL check failed: {e}. Continuing without initial cleanup",)
     }
+
+    // Start scheduled CRL checking
+    crl_scheduler.start().await?;
+    tracing::info!("CRL scheduler started for periodic revocation checking");
 
     Ok((service, tls_config))
 }
