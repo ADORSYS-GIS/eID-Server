@@ -6,10 +6,8 @@ use paos::ConnectionHandle;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    apdu::{
-        ProtectedAPDU, {APDUDecryptParams, DecryptedAPDU},
-    },
-    asn1::utils::ChipAuthAlg,
+    apdu::{APDUDecryptParams, DecryptedAPDU, ProtectedAPDU},
+    asn1::utils::{ChipAuthAlg, MobileEIDType},
     crypto::Curve,
 };
 
@@ -72,8 +70,10 @@ pub enum State {
         apdu_cmds: Vec<ProtectedAPDU>,
         cmds_len: usize,
         decrypt_params: APDUDecryptParams,
+        mobile_eid_type: Option<MobileEIDType>,
     },
     TransmitResponse {
         responses: Vec<DecryptedAPDU>,
+        mobile_eid_type: Option<MobileEIDType>,
     },
 }

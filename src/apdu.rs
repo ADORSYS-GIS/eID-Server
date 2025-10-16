@@ -36,6 +36,8 @@ pub enum Ins {
     Verify = 0x20,
     Select = 0xA4,
     ReadBinary = 0xB0,
+    MseSet = 0x22,
+    GeneralAuth = 0x86,
 }
 
 impl From<u8> for Ins {
@@ -44,6 +46,8 @@ impl From<u8> for Ins {
             0x20 => Self::Verify,
             0xA4 => Self::Select,
             0xB0 => Self::ReadBinary,
+            0x22 => Self::MseSet,
+            0x86 => Self::GeneralAuth,
             _ => Self::Unknown,
         }
     }
@@ -57,7 +61,7 @@ pub struct APDUCommand {
     pub p1: u8,
     pub p2: u8,
     pub data: Vec<u8>,
-    pub le: u16,
+    pub le: Option<u16>,
 }
 
 impl APDUCommand {
@@ -65,7 +69,7 @@ impl APDUCommand {
     const SHORT_MAX_LE: u16 = 0x0100;
     const EXTENDED_MAX_LE: u32 = 0x010000;
 
-    pub fn new(ins: Ins, p1: u8, p2: u8, data: impl Into<Vec<u8>>, le: u16) -> Self {
+    pub fn new(ins: Ins, p1: u8, p2: u8, data: impl Into<Vec<u8>>, le: Option<u16>) -> Self {
         Self {
             cla: 0x00,
             ins,
@@ -76,7 +80,7 @@ impl APDUCommand {
         }
     }
 
-    pub fn from_components(header: [u8; 4], data: impl Into<Vec<u8>>, le: u16) -> Self {
+    pub fn from_components(header: [u8; 4], data: impl Into<Vec<u8>>, le: Option<u16>) -> Self {
         Self {
             cla: header[0],
             ins: header[1].into(),
@@ -113,12 +117,15 @@ impl APDUCommand {
             bytes.extend_from_slice(&self.data);
         }
         // Compute expected response length
-        let le = self.le;
-        if le > 0 {
-            if le > Self::SHORT_MAX_LE {
-                bytes.extend_from_slice(&(le).to_be_bytes());
-            } else {
-                bytes.push(if le == 0x100 { 0x00 } else { le as u8 });
+        if let Some(le) = self.le {
+            if le == 0 {
+                bytes.push(0x00);
+            } else if le > 0 {
+                if le > Self::SHORT_MAX_LE || self.data.len() > Self::SHORT_MAX_LC {
+                    bytes.extend_from_slice(&(le).to_be_bytes());
+                } else {
+                    bytes.push(if le == 0x100 { 0x00 } else { le as u8 });
+                }
             }
         }
         bytes
@@ -133,7 +140,8 @@ impl StatusCode {
     pub const SUCCESS: StatusCode = StatusCode(0x9000);
     pub const INVALID_SM_OBJECTS: StatusCode = StatusCode(0x6988);
     pub const VERIFY_FAILED: StatusCode = StatusCode(0x6300);
-    pub const NOT_FOUND: StatusCode = StatusCode(0x6A88);
+    pub const REF_DATA_NOT_FOUND: StatusCode = StatusCode(0x6A88);
+    pub const FILE_NOT_FOUND: StatusCode = StatusCode(0x6A82);
     pub const NOT_AUTHORIZED: StatusCode = StatusCode(0x6982);
 }
 
@@ -288,8 +296,8 @@ impl SecureMessaging {
 
         // Add expected length if present
         let mut encoded_le = vec![];
-        if command.le != 0 {
-            let le_tlv = APDUTlv::expected_length(command.le);
+        if let Some(le) = command.le {
+            let le_tlv = APDUTlv::expected_length(le);
             encoded_le.extend_from_slice(&le_tlv.encode());
         }
 
@@ -322,7 +330,9 @@ impl SecureMessaging {
         } else {
             APDUCommand::SHORT_MAX_LE
         };
-        Ok(APDUCommand::from_components(header, secured_data, new_le))
+
+        let apdu = APDUCommand::from_components(header, secured_data, Some(new_le));
+        Ok(apdu)
     }
 
     pub fn process_secure_response(&mut self, response: &APDUResponse) -> Result<APDUResponse> {
@@ -479,7 +489,7 @@ mod tests {
         let keys = create_test_keys();
         let mut sm = SecureMessaging::new(keys);
 
-        let cmd = APDUCommand::new(Ins::Select, 0x04, 0x0C, vec![], 0x00);
+        let cmd = APDUCommand::new(Ins::Select, 0x04, 0x0C, vec![], Some(0x00));
         let result = sm.create_secure_command(&cmd);
 
         assert!(result.is_ok());
@@ -502,7 +512,7 @@ mod tests {
         let keys = create_test_keys();
         let mut sm = SecureMessaging::new(keys);
 
-        let cmd = APDUCommand::new(Ins::Select, 0x04, 0x0C, vec![0x01, 0x02, 0x03], 0x00);
+        let cmd = APDUCommand::new(Ins::Select, 0x04, 0x0C, vec![0x01, 0x02, 0x03], Some(0x00));
         let result = sm.create_secure_command(&cmd);
 
         assert!(result.is_ok());

@@ -1,7 +1,12 @@
+use crate::asn1::cvcert::{CertificateExtensions, TerminalSectorExt};
 use crate::asn1::oid::{
-    ID_CA_ECDH, ID_CA_ECDH_AES_CBC_CMAC_128, ID_CA_ECDH_AES_CBC_CMAC_192,
-    ID_CA_ECDH_AES_CBC_CMAC_256, ID_PK_ECDH, ID_SECURITY_OBJECT, SHA256_OID, SHA384_OID,
-    SHA512_OID, STD_DOMAINPARAMS,
+    EID_TYPE_HW_KEYSTORE, EID_TYPE_SE_CERTIFIED, EID_TYPE_SE_ENDORSED, ID_CA_ECDH,
+    ID_CA_ECDH_AES_CBC_CMAC_128, ID_CA_ECDH_AES_CBC_CMAC_192, ID_CA_ECDH_AES_CBC_CMAC_256,
+    ID_PK_ECDH, ID_RI_ECDH, ID_RI_ECDH_SHA_256, ID_RI_ECDH_SHA_384, ID_RI_ECDH_SHA_512,
+    ID_SECURITY_OBJECT, SHA256_OID, SHA384_OID, SHA512_OID, STD_DOMAINPARAMS,
+};
+use crate::asn1::security_info::{
+    MobileEIDTypeInfo, ProtocolParams, RestrictedIdDomainParamInfo, RestrictedIdInfo,
 };
 use crate::crypto::{
     Curve, Error as CryptoError, PublicKey,
@@ -29,6 +34,10 @@ type Result<T> = std::result::Result<T, Error>;
 
 // Chip Authentication version 2
 const CA_VERSION_2: u8 = 2;
+// Mobile EID version 1
+const MOBILE_EID_VERSION_1: u8 = 1;
+// Restricted Identification version 1
+const RESTRICTED_ID_VERSION: u8 = 1;
 
 // Mapping of standardized domain parameter IDs to curves (TR-03110-3 Table 4)
 const DOMAIN_PARAM_ID_TO_CURVE: &[(u8, Curve)] = &[
@@ -94,6 +103,60 @@ impl ChipAuthAlg {
     }
 }
 
+/// Mobile eID Type per TR-03110 Amendment Section 2.2
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub enum MobileEIDType {
+    SECertified,
+    SEEndorsed,
+    HWKeyStore,
+}
+
+impl MobileEIDType {
+    pub fn from_oid(oid: &[u32]) -> Option<Self> {
+        match oid {
+            EID_TYPE_SE_CERTIFIED => Some(MobileEIDType::SECertified),
+            EID_TYPE_SE_ENDORSED => Some(MobileEIDType::SEEndorsed),
+            EID_TYPE_HW_KEYSTORE => Some(MobileEIDType::HWKeyStore),
+            _ => None,
+        }
+    }
+
+    pub fn to_oid(&self) -> &'static [u32] {
+        match self {
+            MobileEIDType::SECertified => EID_TYPE_SE_CERTIFIED,
+            MobileEIDType::SEEndorsed => EID_TYPE_SE_ENDORSED,
+            MobileEIDType::HWKeyStore => EID_TYPE_HW_KEYSTORE,
+        }
+    }
+}
+
+/// Supported Restricted Identification Algorithms
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub enum RestrictedIdAlg {
+    EcdhSha256,
+    EcdhSha384,
+    EcdhSha512,
+}
+
+impl RestrictedIdAlg {
+    pub fn from_oid(oid: &[u32]) -> Option<Self> {
+        match oid {
+            ID_RI_ECDH_SHA_256 => Some(RestrictedIdAlg::EcdhSha256),
+            ID_RI_ECDH_SHA_384 => Some(RestrictedIdAlg::EcdhSha384),
+            ID_RI_ECDH_SHA_512 => Some(RestrictedIdAlg::EcdhSha512),
+            _ => None,
+        }
+    }
+
+    pub fn to_oid(&self) -> &'static [u32] {
+        match self {
+            RestrictedIdAlg::EcdhSha256 => ID_RI_ECDH_SHA_256,
+            RestrictedIdAlg::EcdhSha384 => ID_RI_ECDH_SHA_384,
+            RestrictedIdAlg::EcdhSha512 => ID_RI_ECDH_SHA_512,
+        }
+    }
+}
+
 /// Extract Chip Authentication v2 informations from SecurityInfos
 ///
 /// Returns an empty vector if no supported information is found
@@ -143,11 +206,10 @@ pub fn find_chip_auth_domain_params(
 /// # Errors
 /// Returns an error if validation fails or required information is not found.
 pub async fn process_card_security<T: TrustStore>(
-    data: impl AsRef<[u8]>,
+    card_security: &EFCardSecurity,
     curve: Curve,
     trust_store: &T,
 ) -> Result<Vec<u8>> {
-    let card_security = EFCardSecurity::from_der(data.as_ref())?;
     let signed_data = &card_security.content;
 
     // Validate structure has required components
@@ -165,6 +227,70 @@ pub async fn process_card_security<T: TrustStore>(
 
     // Extract and return the public point
     extract_chip_public_key(&security_infos, curve)
+}
+
+/// Parse Mobile eID information SecurityInfo from EFCardSecurity
+pub fn parse_mobile_eid_info(
+    card_security: &EFCardSecurity,
+) -> Option<(MobileEIDTypeInfo, MobileEIDType)> {
+    fn parse_mobile_eid(info: &SecurityInfo) -> Option<MobileEIDTypeInfo> {
+        let version = der_decode::<Integer>(info.required_data.as_ref()).ok()?;
+        if version != MOBILE_EID_VERSION_1.into() {
+            return None;
+        }
+        Some(MobileEIDTypeInfo {
+            protocol: info.protocol.clone(),
+            version,
+        })
+    }
+
+    let content = card_security.content.encap_content_info.content.as_ref()?;
+    let security_infos = SecurityInfos::from_der(content).ok()?;
+    security_infos
+        .0
+        .to_vec()
+        .iter()
+        .filter_map(|info| {
+            MobileEIDType::from_oid(info.protocol.as_ref())
+                .and_then(|alg| parse_mobile_eid(info).map(|info| (info, alg)))
+        })
+        .next()
+}
+
+/// Process restricted ID information from EFCardSecurity
+///
+/// This function:
+/// 2. Finds a RestrictedIdDomainParamInfo with a supported curve
+/// 3. Finds a supported authorized RestrictedIdInfo
+/// 4. Returns the curve, corresponding RestrictedIdInfo, and RestrictedIdAlg
+pub fn process_restricted_id(
+    card_security: &EFCardSecurity,
+) -> Option<(RestrictedIdInfo, RestrictedIdAlg, Curve)> {
+    // Extract SecurityInfos from the encapsulated content
+    let content = card_security.content.encap_content_info.content.as_ref()?;
+    let security_infos = SecurityInfos::from_der(content).ok()?;
+
+    // Find supported curve
+    let curve = find_restricted_id_curve(&security_infos)?;
+    // Find supported RestrictedIdInfo and corresponding algorithm
+    let (restricted_id_info, alg) = extract_restricted_id_info(&security_infos)
+        .ok()?
+        .into_iter()
+        .next()?;
+    Some((restricted_id_info, alg, curve))
+}
+
+/// Parse Terminal Sector public key extension from CertificateExtensions
+pub fn parse_terminal_sector(
+    extensions: &Option<CertificateExtensions>,
+) -> Option<TerminalSectorExt> {
+    let extensions = extensions.as_ref()?;
+    for ext in extensions.0.iter() {
+        if let Ok(extension) = der_decode::<TerminalSectorExt>(ext.as_ref()) {
+            return Some(extension);
+        }
+    }
+    None
 }
 
 /// Parse ChipAuthenticationInfo from a SecurityInfo
@@ -212,6 +338,80 @@ fn parse_domain_param_info(info: &SecurityInfo) -> Option<(ChipAuthDomainParamIn
         protocol: info.protocol.clone(),
         domain_parameter,
         key_id,
+    };
+    Some((info, curve))
+}
+
+/// Extract Restricted Identification informations from SecurityInfos
+///
+/// Returns an empty vector if no supported information is found
+fn extract_restricted_id_info(
+    info: &SecurityInfos,
+) -> Result<Vec<(RestrictedIdInfo, RestrictedIdAlg)>> {
+    Ok(info
+        .0
+        .to_vec()
+        .iter()
+        .filter_map(|info| {
+            RestrictedIdAlg::from_oid(info.protocol.as_ref())
+                .and_then(|alg| parse_restricted_id_info(info).map(|info| (info, alg)))
+        })
+        .collect())
+}
+
+/// Finds curve from RestrictedIdDomainParamInfo security info
+fn find_restricted_id_curve(info: &SecurityInfos) -> Option<Curve> {
+    info.0
+        .to_vec()
+        .iter()
+        .filter(|info| info.protocol.as_ref() == ID_RI_ECDH)
+        .filter_map(|info| parse_restricted_id_domain_param_info(info))
+        .map(|(_, curve)| curve)
+        .next()
+}
+
+/// Parse RestrictedIdentificationInfo from a SecurityInfo
+fn parse_restricted_id_info(info: &SecurityInfo) -> Option<RestrictedIdInfo> {
+    let params = der_decode::<ProtocolParams>(info.required_data.as_ref()).ok()?;
+    if params.version != RESTRICTED_ID_VERSION.into() {
+        return None;
+    }
+    let max_key_len = info
+        .optional_data
+        .as_ref()
+        .and_then(|data| der_decode::<Integer>(data.as_ref()).ok());
+
+    Some(RestrictedIdInfo {
+        protocol: info.protocol.clone(),
+        params: ProtocolParams {
+            version: params.version,
+            key_id: params.key_id,
+            authorized_only: params.authorized_only,
+        },
+        max_key_len,
+    })
+}
+
+/// Parse RestrictedIdentificationDomainParamInfo from a SecurityInfo
+fn parse_restricted_id_domain_param_info(
+    info: &SecurityInfo,
+) -> Option<(RestrictedIdDomainParamInfo, Curve)> {
+    let domain_parameter = der_decode::<AlgorithmIdentifier>(info.required_data.as_ref()).ok()?;
+    if domain_parameter.algorithm.as_ref() != STD_DOMAINPARAMS {
+        return None;
+    }
+
+    let params = domain_parameter.parameters.as_ref()?;
+    let curve_int = der_decode::<Integer>(params.as_ref()).ok()?;
+    let curve_id: u8 = curve_int.try_into().ok()?;
+    let curve = DOMAIN_PARAM_ID_TO_CURVE
+        .iter()
+        .find(|(id, _)| *id == curve_id)
+        .map(|(_, curve)| *curve)?;
+
+    let info = RestrictedIdDomainParamInfo {
+        protocol: info.protocol.clone(),
+        domain_parameter,
     };
     Some((info, curve))
 }

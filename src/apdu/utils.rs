@@ -1,13 +1,16 @@
 use bincode::{Decode, Encode};
-use rasn::types::ObjectIdentifier;
+use rasn::types::{Integer, ObjectIdentifier as Oid};
+use rasn::{AsnType, Encode as DerEncode, der::encode as der_encode};
 
 use super::Result;
 use crate::apdu::{self, APDUCommand, DataGroup, SecureMessaging};
+use crate::asn1::cvcert::EcdsaPublicKey;
 use crate::asn1::oid::{DATE_OF_BIRTH_OID, MUNICIPALITY_ID_OID};
+use crate::asn1::utils::RestrictedIdAlg;
 use crate::crypto::sym::Cipher;
 use crate::cvcert::{AccessRight, AccessRights};
 
-/// Secure messaging keys for decrypting received APDU responses
+/// Secure messaging parameters for decrypting received APDU responses
 #[derive(Debug, Clone, Decode, Encode)]
 pub struct APDUDecryptParams {
     pub k_enc: Vec<u8>,
@@ -39,44 +42,50 @@ impl APDUDecryptParams {
     }
 }
 
+/// Uniquely identifies a command and its context
+#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
+pub enum CmdType {
+    SelectEidApp,
+    SelectFile(DataGroup),
+    ReadBinary(DataGroup),
+    VerifyAge,
+    VerifyPlace,
+    SetAt,
+    GeneralAuth,
+}
+
+/// Protected APDU command that pairs the command with its decodable type
+#[derive(Debug, Clone, Encode, Decode)]
+pub struct ProtectedAPDU {
+    pub cmd: APDUCommand,
+    pub cmd_type: CmdType,
+}
+
 /// Decrypted APDU response with metadata
 #[derive(Debug, Clone, Decode, Encode)]
 pub struct DecryptedAPDU {
     pub response_data: Vec<u8>,
     pub cmd_type: CmdType,
-    pub ssc_before_cmd: u32,
-    pub ssc_before_resp: u32,
     pub status_code: u16,
     pub is_success: bool,
 }
 
-/// APDU command type
-#[derive(Debug, Clone, Encode, Decode)]
-pub enum CmdType {
-    SelectEidApp,
-    SelectFile(u16),
-    ReadBinary(u16, u8),
-    VerifyAge,
-    VerifyPlace,
+pub struct RestrictedIdParams {
+    pub alg: RestrictedIdAlg,
+    pub priv_key_ref: Integer,
+    pub pubkey_sector1: EcdsaPublicKey,
+    pub pubkey_sector2: Option<EcdsaPublicKey>,
 }
 
-/// Protected APDU command
-#[derive(Debug, Clone, Encode, Decode)]
-pub struct ProtectedAPDU {
-    pub cmd: APDUCommand,
-    pub cmd_type: CmdType,
-    pub ssc_before_cmd: u32,
-    pub ssc_before_resp: u32,
-}
-
-/// Build protected APDU commands based on access rights
+/// Build protected APDU commands
 pub fn build_protected_cmds(
     access_rights: &AccessRights,
     sm: &mut SecureMessaging,
+    restricted_id_params: Option<RestrictedIdParams>,
 ) -> Result<Vec<ProtectedAPDU>> {
-    let mut commands = Vec::new();
+    let mut commands = vec![];
 
-    // Advance SSC for command
+    // Advance SSC for the command
     sm.update_ssc();
     let select_eid_cmd = apdu::select_eid_application();
     let secured_select_eid = sm.create_secure_command(&select_eid_cmd)?;
@@ -84,87 +93,43 @@ pub fn build_protected_cmds(
     commands.push(ProtectedAPDU {
         cmd: secured_select_eid,
         cmd_type: CmdType::SelectEidApp,
-        ssc_before_cmd: sm.ssc() - 1,
-        ssc_before_resp: sm.ssc(),
     });
-    // Advance SSC again to account for the card's response
+    // Advance again to account for the card's response
     sm.update_ssc();
 
-    // Build commands based on access rights
     for right in access_rights.rights() {
         match right {
-            AccessRight::ReadDG01 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG1)?);
-            }
-            AccessRight::ReadDG02 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG2)?);
-            }
-            AccessRight::ReadDG03 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG3)?);
-            }
-            AccessRight::ReadDG04 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG4)?);
-            }
-            AccessRight::ReadDG05 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG5)?);
-            }
-            AccessRight::ReadDG06 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG6)?);
-            }
-            AccessRight::ReadDG07 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG7)?);
-            }
-            AccessRight::ReadDG08 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG8)?);
-            }
-            AccessRight::ReadDG09 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG9)?);
-            }
-            AccessRight::ReadDG10 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG10)?);
-            }
-            AccessRight::ReadDG11 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG11)?);
-            }
-            AccessRight::ReadDG12 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG12)?);
-            }
-            AccessRight::ReadDG13 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG13)?);
-            }
-            AccessRight::ReadDG14 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG14)?);
-            }
-            AccessRight::ReadDG15 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG15)?);
-            }
-            AccessRight::ReadDG17 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG17)?);
-            }
-            AccessRight::ReadDG18 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG18)?);
-            }
-            AccessRight::ReadDG19 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG19)?);
-            }
-            AccessRight::ReadDG20 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG20)?);
-            }
-            AccessRight::ReadDG21 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG21)?);
-            }
-            AccessRight::ReadDG22 => {
-                commands.extend(build_group_cmds(sm, DataGroup::DG22)?);
-            }
+            AccessRight::ReadDG01 => add_data_group_cmds(&mut commands, sm, DataGroup::DG1)?,
+            AccessRight::ReadDG02 => add_data_group_cmds(&mut commands, sm, DataGroup::DG2)?,
+            AccessRight::ReadDG03 => add_data_group_cmds(&mut commands, sm, DataGroup::DG3)?,
+            AccessRight::ReadDG04 => add_data_group_cmds(&mut commands, sm, DataGroup::DG4)?,
+            AccessRight::ReadDG05 => add_data_group_cmds(&mut commands, sm, DataGroup::DG5)?,
+            AccessRight::ReadDG06 => add_data_group_cmds(&mut commands, sm, DataGroup::DG6)?,
+            AccessRight::ReadDG07 => add_data_group_cmds(&mut commands, sm, DataGroup::DG7)?,
+            AccessRight::ReadDG08 => add_data_group_cmds(&mut commands, sm, DataGroup::DG8)?,
+            AccessRight::ReadDG09 => add_data_group_cmds(&mut commands, sm, DataGroup::DG9)?,
+            AccessRight::ReadDG10 => add_data_group_cmds(&mut commands, sm, DataGroup::DG10)?,
+            AccessRight::ReadDG11 => add_data_group_cmds(&mut commands, sm, DataGroup::DG11)?,
+            AccessRight::ReadDG12 => add_data_group_cmds(&mut commands, sm, DataGroup::DG12)?,
+            AccessRight::ReadDG13 => add_data_group_cmds(&mut commands, sm, DataGroup::DG13)?,
+            AccessRight::ReadDG14 => add_data_group_cmds(&mut commands, sm, DataGroup::DG14)?,
+            AccessRight::ReadDG15 => add_data_group_cmds(&mut commands, sm, DataGroup::DG15)?,
+            AccessRight::ReadDG17 => add_data_group_cmds(&mut commands, sm, DataGroup::DG17)?,
+            AccessRight::ReadDG18 => add_data_group_cmds(&mut commands, sm, DataGroup::DG18)?,
+            AccessRight::ReadDG19 => add_data_group_cmds(&mut commands, sm, DataGroup::DG19)?,
+            AccessRight::ReadDG20 => add_data_group_cmds(&mut commands, sm, DataGroup::DG20)?,
+            AccessRight::ReadDG21 => add_data_group_cmds(&mut commands, sm, DataGroup::DG21)?,
+            AccessRight::ReadDG22 => add_data_group_cmds(&mut commands, sm, DataGroup::DG22)?,
             AccessRight::AgeVerification => {
-                commands.extend(build_verif_cmds(sm, CmdType::VerifyAge, DATE_OF_BIRTH_OID)?);
+                add_verify_cmds(&mut commands, sm, CmdType::VerifyAge, DATE_OF_BIRTH_OID)?
             }
             AccessRight::CommunityIdVerification => {
-                commands.extend(build_verif_cmds(
-                    sm,
-                    CmdType::VerifyPlace,
-                    MUNICIPALITY_ID_OID,
-                )?);
+                add_verify_cmds(&mut commands, sm, CmdType::VerifyPlace, MUNICIPALITY_ID_OID)?
+            }
+            AccessRight::RestrictedIdentification => {
+                if let Some(ref restricted_id_params) = restricted_id_params {
+                    add_restricted_id_cmds(&mut commands, sm, restricted_id_params)?;
+                }
             }
             _ => {}
         }
@@ -172,62 +137,107 @@ pub fn build_protected_cmds(
     Ok(commands)
 }
 
-fn build_group_cmds(
+fn add_data_group_cmds(
+    commands: &mut Vec<ProtectedAPDU>,
     sm: &mut SecureMessaging,
-    data_group: crate::apdu::commands::DataGroup,
-) -> Result<Vec<ProtectedAPDU>> {
-    let mut commands = vec![];
+    data_group: DataGroup,
+) -> Result<()> {
+    let fid = data_group.fid();
 
-    // First select the file
+    // First select file
     sm.update_ssc();
-    let select_cmd = apdu::select_file(data_group.fid());
+    let select_cmd = apdu::select_file(fid);
     let secured_select = sm.create_secure_command(&select_cmd)?;
-
     commands.push(ProtectedAPDU {
         cmd: secured_select,
-        cmd_type: CmdType::SelectFile(data_group.fid()),
-        ssc_before_cmd: sm.ssc() - 1,
-        ssc_before_resp: sm.ssc(),
+        cmd_type: CmdType::SelectFile(data_group),
     });
-    // Advance SSC again to account for the card's response
     sm.update_ssc();
 
-    // Then read the data
+    // Then read binary
     sm.update_ssc();
     let read_cmd = apdu::read_binary(0, 0);
     let secured_read = sm.create_secure_command(&read_cmd)?;
-
     commands.push(ProtectedAPDU {
         cmd: secured_read,
-        cmd_type: CmdType::ReadBinary(0, 0),
-        ssc_before_cmd: sm.ssc() - 1,
-        ssc_before_resp: sm.ssc(),
+        cmd_type: CmdType::ReadBinary(data_group),
     });
-    // Advance SSC again to account for the card's response
     sm.update_ssc();
-    Ok(commands)
+    Ok(())
 }
 
-fn build_verif_cmds(
+fn add_verify_cmds(
+    commands: &mut Vec<ProtectedAPDU>,
     sm: &mut SecureMessaging,
-    command_type: CmdType,
+    cmd_type: CmdType,
     oid: &'static [u32],
-) -> Result<Vec<ProtectedAPDU>> {
-    let mut commands = vec![];
-
+) -> Result<()> {
     sm.update_ssc();
-    // Create verify command with CLA=0x8C (proprietary class)
-    let oid = ObjectIdentifier::new_unchecked(oid.into());
+    let oid = Oid::new_unchecked(oid.into());
     let mut verify_cmd = apdu::verify(rasn::der::encode(&oid)?);
     verify_cmd.cla = 0x8C;
 
     let secured_verify = sm.create_secure_command(&verify_cmd)?;
     commands.push(ProtectedAPDU {
         cmd: secured_verify,
-        cmd_type: command_type,
-        ssc_before_cmd: sm.ssc() - 1,
-        ssc_before_resp: sm.ssc(),
+        cmd_type,
     });
     sm.update_ssc();
-    Ok(commands)
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, AsnType, DerEncode)]
+#[rasn(tag(context, 0), delegate)]
+struct RestrictedIdOid(Oid);
+
+#[derive(Debug, Clone, PartialEq, AsnType, DerEncode)]
+#[rasn(tag(context, 4), delegate)]
+struct RestrictedIdKeyRef(Integer);
+
+#[derive(Debug, Clone, AsnType, DerEncode)]
+#[rasn(tag(application, 28))]
+struct RestrictedIdSectorPubKey {
+    #[rasn(tag(context, 0))]
+    first_sector_pub_key: EcdsaPublicKey,
+    #[rasn(tag(context, 2))]
+    second_sector_pub_key: Option<EcdsaPublicKey>,
+}
+
+fn add_restricted_id_cmds(
+    commands: &mut Vec<ProtectedAPDU>,
+    sm: &mut SecureMessaging,
+    params: &RestrictedIdParams,
+) -> Result<()> {
+    // First, select the Restricted Identification protocol
+    let mut set_at_data = Vec::with_capacity(24);
+    let oid = RestrictedIdOid(Oid::new_unchecked(params.alg.to_oid().into()));
+    let key_ref = RestrictedIdKeyRef(params.priv_key_ref.to_owned());
+    set_at_data.extend_from_slice(&der_encode(&oid)?);
+    set_at_data.extend_from_slice(&der_encode(&key_ref)?);
+
+    sm.update_ssc();
+    let set_at_cmd = apdu::set_at(&*set_at_data);
+    let secured_set_at = sm.create_secure_command(&set_at_cmd)?;
+    commands.push(ProtectedAPDU {
+        cmd: secured_set_at,
+        cmd_type: CmdType::SetAt,
+    });
+    sm.update_ssc();
+
+    // Then send sector public key
+    let sector_key = RestrictedIdSectorPubKey {
+        first_sector_pub_key: params.pubkey_sector1.to_owned(),
+        second_sector_pub_key: params.pubkey_sector2.to_owned(),
+    };
+    let sector_key_data = der_encode(&sector_key)?;
+
+    sm.update_ssc();
+    let general_auth_cmd = apdu::general_auth(&*sector_key_data);
+    let secured_general_auth = sm.create_secure_command(&general_auth_cmd)?;
+    commands.push(ProtectedAPDU {
+        cmd: secured_general_auth,
+        cmd_type: CmdType::GeneralAuth,
+    });
+    sm.update_ssc();
+    Ok(())
 }
