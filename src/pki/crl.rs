@@ -210,15 +210,9 @@ impl<T: TrustStore + Clone + Send + Sync + 'static> CrlScheduler<T> {
                 info!("Running scheduled CRL check (midnight)");
 
                 match processor.process_crls(&distribution_points).await {
-                    Ok(removed) => {
-                        if removed > 0 {
-                            info!("Scheduled CRL check removed {} certificates", removed);
-                        } else {
-                            info!("Scheduled CRL check: no revoked certificates found");
-                        }
-                    }
+                    Ok(_) => {}
                     Err(e) => {
-                        error!("Scheduled CRL check failed: {}", e);
+                        error!("Scheduled CRL check failed: {e}");
                     }
                 }
             })
