@@ -1,0 +1,186 @@
+// useIDRequest
+<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+	xmlns:eid="http://bsi.bund.de/eID/">
+	<soapenv:Header />
+	<soapenv:Body>
+		<eid:useIDRequest>
+			<eid:UseOperations>
+				<eid:DocumentType>REQUIRED</eid:DocumentType>
+				<eid:IssuingState>REQUIRED</eid:IssuingState>
+				<eid:DateOfExpiry>REQUIRED</eid:DateOfExpiry>
+				<eid:GivenNames>REQUIRED</eid:GivenNames>
+				<eid:FamilyNames>REQUIRED</eid:FamilyNames>
+				<eid:ArtisticName>ALLOWED</eid:ArtisticName>
+				<eid:AcademicTitle>ALLOWED</eid:AcademicTitle>
+				<eid:DateOfBirth>REQUIRED</eid:DateOfBirth>
+				<eid:PlaceOfBirth>REQUIRED</eid:PlaceOfBirth>
+				<eid:Nationality>REQUIRED</eid:Nationality>
+				<eid:BirthName>REQUIRED</eid:BirthName>
+				<eid:PlaceOfResidence>REQUIRED</eid:PlaceOfResidence>
+				<eid:CommunityID />
+				<eid:ResidencePermitI />
+				<eid:RestrictedID>REQUIRED</eid:RestrictedID>
+				<eid:AgeVerification>REQUIRED</eid:AgeVerification>
+				<eid:PlaceVerification>REQUIRED</eid:PlaceVerification>
+			</eid:UseOperations>
+			<eid:AgeVerificationRequest>
+				<eid:Age>18</eid:Age>
+			</eid:AgeVerificationRequest>
+			<eid:PlaceVerificationRequest>
+				<eid:CommunityID>027605</eid:CommunityID>
+			</eid:PlaceVerificationRequest>
+			<eid:TransactionAttestationRequest>
+				<eid:TransactionAttestationFormat>
+					http://bsi.bund.de/eID/ExampleAttestationFormat
+				</eid:TransactionAttestationFormat>
+				<eid:TransactionContext>id599456-df</eid:TransactionContext>
+			</eid:TransactionAttestationRequest>
+			<eid:LevelOfAssuranceRequest>
+				http://bsi.bund.de/eID/LoA/hoch
+			</eid:LevelOfAssuranceRequest>
+			<eid:EIDTypeRequest>
+				<eid:SECertified>ALLOWED</eid:SECertified>
+				<eid:SEEndorsed>ALLOWED</eid:SEEndorsed>
+			</eid:EIDTypeRequest>
+		</eid:useIDRequest>
+	</soapenv:Body>
+</soapenv:Envelope>
+
+// useIDResponse
+<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+	xmlns:eid="http://bsi.bund.de/eID/" xmlns:dss="urn:oasis:names:tc:dss:1.0:core:schema">
+	<soapenv:Header />
+	<soapenv:Body>
+		<eid:useIDResponse>
+			<eid:Session>
+				<eid:ID>1234567890abcdef1234567890abcdef</eid:ID>
+			</eid:Session>
+			<eid:PSK>
+				<eid:ID>0987654321abcdef1234567890abcdef</eid:ID>
+				<eid:Key>fedcba0987654321fedcba0987654321</eid:Key>
+			</eid:PSK>
+			<dss:Result>
+				<ResultMajor>
+					http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok
+				</ResultMajor>
+			</dss:Result>
+		</eid:useIDResponse>
+	</soapenv:Body>
+</soapenv:Envelope>
+
+// getResultRequest
+<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+	xmlns:eid="http://bsi.bund.de/eID/">
+	<soapenv:Header />
+	<soapenv:Body>
+		<eid:getResultRequest>
+			<eid:Session>
+				<eid:ID>1234567890abcdef1234567890abcdef</eid:ID>
+			</eid:Session>
+			<eid:RequestCounter>1</eid:RequestCounter>
+		</eid:getResultRequest>
+	</soapenv:Body>
+</soapenv:Envelope>
+
+// getResultResponse
+<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+	xmlns:eid="http://bsi.bund.de/eID/" xmlns:dss="urn:oasis:names:tc:dss:1.0:core:schema">
+	<soapenv:Header />
+	<soapenv:Body>
+		<eid:getResultResponse>
+			<eid:PersonalData>
+				<eid:DocumentType>ID</eid:DocumentType>
+				<eid:IssuingState>D</eid:IssuingState>
+				<eid:DateOfExpiry>2029-10-31</eid:DateOfExpiry>
+				<eid:GivenNames>ERIKA</eid:GivenNames>
+				<eid:FamilyNames>MUSTERMANN</eid:FamilyNames>
+				<eid:AcademicTitle />
+				<eid:DateOfBirth>
+					<eid:DateString>19640812</eid:DateString>
+					<eid:DateValue>1964-08-12</eid:DateValue>
+				</eid:DateOfBirth>
+				<eid:PlaceOfBirth>
+					<eid:FreetextPlace>BERLIN</eid:FreetextPlace>
+				</eid:PlaceOfBirth>
+				<eid:Nationality>D</eid:Nationality>
+				<eid:PlaceOfResidence>
+					<eid:StructuredPlace>
+						<eid:Street>HEIDESTRASSE 17</eid:Street>
+						<eid:City>KÖLN</eid:City>
+						<eid:Country>D</eid:Country>
+						<eid:ZipCode>51147</eid:ZipCode>
+					</eid:StructuredPlace>
+				</eid:PlaceOfResidence>
+				<eid:RestrictedID>
+					<eid:ID>01A4FB509CEBC6595151A4FB5F9C75C6FE01A4FB59CB655A4FB5F9C75C6FEE</eid:ID>
+					<eid:ID2>5C6FE01A4FB59CB655A4FB5F9C75C6FEE01A4FB509CEBC6595151A4FB5F9C7</eid:ID2>
+				</eid:RestrictedID>
+			</eid:PersonalData>
+			<eid:FulfilsAgeVerification>
+				<eid:FulfilsRequest>true</eid:FulfilsRequest>
+			</eid:FulfilsAgeVerification>
+			<eid:FulfilsPlaceVerification>
+				<eid:FulfilsRequest>true</eid:FulfilsRequest>
+			</eid:FulfilsPlaceVerification>
+			<eid:OperationsAllowedByUser>
+				<eid:DocumentType>ALLOWED</eid:DocumentType>
+				<eid:IssuingState>ALLOWED</eid:IssuingState>
+				<eid:DateOfExpiry>ALLOWED</eid:DateOfExpiry>
+				<eid:GivenNames>ALLOWED</eid:GivenNames>
+				<eid:FamilyNames>ALLOWED</eid:FamilyNames>
+				<eid:ArtisticName />
+				<eid:AcademicTitle>ALLOWED</eid:AcademicTitle>
+				<eid:DateOfBirth>ALLOWED</eid:DateOfBirth>
+				<eid:PlaceOfBirth>ALLOWED</eid:PlaceOfBirth>
+				<eid:Nationality>ALLOWED</eid:Nationality>
+				<eid:BirthName>NOTONCHIP</eid:BirthName>
+				<eid:PlaceOfResidence>ALLOWED</eid:PlaceOfResidence>
+				<eid:CommunityID />
+				<eid:ResidencePermitI />
+				<eid:RestrictedID>ALLOWED</eid:RestrictedID>
+				<eid:AgeVerification>ALLOWED</eid:AgeVerification>
+				<eid:PlaceVerification>ALLOWED</eid:PlaceVerification>
+			</eid:OperationsAllowedByUser>
+			<eid:TransactionAttestationResponse>
+				<eid:TransactionAttestationFormat>
+					http://bsi.bund.de/eID/ExampleAttestationFormat
+				</eid:TransactionAttestationFormat>
+				<eid:TransactionAttestationData>
+					V6INOOUsHouL9nYaRwR6RpX5WzccQXv51bIvvpY4Lsbp/VOPvG1ozxQCjo6JOi4xAv9/6b8G2PxaVv8bwdpFR/CN05xsnzxijzfemooKwve3Fl3005OX6dwkVyNQlZxXaWb3eUcYPA\MEwHSkhzP25ZM/J+CQHHaqLih6JW6wxSvUbuD307sjzkeaMkjJr9tXI9QcUmGmpHBWEWwon56HkWKGL1Dl0XH4\YuYhKMsTj2yjUJNlLH8OAm9cEX0ptQJlVTMRvNGRk53eUESnfhtQrVSm9bS63v+A9sGPrRlUIquCpcusX1nZe6\omAzs2tY0S04+s1fNvgHXKmQi24wIdhhbtFPbB2n2j9dAB8xjfGgEcsG3wPMliP6d
+				</eid:TransactionAttestationData>
+			</eid:TransactionAttestationResponse>
+			<eid:LevelOfAssuranceResponse>
+				http://bsi.bund.de/eID/LoA/hoch
+			</eid:LevelOfAssuranceResponse>
+			<eid:EIDTypeResponse>
+				<eid:CardCertified>USED</eid:CardCertified>
+			</eid:EIDTypeResponse>
+			<dss:Result>
+				<ResultMajor>
+					http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok
+				</ResultMajor>
+			</dss:Result>
+		</eid:getResultResponse>
+	</soapenv:Body>
+</soapenv:Envelope>
+
+// TCToken
+<TCTokenType>
+ <ServerAddress> https://eid-server.example.de/entrypoint </ServerAddress>
+ <SessionIdentifier> 1A2B ... B129 </SessionIdentifier>
+ <RefreshAddress>
+ https://service.example.de/loggedin?7eb3...9f62
+ </RefreshAddress>
+ <CommunicationErrorAddress>
+ https://service.example.de/ComError?7eb3...9f62
+ </CommunicationErrorAddress>
+ <Binding> urn:liberty:paos:2006-08 </Binding>
+ <PathSecurity-Protocol> urn:ietf:rfc:4279 </PathSecurity-Protocol>
+ <PathSecurity-Parameters>
+ <PSK> 4BC1 … A0B5 </PSK>
+ </PathSecurity-Parameters>
+</TCTokenType>
