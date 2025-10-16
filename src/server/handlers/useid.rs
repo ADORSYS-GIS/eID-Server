@@ -45,6 +45,7 @@ pub async fn handle_useid<T: TrustStore>(
 
     let session_data = SessionData {
         request_data: body,
+        request_counter: 0,
         psk: key.clone(),
         state: State::Initial,
     };
@@ -64,10 +65,20 @@ pub async fn handle_useid<T: TrustStore>(
 fn validate_request(body: &UseIDRequest) -> Result<(), AppError> {
     body.validate().map_err(EidError::from)?;
 
-    if body.age_verification.is_none() && !body.use_operations.age_verification.is_prohibited() {
+    let operations = &body.use_operations;
+    if operations
+        .age_verification
+        .as_ref()
+        .is_some_and(|op| !op.is_prohibited())
+        && body.age_verification.is_none()
+    {
         return Err(EidError::MissingArgument("AgeVerification".into()).into());
     }
-    if body.place_verification.is_none() && !body.use_operations.place_verification.is_prohibited()
+    if operations
+        .place_verification
+        .as_ref()
+        .is_some_and(|op| !op.is_prohibited())
+        && body.place_verification.is_none()
     {
         return Err(EidError::MissingArgument("PlaceVerification".into()).into());
     }

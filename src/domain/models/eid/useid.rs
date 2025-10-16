@@ -1,4 +1,7 @@
-use crate::domain::models::{ResultType, eid::Operations};
+use crate::domain::models::{
+    ResultType,
+    eid::{LevelOfAssurance, Operations, Session},
+};
 use bincode::{Decode, Encode};
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -60,25 +63,7 @@ pub struct TransactionAttestReq {
     pub transaction_context: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Decode, Encode)]
-pub enum LevelOfAssurance {
-    #[serde(rename = "http://eidas.europa.eu/LoA/low")]
-    EidasLow,
-    #[serde(rename = "http://eidas.europa.eu/LoA/substantial")]
-    EidasSubstantial,
-    #[serde(rename = "http://eidas.europa.eu/LoA/high")]
-    EidasHigh,
-    #[serde(rename = "http://bsi.bund.de/eID/LoA/normal")]
-    BsiNormal,
-    #[serde(rename = "http://bsi.bund.de/eID/LoA/substantiell")]
-    BsiSubstantiell,
-    #[serde(rename = "http://bsi.bund.de/eID/LoA/hoch")]
-    BsiHoch,
-    #[serde(rename = "http://bsi.bund.de/eID/LoA/undefined")]
-    BsiUndefined,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Decode, Encode)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Decode, Encode)]
 pub enum EIDTypeSelection {
     ALLOWED,
     DENIED,
@@ -151,13 +136,6 @@ pub struct UseIDRequest {
 }
 
 #[derive(Debug, Serialize, Validate)]
-pub struct Session {
-    #[serde(rename = "eid:ID")]
-    #[validate(length(min = 32))]
-    pub id: String,
-}
-
-#[derive(Debug, Serialize, Validate)]
 pub struct UseIDResponse {
     #[serde(rename = "eid:Session")]
     #[validate(nested)]
@@ -196,11 +174,11 @@ mod tests {
         let request = result.unwrap();
         assert!(request.body().validate().is_ok());
         #[rustfmt::skip]
-        assert!(request.body().use_operations.document_type.is_required());
+        assert!(request.body().use_operations.document_type.as_ref().unwrap().is_required());
         #[rustfmt::skip]
-        assert!(request.body().use_operations.academic_title.is_allowed());
+        assert!(request.body().use_operations.academic_title.as_ref().unwrap().is_allowed());
         #[rustfmt::skip]
-        assert!(request.body().use_operations.community_id.is_prohibited());
+        assert!(request.body().use_operations.community_id.as_ref().unwrap().is_prohibited());
         #[rustfmt::skip]
         assert_eq!(request.body().age_verification.as_ref().unwrap().age, 18);
         #[rustfmt::skip]
