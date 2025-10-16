@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::domain::service::Service;
+use crate::pki::crl::{CrlScheduler, CrlSchedulerConfig};
 use crate::pki::identity::{FileIdentity, Identity};
 use crate::pki::master_list::schedule::{MasterListScheduler, SchedulerConfig};
 use crate::pki::truststore::MemoryTrustStore;
@@ -57,7 +58,7 @@ pub async fn setup(config: &Config) -> color_eyre::Result<(Service<MemoryTrustSt
     // The cron job will rerun everyday at midnight
     let scheduler_config = SchedulerConfig::default();
 
-    let scheduler = MasterListScheduler::new(scheduler_config, truststore);
+    let scheduler = MasterListScheduler::new(scheduler_config, truststore.clone());
 
     // Perform initial master list processing
     tracing::info!("Performing initial master list processing...");
@@ -68,6 +69,20 @@ pub async fn setup(config: &Config) -> color_eyre::Result<(Service<MemoryTrustSt
     // Start scheduler for automatic updates
     scheduler.start().await?;
     tracing::info!("Master list scheduler started for automatic updates");
+
+    // Initialize CRL scheduler
+    let crl_config = CrlSchedulerConfig::default();
+
+    let crl_scheduler = CrlScheduler::new(crl_config, truststore.clone()).await?;
+
+    tracing::info!("Performing initial CRL check...");
+    if let Err(e) = crl_scheduler.trigger_immediate_update().await {
+        tracing::warn!("Initial CRL check failed: {e}. Continuing without initial cleanup",)
+    }
+
+    // Start scheduled CRL checking
+    crl_scheduler.start().await?;
+    tracing::info!("CRL scheduler started for periodic revocation checking");
 
     Ok((service, tls_config))
 }
