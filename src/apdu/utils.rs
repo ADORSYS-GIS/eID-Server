@@ -4,7 +4,51 @@ use rasn::types::ObjectIdentifier;
 use super::Result;
 use crate::apdu::{self, APDUCommand, DataGroup, SecureMessaging};
 use crate::asn1::oid::{DATE_OF_BIRTH_OID, MUNICIPALITY_ID_OID};
+use crate::crypto::sym::Cipher;
 use crate::cvcert::{AccessRight, AccessRights};
+
+/// Secure messaging keys for decrypting received APDU responses
+#[derive(Debug, Clone, Decode, Encode)]
+pub struct APDUDecryptParams {
+    pub k_enc: Vec<u8>,
+    pub k_mac: Vec<u8>,
+    pub cipher_type: u8,
+}
+
+impl APDUDecryptParams {
+    pub fn new(k_enc: impl Into<Vec<u8>>, k_mac: impl Into<Vec<u8>>, cipher: Cipher) -> Self {
+        let cipher_type = match cipher {
+            Cipher::Aes128Cbc => 1,
+            Cipher::Aes192Cbc => 2,
+            Cipher::Aes256Cbc => 3,
+        };
+        Self {
+            k_enc: k_enc.into(),
+            k_mac: k_mac.into(),
+            cipher_type,
+        }
+    }
+
+    pub fn cipher(&self) -> Cipher {
+        match self.cipher_type {
+            1 => Cipher::Aes128Cbc,
+            2 => Cipher::Aes192Cbc,
+            3 => Cipher::Aes256Cbc,
+            _ => Cipher::Aes128Cbc,
+        }
+    }
+}
+
+/// Decrypted APDU response with metadata
+#[derive(Debug, Clone, Decode, Encode)]
+pub struct DecryptedAPDU {
+    pub response_data: Vec<u8>,
+    pub cmd_type: CmdType,
+    pub ssc_before_cmd: u32,
+    pub ssc_before_resp: u32,
+    pub status_code: u16,
+    pub is_success: bool,
+}
 
 /// APDU command type
 #[derive(Debug, Clone, Encode, Decode)]

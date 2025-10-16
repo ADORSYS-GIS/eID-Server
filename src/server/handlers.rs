@@ -1,6 +1,7 @@
 pub mod did_auth;
 pub mod health;
 pub mod startpaos;
+pub mod transmit;
 pub mod useid;
 
 use std::time::Duration;
@@ -17,6 +18,7 @@ use useid::handle_useid;
 use crate::domain::models::paos::StartPaosResponse;
 use crate::pki::truststore::TrustStore;
 use crate::server::handlers::did_auth::{handle_did_auth_eac1, handle_did_auth_eac2};
+use crate::server::handlers::transmit::handle_transmit;
 use crate::server::responses::SoapResponse;
 use crate::server::{AppState, errors::AppError};
 use crate::session::SessionManager;
@@ -43,6 +45,12 @@ impl StartPaosResp {
             },
         }
     }
+
+    pub fn ok() -> Self {
+        Self {
+            resp: StartPaosResponse::ok(),
+        }
+    }
 }
 
 async fn handle_paos_error<E: Into<AppError>>(
@@ -63,6 +71,7 @@ enum APIFunction {
     StartPaos,
     DidAuthEAC1,
     DidAuthEAC2,
+    Transmit,
 }
 
 /// Processes an incoming request and routes to the appropriate handler
@@ -76,7 +85,7 @@ where
 {
     debug!(req = %request, "Processing authentication request\n");
 
-    let request_type = infer_function_type(&request)?;
+    let request_type = infer_request_type(&request)?;
     match request_type {
         APIFunction::UseIDRequest => {
             process_request(state, &request, |s, e| handle_useid(s, e)).await
@@ -90,16 +99,19 @@ where
         APIFunction::DidAuthEAC2 => {
             process_request(state, &request, |s, e| handle_did_auth_eac2(s, e)).await
         }
+        APIFunction::Transmit => {
+            process_request(state, &request, |s, e| handle_transmit(s, e)).await
+        }
     }
 }
 
-fn infer_function_type(xml: &str) -> Result<APIFunction, AppError> {
+fn infer_request_type(xml: &str) -> Result<APIFunction, AppError> {
     use quick_xml::events::Event;
 
     let mut reader = quick_xml::Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
-    let mut buf = Vec::new();
+    let mut buf = vec![];
     let mut found_did_auth = false;
     while let Ok(event) = reader.read_event_into(&mut buf) {
         match event {
@@ -121,6 +133,7 @@ fn infer_function_type(xml: &str) -> Result<APIFunction, AppError> {
                         }
                     }
                 }
+                b"TransmitResponse" => return Ok(APIFunction::Transmit),
                 _ => {}
             },
             Event::Eof => break,
@@ -143,11 +156,8 @@ where
     Fut: Future<Output = Result<String, AppError>> + Send,
 {
     let envelope = Envelope::<R>::parse(request)?;
-    let header = envelope.header().clone().unwrap_or_default();
-    handler(state, envelope.with_header(header))
-        .await
-        .map(|xml| {
-            debug!(xml = %xml, "Sending response\n");
-            SoapResponse::new(xml).into_response()
-        })
+    handler(state, envelope).await.map(|xml| {
+        debug!(xml = %xml, "Sending response\n");
+        SoapResponse::new(xml).into_response()
+    })
 }

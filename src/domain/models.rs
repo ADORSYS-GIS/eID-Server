@@ -5,7 +5,13 @@ use bincode::{Decode, Encode};
 use paos::ConnectionHandle;
 use serde::{Deserialize, Serialize};
 
-use crate::{apdu::ProtectedAPDU, asn1::utils::ChipAuthAlg, crypto::Curve};
+use crate::{
+    apdu::{
+        ProtectedAPDU, {APDUDecryptParams, DecryptedAPDU},
+    },
+    asn1::utils::ChipAuthAlg,
+    crypto::Curve,
+};
 
 pub const RESULT_OK: &str = "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#ok";
 pub const RESULT_ERROR: &str = "http://www.bsi.bund.de/ecard/api/1.1/resultmajor#error";
@@ -65,5 +71,9 @@ pub enum State {
     Transmit {
         apdu_cmds: Vec<ProtectedAPDU>,
         cmds_len: usize,
+        decrypt_params: APDUDecryptParams,
+    },
+    TransmitResponse {
+        responses: Vec<DecryptedAPDU>,
     },
 }

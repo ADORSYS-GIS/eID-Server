@@ -1,11 +1,10 @@
-mod builder;
 mod commands;
 mod tlv;
+mod utils;
 
-use bincode::{Decode, Encode};
-pub use builder::*;
 pub use commands::*;
 pub use tlv::APDUTlv;
+pub use utils::*;
 
 use crate::asn1::utils::ChipAuthAlg;
 use crate::crypto::kdf::KdfParams;
@@ -13,6 +12,7 @@ use crate::crypto::{
     PrivateKey, PublicKey, SecureBytes, iso_7816_pad, iso_7816_unpad,
     sym::{AesEncryptor, Cipher},
 };
+use bincode::{Decode, Encode};
 
 type Result<T> = std::result::Result<T, Error>;
 
