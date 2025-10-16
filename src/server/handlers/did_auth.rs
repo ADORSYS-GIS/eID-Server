@@ -494,7 +494,7 @@ async fn build_restricted_id_params<T: TrustStore>(
         rasn::der::decode::<CvCertificate>(&term_cvc_bytes).map_err(AppError::paos_internal)?;
 
     // Check if terminal CVC has restrictedID extensions
-    if parse_terminal_sector(&term_cvc.body.extensions.unwrap()).is_none() {
+    if parse_terminal_sector(&term_cvc.body.extensions).is_none() {
         return Ok(None);
     }
 

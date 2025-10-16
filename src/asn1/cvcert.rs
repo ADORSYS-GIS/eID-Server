@@ -43,7 +43,7 @@ pub struct EcdsaPublicKey {
 
 /// Certificate Extensions
 #[derive(Debug, Clone, Decode, Encode, AsnType)]
-#[rasn(tag(application, 0x05))]
+#[rasn(tag(application, 0x05), delegate)]
 pub struct CertificateExtensions(pub SequenceOf<Any>);
 
 /// Terminal Sector public key certificate extension
@@ -52,7 +52,7 @@ pub struct CertificateExtensions(pub SequenceOf<Any>);
 pub struct TerminalSectorExt {
     pub oid: Oid,
     #[rasn(tag(context, 0))]
-    pub first_sector_hash: OctetString,
+    pub first_sector_hash: Option<OctetString>,
     #[rasn(tag(context, 1))]
     pub second_sector_hash: Option<OctetString>,
 }

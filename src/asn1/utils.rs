@@ -281,7 +281,10 @@ pub fn process_restricted_id(
 }
 
 /// Parse Terminal Sector public key extension from CertificateExtensions
-pub fn parse_terminal_sector(extensions: &CertificateExtensions) -> Option<TerminalSectorExt> {
+pub fn parse_terminal_sector(
+    extensions: &Option<CertificateExtensions>,
+) -> Option<TerminalSectorExt> {
+    let extensions = extensions.as_ref()?;
     for ext in extensions.0.iter() {
         if let Ok(extension) = der_decode::<TerminalSectorExt>(ext.as_ref()) {
             return Some(extension);
