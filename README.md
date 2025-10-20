@@ -113,7 +113,6 @@ By default, the server will listen on `https://localhost:3000`. You can modify t
 cargo test
 ```
 
-
 ## Running the Test eService
 
 This project includes a test eService located in the `test-eService` directory. It's a Next.js application that demonstrates how a service provider would interact with the eID-Server.
@@ -128,11 +127,13 @@ This project includes a test eService located in the `test-eService` directory. 
 ### Setup and Running
 
 1.  **Navigate to the eService directory:**
+
     ```bash
     cd test-eService
     ```
 
 2.  **Install Dependencies:**
+
     ```bash
     npm install
     ```
@@ -140,11 +141,13 @@ This project includes a test eService located in the `test-eService` directory. 
 3.  **Configure Environment:**
 
     Create a `.env.local` file in the `test-eService` directory.
+
     ```bash
     cp .env.local.example .env.local
     ```
 
     Then, edit `.env.local` and set `EID_SERVER_URL` to the address of your running eID-Server.
+
     ```
     # test-eService/.env.local
     EID_SERVER_URL=https://localhost:8080/eIDService # Adjust if your server runs elsewhere
@@ -152,6 +155,7 @@ This project includes a test eService located in the `test-eService` directory. 
     ```
 
 4.  **Start the Application:**
+
     ```bash
     npm run dev
     ```
