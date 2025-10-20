@@ -2,6 +2,13 @@
 
 Test eService for testing eID authentication flows with eID-Server and eID-Client (AusWeisApp2).
 
+## Prerequisites
+
+- **Node.js** (v16 or higher)
+- **npm** (comes with Node.js)
+- **eID-Server** running and accessible
+- **eID-Client** (AusWeisApp2) installed on your system
+
 ## Quick Start
 
 > **HTTPS Note**: The development server automatically runs with HTTPS when certificates are configured. Simply set `HTTPS_CERT_PATH` and `HTTPS_KEY_PATH` in your `.env.local` file, and the server will start with HTTPS enabled.
@@ -64,7 +71,7 @@ Test eService for testing eID authentication flows with eID-Server and eID-Clien
    ```
 
 5. **Open Application**
-   Navigate to `https://localhost:3000` (accept the self-signed certificate warning)
+   Navigate to `https://localhost:8443` (accept the self-signed certificate warning)
 
 ## Configuration
 
@@ -101,9 +108,10 @@ Test eService for testing eID authentication flows with eID-Server and eID-Clien
 
 The eService communicates with the eID-Server via SOAP:
 
-1. **useID Request** - Requests authentication session and PSK
-2. **TC Token Generation** - Creates TC Token for eID-Client
-3. **getResult Request** - Retrieves authentication results
+1. **getServerInfo Request** - Fetches eID-Server capabilities and settings
+2. **useID Request** - Requests authentication session and PSK
+3. **TC Token Generation** - Creates TC Token for eID-Client
+4. **getResult Request** - Retrieves authentication results
 
 ### Supported Operations
 
@@ -119,6 +127,15 @@ All personal data attributes can be configured as:
 - **Place Verification** - Verify user resides in specific community
 - **Transaction Attestation** - Generate transaction attestations
 - **Level of Assurance** - Set required authentication level
+
+### eID Types Selection
+
+The eService allows specifying which types of eID are allowed or denied for the authentication process. This provides granular control over the accepted authentication methods.
+
+- **CardCertified** - Certified eID cards
+- **SECertified** - Certified Secure Elements
+- **SEEndorsed** - Endorsed Secure Elements
+- **HWKeyStore** - Hardware-backed keystores
 
 ### TLS Configuration
 
@@ -144,8 +161,8 @@ See [CERTIFICATE_GUIDE.md](CERTIFICATE_GUIDE.md) for detailed certificate config
 # Server runs on port 3000
 PORT=3000
 
-# But clients access it via https://localhost:3000
-NEXT_PUBLIC_BASE_URL=https://localhost:3000
+# But clients access it via https://localhost:8443
+NEXT_PUBLIC_BASE_URL=https://localhost:8443
 ```
 
 If you want to run on a different port, change both variables:
@@ -187,41 +204,15 @@ NEXT_PUBLIC_BASE_URL=https://localhost:8443
 ├── styles/                # Global styles and Tailwind CSS
 └── docs/                  # Specification documents
 ```
-
-### Adding New Features
-
-1. Update type definitions in `types/eid.ts`
-2. Modify UI components in `pages/index.tsx`
-3. Update SOAP client in `lib/soapClient.ts`
-4. Add API endpoints in `pages/api/`
-
 ## Specifications
 
 This implementation follows:
 
 - **TR-03130 Part 1** - eID-Server specifications
 - **TR-03124 Part 1** - eID-Client specifications
-- **eIDAS** - European electronic identification standards
 
 See the `docs/` folder for detailed specifications and example payloads.
-
-## Security Notes
-
-- Always use HTTPS in production
-- Implement proper certificate validation for mTLS
-- Validate all input data
-- Use secure session management
-- Implement proper error handling
 
 ## License
 
 This project is for testing purposes only. Follow applicable regulations and standards for production use.
-
-## Support
-
-For issues and questions:
-
-- Check the specification documents in `docs/`
-- Review the example payloads in `docs/examples-payloads.xml`
-- Ensure your eID-Server is properly configured
-- Verify TLS certificates and network connectivity
