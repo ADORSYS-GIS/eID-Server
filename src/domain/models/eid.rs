@@ -1,6 +1,8 @@
+pub mod info;
 pub mod result;
 pub mod useid;
 
+pub use info::*;
 pub use result::*;
 pub use useid::*;
 

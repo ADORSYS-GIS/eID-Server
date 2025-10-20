@@ -1,6 +1,7 @@
 pub mod did_auth;
 pub mod getresult;
 pub mod health;
+pub mod server_info;
 pub mod startpaos;
 pub mod transmit;
 pub mod useid;
@@ -13,6 +14,7 @@ use getresult::handle_get_result;
 use mini_moka::sync::Cache;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use server_info::handle_get_server_info;
 use startpaos::handle_start_paos;
 use tracing::{debug, instrument};
 use useid::handle_useid;
@@ -75,6 +77,7 @@ enum APIFunction {
     DidAuthEAC2,
     Transmit,
     GetResult,
+    GetServerInfo,
 }
 
 /// Processes an incoming request and routes to the appropriate handler
@@ -107,6 +110,9 @@ where
         }
         APIFunction::Transmit => {
             process_request(state, &request, |s, e| handle_transmit(s, e)).await
+        }
+        APIFunction::GetServerInfo => {
+            process_request(state, &request, |s, e| handle_get_server_info(s, e)).await
         }
     }
 }
@@ -141,6 +147,7 @@ fn infer_request_type(xml: &str) -> Result<APIFunction, AppError> {
                 }
                 b"TransmitResponse" => return Ok(APIFunction::Transmit),
                 b"getResultRequest" => return Ok(APIFunction::GetResult),
+                b"getServerInfoRequest" => return Ok(APIFunction::GetServerInfo),
                 _ => {}
             },
             Event::Eof => break,
