@@ -1,8 +1,14 @@
 import Image from "next/image";
-import { useRouter } from 'next/router';
+import { useRouter } from "next/router";
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Shield, CheckCircle2, Loader2, ChevronRight, Server } from "lucide-react";
+import {
+  Shield,
+  CheckCircle2,
+  Loader2,
+  ChevronRight,
+  Server,
+} from "lucide-react";
 import type {
   AuthenticationConfig,
   OperationsRequest,
@@ -119,14 +125,14 @@ export default function Home() {
 
   const handleOperationChange = (
     key: keyof OperationsRequest,
-    value: AttributeRequestType
+    value: AttributeRequestType,
   ) => {
     setOperations((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleEidTypeChange = (
     key: keyof typeof eidTypes,
-    value: EIDTypeSelection | ""
+    value: EIDTypeSelection | "",
   ) => {
     setEidTypes((prev) => ({ ...prev, [key]: value }));
   };
@@ -141,10 +147,13 @@ export default function Home() {
         levelOfAssurance: levelOfAssurance || undefined,
         eidTypeRequest: Object.entries(eidTypes)
           .filter(([_, value]) => value)
-          .reduce((obj, [key, value]) => {
-            obj[key as keyof typeof eidTypes] = value as EIDTypeSelection;
-            return obj;
-          }, {} as { [key in keyof typeof eidTypes]?: EIDTypeSelection }),
+          .reduce(
+            (obj, [key, value]) => {
+              obj[key as keyof typeof eidTypes] = value as EIDTypeSelection;
+              return obj;
+            },
+            {} as { [key in keyof typeof eidTypes]?: EIDTypeSelection },
+          ),
       };
 
       if (ageVerification.enabled) {
@@ -178,7 +187,7 @@ export default function Home() {
 
       const data = await response.json();
       const eidClientUrl = `http://127.0.0.1:24727/eID-Client?tcTokenURL=${encodeURIComponent(
-        data.tcTokenUrl
+        data.tcTokenUrl,
       )}`;
       window.location.href = eidClientUrl;
     } catch (err: any) {
@@ -239,11 +248,11 @@ export default function Home() {
                     onChange={(e) =>
                       handleOperationChange(
                         key,
-                        e.target.value as AttributeRequestType
+                        e.target.value as AttributeRequestType,
                       )
                     }
                     className={`mt-auto px-3 py-2 backdrop-blur-sm border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition-all ${getSelectColor(
-                      value
+                      value,
                     )}`}
                   >
                     <option value="PROHIBITED">Prohibited</option>
@@ -523,11 +532,11 @@ export default function Home() {
                       onChange={(e) =>
                         handleEidTypeChange(
                           key,
-                          e.target.value as EIDTypeSelection | ""
+                          e.target.value as EIDTypeSelection | "",
                         )
                       }
                       className={`mt-auto px-3 py-2 backdrop-blur-sm border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition-all ${getEidSelectColor(
-                        value
+                        value,
                       )}`}
                     >
                       <option value="">None</option>
@@ -560,7 +569,7 @@ export default function Home() {
           className="flex justify-center items-center gap-4"
         >
           <button
-            onClick={() => router.push('/serverinfo')}
+            onClick={() => router.push("/serverinfo")}
             className="group relative px-6 py-3 bg-gradient-to-r from-gray-700 to-gray-800 text-white text-base font-semibold rounded-full shadow-lg hover:shadow-xl hover:from-gray-600 hover:to-gray-700 backdrop-blur-sm border border-white/20 transition-all duration-300 hover:scale-105 active:scale-95"
           >
             <span className="flex items-center gap-3">

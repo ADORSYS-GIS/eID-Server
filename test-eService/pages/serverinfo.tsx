@@ -1,30 +1,35 @@
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/router';
-import { motion } from 'framer-motion';
+import { useEffect, useState } from "react";
+import { useRouter } from "next/router";
+import { motion } from "framer-motion";
 import {
   Server,
   FileText,
   Home as HomeIcon,
   Loader2,
   XCircle,
-  AlertCircle
-} from 'lucide-react';
-import type { GetServerInfoResponse, AttributeResponseType } from '../types/eid';
+  AlertCircle,
+} from "lucide-react";
+import type {
+  GetServerInfoResponse,
+  AttributeResponseType,
+} from "../types/eid";
 
 export default function ServerInfo() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [serverInfo, setServerInfo] = useState<GetServerInfoResponse | null>(null);
+  const [serverInfo, setServerInfo] = useState<GetServerInfoResponse | null>(
+    null,
+  );
 
   useEffect(() => {
     const fetchServerInfo = async () => {
       try {
-        const response = await fetch('/api/serverinfo');
-        
+        const response = await fetch("/api/serverinfo");
+
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(errorData.error || 'Failed to fetch server info');
+          throw new Error(errorData.error || "Failed to fetch server info");
         }
 
         const data = await response.json();
@@ -40,16 +45,29 @@ export default function ServerInfo() {
   }, []);
 
   const getStatusBadge = (status: AttributeResponseType) => {
-    const badges: Record<AttributeResponseType, { bg: string; text: string; label: string }> = {
-      ALLOWED: { bg: 'bg-green-100', text: 'text-green-800', label: 'Allowed' },
-      PROHIBITED: { bg: 'bg-red-100', text: 'text-red-800', label: 'Prohibited' },
-      NOTONCHIP: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Not on Chip' },
+    const badges: Record<
+      AttributeResponseType,
+      { bg: string; text: string; label: string }
+    > = {
+      ALLOWED: { bg: "bg-green-100", text: "text-green-800", label: "Allowed" },
+      PROHIBITED: {
+        bg: "bg-red-100",
+        text: "text-red-800",
+        label: "Prohibited",
+      },
+      NOTONCHIP: {
+        bg: "bg-gray-100",
+        text: "text-gray-800",
+        label: "Not on Chip",
+      },
     };
 
     const badge = badges[status];
 
     return (
-      <span className={`px-3 py-1 rounded-full text-xs font-medium ${badge.bg} ${badge.text}`}>
+      <span
+        className={`px-3 py-1 rounded-full text-xs font-medium ${badge.bg} ${badge.text}`}
+      >
         {badge.label}
       </span>
     );
@@ -88,7 +106,7 @@ export default function ServerInfo() {
           </div>
           <p className="text-lg text-gray-700 mb-8">{error}</p>
           <button
-            onClick={() => router.push('/')}
+            onClick={() => router.push("/")}
             className="px-6 py-3 bg-blue-600 text-white rounded-full font-medium hover:bg-blue-700 transition-colors"
           >
             Return to Home
@@ -121,7 +139,7 @@ export default function ServerInfo() {
               </div>
             </div>
             <button
-              onClick={() => router.push('/')}
+              onClick={() => router.push("/")}
               className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-700 font-medium text-sm transition-colors"
             >
               <HomeIcon className="w-4 h-4" />
@@ -146,7 +164,10 @@ export default function ServerInfo() {
             </h2>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <DataField label="Version" value={serverInfo.ServerVersion.VersionString} />
+            <DataField
+              label="Version"
+              value={serverInfo.ServerVersion.VersionString}
+            />
             <DataField label="Major" value={serverInfo.ServerVersion.Major} />
             <DataField label="Minor" value={serverInfo.ServerVersion.Minor} />
             <DataField label="Bugfix" value={serverInfo.ServerVersion.Bugfix} />
@@ -167,14 +188,22 @@ export default function ServerInfo() {
             </h2>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {Object.entries(serverInfo.DocumentVerificationRights).map(([key, status]) => (
-              <div key={key} className="flex items-center justify-between p-3 rounded-lg bg-gray-50">
-                <span className="text-sm font-medium text-gray-700">
-                  {key.replace(/([A-Z])/g, ' $1').replace(/ I D/g, ' ID').trim()}
-                </span>
-                {getStatusBadge(status as AttributeResponseType)}
-              </div>
-            ))}
+            {Object.entries(serverInfo.DocumentVerificationRights).map(
+              ([key, status]) => (
+                <div
+                  key={key}
+                  className="flex items-center justify-between p-3 rounded-lg bg-gray-50"
+                >
+                  <span className="text-sm font-medium text-gray-700">
+                    {key
+                      .replace(/([A-Z])/g, " $1")
+                      .replace(/ I D/g, " ID")
+                      .trim()}
+                  </span>
+                  {getStatusBadge(status as AttributeResponseType)}
+                </div>
+              ),
+            )}
           </div>
         </motion.section>
       </main>

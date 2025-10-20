@@ -204,6 +204,7 @@ NEXT_PUBLIC_BASE_URL=https://localhost:8443
 ├── styles/                # Global styles and Tailwind CSS
 └── docs/                  # Specification documents
 ```
+
 ## Specifications
 
 This implementation follows:
