@@ -6,7 +6,7 @@ export default function App({ Component, pageProps }: AppProps) {
   return (
     <>
       <Head>
-        <title>eID Service</title>
+        <title>eService</title>
         <link rel="icon" href="/adorsys-logo.png" />
       </Head>
       <Component {...pageProps} />

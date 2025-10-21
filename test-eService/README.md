@@ -1,4 +1,4 @@
-# eID Service
+# eService
 
 Test eService for testing eID authentication flows with eID-Server and eID-Client (AusWeisApp2).
 
