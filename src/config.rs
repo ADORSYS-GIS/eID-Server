@@ -33,7 +33,6 @@ pub struct Config {
     #[serde(default)]
     pub redis: Option<RedisConfig>,
     pub master_list: MasterListConfig,
-    #[serde(default)]
     pub crl: CrlConfig,
 }
 

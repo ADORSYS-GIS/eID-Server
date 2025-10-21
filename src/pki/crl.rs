@@ -40,45 +40,6 @@ pub enum CrlError {
 /// Convenient Result type alias
 pub type CrlResult<T> = Result<T, CrlError>;
 
-/// Represents a Certificate Revocation List
-#[derive(Debug, Clone)]
-pub struct CrlData {
-    /// The raw CRL data in DER format
-    pub der_data: Vec<u8>,
-}
-
-impl CrlData {
-    /// Create a new CRL from DER data
-    pub fn from_der(der_data: Vec<u8>) -> Result<Self, CrlError> {
-        // Validate that we can parse it
-        let _ = CertificateRevocationList::from_der(&der_data)
-            .map_err(|e| CrlError::Parse(e.into()))?;
-
-        Ok(Self { der_data })
-    }
-
-    /// Parse the CRL from DER data
-    fn parse<'a>(&'a self) -> Result<CertificateRevocationList<'a>, CrlError> {
-        let (_, crl) = CertificateRevocationList::from_der(&self.der_data)
-            .map_err(|e| CrlError::Parse(e.into()))?;
-        Ok(crl)
-    }
-
-    /// Get list of revoked certificate serial numbers
-    pub fn get_revoked_serials(&self) -> Result<Vec<Vec<u8>>, CrlError> {
-        let crl = self.parse()?;
-
-        let serials: Vec<Vec<u8>> = crl
-            .tbs_cert_list
-            .revoked_certificates
-            .iter()
-            .map(|revoked_cert| revoked_cert.user_certificate.to_bytes_be())
-            .collect();
-
-        Ok(serials)
-    }
-}
-
 /// CRL processor - fetches CRLs and removes revoked certificates
 #[derive(Clone)]
 pub struct CrlProcessor<T: TrustStore> {
@@ -94,8 +55,8 @@ impl<T: TrustStore> CrlProcessor<T> {
         Ok(Self { client, truststore })
     }
 
-    /// Fetch a CRL from a distribution point URL
-    async fn fetch_crl(&self, url: &str) -> CrlResult<CrlData> {
+    /// Fetch a CRL from a distribution point URL and return revoked serials
+    async fn fetch_crl(&self, url: &str) -> CrlResult<Vec<Vec<u8>>> {
         let response = self.client.get(url).send().await?;
 
         if !response.status().is_success() {
@@ -107,7 +68,19 @@ impl<T: TrustStore> CrlProcessor<T> {
 
         let crl_data = response.bytes().await?.to_vec();
 
-        CrlData::from_der(crl_data)
+        // Parse DER-encoded bytes into a structured CertificateRevocationList object
+        // from_der returns (remaining_bytes, parsed_crl) - we only need the parsed CRL
+        let (_, crl) = CertificateRevocationList::from_der(&crl_data)
+            .map_err(|e| CrlError::Parse(e.into()))?;
+
+        let serials = crl
+            .tbs_cert_list
+            .revoked_certificates
+            .iter()
+            .map(|revoked_cert| revoked_cert.user_certificate.to_bytes_be())
+            .collect();
+
+        Ok(serials)
     }
 
     /// Process all CRLs from distribution points and remove revoked certificates
@@ -115,18 +88,10 @@ impl<T: TrustStore> CrlProcessor<T> {
         let mut total_removed = 0;
 
         for dp_url in distribution_points {
-            let crl = match self.fetch_crl(dp_url).await {
-                Ok(crl) => crl,
-                Err(e) => {
-                    warn!("Failed to fetch CRL from {dp_url}: {e}");
-                    continue;
-                }
-            };
-
-            let revoked_serials = match crl.get_revoked_serials() {
+            let revoked_serials = match self.fetch_crl(dp_url).await {
                 Ok(serials) => serials,
                 Err(e) => {
-                    warn!("Failed to parse revoked certificates from {dp_url}: {e}");
+                    warn!("Failed to fetch/parse CRL from {dp_url}: {e}");
                     continue;
                 }
             };
@@ -201,7 +166,7 @@ impl<T: TrustStore + Clone + Send + Sync + 'static> CrlScheduler<T> {
         let processor = self.processor.clone();
         let distribution_points = self.config.distribution_points.distribution_points.clone();
 
-        // Cron expression: Run at midnight (00:00:00) every day
+        // "0 0 0 * * *" = at 00:00:00 every day
         let job = Job::new_async("0 0 0 * * *", move |_uuid, _l| {
             let processor = processor.clone();
             let distribution_points = distribution_points.clone();
@@ -209,19 +174,18 @@ impl<T: TrustStore + Clone + Send + Sync + 'static> CrlScheduler<T> {
             Box::pin(async move {
                 info!("Running scheduled CRL check (midnight)");
 
-                match processor.process_crls(&distribution_points).await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!("Scheduled CRL check failed: {e}");
-                    }
-                }
+                processor
+                    .process_crls(&distribution_points)
+                    .await
+                    .map_err(|e| error!("Scheduled CRL check failed: {e}"))
+                    .ok();
             })
         })?;
 
         self.scheduler.add(job).await?;
         self.scheduler.start().await?;
 
-        info!("CRL scheduler started successfully");
+        info!("CRL scheduler started successfully - will run daily at midnight");
 
         Ok(())
     }
