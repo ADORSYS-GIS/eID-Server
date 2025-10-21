@@ -214,17 +214,25 @@ fn build_chat(
     ];
 
     for (attr_req, access_right) in attribute_mappings.iter() {
-        if predicate(attr_req) {
+        if attr_req.as_ref().is_some_and(&predicate) {
             rights.add(*access_right);
         }
     }
 
     // Add special verification functions
     let operations = &session_data.request_data.use_operations;
-    if !operations.age_verification.is_prohibited() {
+    if operations
+        .age_verification
+        .as_ref()
+        .is_some_and(|op| !op.is_prohibited())
+    {
         rights.add(AccessRight::AgeVerification);
     }
-    if !operations.place_verification.is_prohibited() {
+    if operations
+        .place_verification
+        .as_ref()
+        .is_some_and(|op| !op.is_prohibited())
+    {
         rights.add(AccessRight::CommunityIdVerification);
     }
 
