@@ -2,8 +2,10 @@ use crate::apdu::{
     APDUDecryptParams, ProtectedAPDU, SecureMessaging, SessionKeys, build_protected_cmds,
 };
 use crate::asn1::cvcert::Chat;
+use crate::asn1::security_info::EFCardSecurity;
 use crate::asn1::utils::{
-    ChipAuthAlg, extract_chip_auth_info, find_chip_auth_domain_params, process_card_security,
+    ChipAuthAlg, MobileEIDType, extract_chip_auth_info, find_chip_auth_domain_params,
+    parse_mobile_eid_info, process_card_security,
 };
 use crate::crypto::ecdh::EcdhKeyPair;
 use crate::crypto::{Curve, PublicKey};
@@ -97,22 +99,20 @@ async fn handle_eac1<T: TrustStore>(
 
     let mut session_data: SessionData = session_mgr
         .get(&*session_id)
-        .await
-        .map_err(AppError::paos_internal)?
+        .await?
         .ok_or(PaosError::Timeout)?;
 
-    let (conn_handle, aux_data, built_chat) = match &session_data.state {
-        State::EAC1 {
-            conn_handle,
-            aux_data,
-            built_chat,
-        } => (conn_handle.clone(), aux_data.clone(), built_chat.clone()),
-        _ => return Err(PaosError::Parameter("Expected state EAC1OutputType".into()).into()),
+    let State::EAC1 {
+        conn_handle,
+        aux_data,
+        built_chat,
+    } = session_data.state
+    else {
+        return Err(PaosError::Parameter("Expected state EAC1OutputType".into()).into());
     };
-    let body = envelope.into_body();
 
     // Validate request body
-    let data = validate_eac1_body(body)?;
+    let data = validate_eac1_body(envelope.into_body())?;
 
     let keypair_info = generate_eph_keypair(data.card_access.as_ref().unwrap())?;
     // Build DIDAuthenticate with EAC2InputType
@@ -158,8 +158,7 @@ async fn handle_eac2<T: TrustStore>(
 
     let mut session_data: SessionData = session_mgr
         .get(&*session_id)
-        .await
-        .map_err(AppError::paos_internal)?
+        .await?
         .ok_or(PaosError::Timeout)?;
 
     let State::EAC2 {
@@ -168,22 +167,21 @@ async fn handle_eac2<T: TrustStore>(
         eph_key,
         chip_auth,
         built_chat,
-    } = &session_data.state
+    } = session_data.state
     else {
         return Err(PaosError::Parameter("Expected state EAC2OutputType".into()).into());
     };
-    let body = envelope.into_body();
 
     // Validate request body
-    let data = validate_eac2_body(body)?;
+    let data = validate_eac2_body(envelope.into_body())?;
 
-    let access_rights = build_access_rights(restricted_chat, built_chat)?;
+    let access_rights = build_access_rights(&restricted_chat, &built_chat)?;
     let trust_store = &state.service.trust_store;
-    let (apdu_cmds, session_keys) =
-        build_cmds(&data, eph_key, chip_auth, trust_store, &access_rights).await?;
+    let (apdu_cmds, session_keys, mobile_eid_type) =
+        build_cmds(&data, &eph_key, &chip_auth, trust_store, &access_rights).await?;
 
     // Build Transmit response
-    let resp = build_transmit(slot_handle.clone(), &apdu_cmds).await?;
+    let resp = build_transmit(slot_handle, &apdu_cmds).await?;
 
     let message_id = uuid::Uuid::new_v4().urn().to_string();
     // Update the session tracker
@@ -202,11 +200,13 @@ async fn handle_eac2<T: TrustStore>(
         session_keys.cipher(),
     );
 
+    // Update session state
     let cmds_len = apdu_cmds.len();
     session_data.state = State::Transmit {
         apdu_cmds,
         cmds_len,
         decrypt_params,
+        mobile_eid_type,
     };
     session_mgr.insert(session_id, &session_data).await?;
 
@@ -395,10 +395,10 @@ async fn build_cmds<T: TrustStore>(
     auth_params: &(Curve, ChipAuthAlg),
     trust_store: &T,
     access_rights: &AccessRights,
-) -> Result<(Vec<ProtectedAPDU>, SessionKeys), AppError> {
+) -> Result<(Vec<ProtectedAPDU>, SessionKeys, Option<MobileEIDType>), AppError> {
     let (curve, alg) = *auth_params;
     // process card security and extract public key
-    let card_security = hex::decode(data.card_security.as_ref().unwrap())?;
+    let card_security = EFCardSecurity::from_hex(data.card_security.as_ref().unwrap())?;
     let pub_bytes = process_card_security(&card_security, curve, trust_store).await?;
     let card_pubkey = PublicKey::from_bytes(curve, pub_bytes)?;
 
@@ -415,7 +415,8 @@ async fn build_cmds<T: TrustStore>(
 
     // Use the APDU builder to construct commands
     let commands = build_protected_cmds(access_rights, &mut sm)?;
-    Ok((commands, session_keys))
+    let mobile_eid_type = parse_mobile_eid_info(&card_security);
+    Ok((commands, session_keys, mobile_eid_type.map(|(_, t)| t)))
 }
 
 fn build_access_rights(
@@ -508,5 +509,11 @@ impl From<crate::apdu::Error> for AppError {
             Error::Asn1(e) => AppError::paos_internal(e),
             _ => AppError::Paos(PaosError::Parameter(error.to_string())),
         }
+    }
+}
+
+impl From<rasn::error::DecodeError> for AppError {
+    fn from(error: rasn::error::DecodeError) -> Self {
+        AppError::Paos(PaosError::Parameter(error.to_string()))
     }
 }

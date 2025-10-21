@@ -1,8 +1,9 @@
 use crate::apdu::{APDUCommand, Ins};
+use bincode::{Decode, Encode};
 use hex_literal::hex;
 
 /// Data Group definitions
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
 pub enum DataGroup {
     /// Document Type
     DG1 = 0x01,
@@ -88,20 +89,20 @@ impl DataGroup {
 /// Command to select a file by FID
 pub fn select_file(fid: u16) -> APDUCommand {
     let fid_bytes = fid.to_be_bytes();
-    APDUCommand::new(Ins::Select, 0x02, 0x0C, fid_bytes, 0)
+    APDUCommand::new(Ins::Select, 0x02, 0x0C, fid_bytes, Some(0x00))
 }
 
 /// Command to select the eID application
 pub fn select_eid_application() -> APDUCommand {
     let eid_app_id = hex!("E80704007F00070302");
-    APDUCommand::new(Ins::Select, 0x04, 0x0C, eid_app_id, 0)
+    APDUCommand::new(Ins::Select, 0x04, 0x0C, eid_app_id, Some(0x00))
 }
 
 /// Read binary data from the card at the given offset and length
 pub fn read_binary(offset: u16, length: u8) -> APDUCommand {
     let p1 = ((offset >> 8) & 0xFF) as u8;
     let p2 = (offset & 0xFF) as u8;
-    APDUCommand::new(Ins::ReadBinary, p1, p2, [], length as u16)
+    APDUCommand::new(Ins::ReadBinary, p1, p2, [], Some(length as u16))
 }
 
 /// Read data group on the card
@@ -112,5 +113,5 @@ pub fn read_data_group(data_group: DataGroup) -> Vec<APDUCommand> {
 /// Verify authenticated auxiliary data.
 /// The input data is the Object Identifier of the auxiliary data to be verified
 pub fn verify(data: impl Into<Vec<u8>>) -> APDUCommand {
-    APDUCommand::new(Ins::Verify, 0x80, 0x00, data.into(), 0)
+    APDUCommand::new(Ins::Verify, 0x80, 0x00, data.into(), Some(0x00))
 }
