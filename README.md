@@ -113,53 +113,8 @@ By default, the server will listen on `https://localhost:3000`. You can modify t
 cargo test
 ```
 
-## Running the Test eService
+## Testing the Online Authentication Flow
 
-This project includes a test eService located in the `test-eService` directory. It's a Next.js application that demonstrates how a service provider would interact with the eID-Server.
+A test eService is available in the `test-eService` directory. It can be used to set up a test environment with the eID-Server and an eID-Client, allowing you to test the different behaviors of the online authentication flow.
 
-### Prerequisites
-
-- **Node.js** (v16 or higher)
-- **npm** (comes with Node.js)
-- A running **eID-Server** instance.
-- An **eID-Client** (e.g., [AusweisApp2](https://www.ausweisapp.bund.de/)) installed on your system.
-
-### Setup and Running
-
-1.  **Navigate to the eService directory:**
-
-    ```bash
-    cd test-eService
-    ```
-
-2.  **Install Dependencies:**
-
-    ```bash
-    npm install
-    ```
-
-3.  **Configure Environment:**
-
-    Create a `.env.local` file in the `test-eService` directory.
-
-    ```bash
-    cp .env.local.example .env.local
-    ```
-
-    Then, edit `.env.local` and set `EID_SERVER_URL` to the address of your running eID-Server.
-
-    ```
-    # test-eService/.env.local
-    EID_SERVER_URL=https://localhost:8080/eIDService # Adjust if your server runs elsewhere
-    NEXT_PUBLIC_BASE_URL=http://localhost:3000
-    ```
-
-4.  **Start the Application:**
-
-    ```bash
-    npm run dev
-    ```
-
-5.  **Access the Application:**
-
-    Open your browser and navigate to `http://localhost:3000`. You can then use the interface to initiate an authentication flow with your eID card.
+For setup and usage instructions, please refer to the [`README.md`](test-eService/README.md:1) in the `test-eService` directory.
