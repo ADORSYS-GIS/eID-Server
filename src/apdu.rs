@@ -36,6 +36,8 @@ pub enum Ins {
     Verify = 0x20,
     Select = 0xA4,
     ReadBinary = 0xB0,
+    MseSet = 0x22,
+    GeneralAuth = 0x86,
 }
 
 impl From<u8> for Ins {
@@ -44,6 +46,8 @@ impl From<u8> for Ins {
             0x20 => Self::Verify,
             0xA4 => Self::Select,
             0xB0 => Self::ReadBinary,
+            0x22 => Self::MseSet,
+            0x86 => Self::GeneralAuth,
             _ => Self::Unknown,
         }
     }

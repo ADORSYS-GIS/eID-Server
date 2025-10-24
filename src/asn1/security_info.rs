@@ -143,3 +143,33 @@ pub struct MobileEIDTypeInfo {
     /// Version -- should be 1
     pub version: Integer,
 }
+
+/// Restricted Identification Protocol Parameters
+#[derive(Debug, Clone, PartialEq, Eq, Hash, AsnType, Encode, Decode)]
+pub struct ProtocolParams {
+    /// Protocol version. Should be 1
+    pub version: Integer,
+    /// Indicate private key to be used
+    pub key_id: Integer,
+    /// Whether explicit authorization is required to use the corresponding secret key
+    pub authorized_only: bool,
+}
+
+/// Restricted Identification Info
+#[derive(Debug, Clone, PartialEq, Eq, Hash, AsnType, Encode, Decode)]
+pub struct RestrictedIdInfo {
+    /// Protocol OID
+    pub protocol: Oid,
+    /// Protocol parameters
+    pub params: ProtocolParams,
+    /// Could indicate maximum length of the supported sector specific public keys
+    pub max_key_len: Option<Integer>,
+}
+
+/// Restricted Identification Domain Parameter Info
+#[derive(Debug, Clone, PartialEq, Eq, Hash, AsnType, Encode, Decode)]
+pub struct RestrictedIdDomainParamInfo {
+    /// Protocol OID (id-RI-DH | id-RI-ECDH)
+    pub protocol: Oid,
+    pub domain_parameter: AlgorithmIdentifier,
+}

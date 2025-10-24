@@ -1,9 +1,12 @@
 use bincode::{Decode, Encode};
-use rasn::types::ObjectIdentifier;
+use rasn::types::{Integer, ObjectIdentifier as Oid};
+use rasn::{AsnType, Encode as DerEncode, der::encode as der_encode};
 
 use super::Result;
 use crate::apdu::{self, APDUCommand, DataGroup, SecureMessaging};
+use crate::asn1::cvcert::EcdsaPublicKey;
 use crate::asn1::oid::{DATE_OF_BIRTH_OID, MUNICIPALITY_ID_OID};
+use crate::asn1::utils::RestrictedIdAlg;
 use crate::crypto::sym::Cipher;
 use crate::cvcert::{AccessRight, AccessRights};
 
@@ -47,6 +50,8 @@ pub enum CmdType {
     ReadBinary(DataGroup),
     VerifyAge,
     VerifyPlace,
+    SetAt,
+    GeneralAuth,
 }
 
 /// Protected APDU command that pairs the command with its decodable type
@@ -65,10 +70,18 @@ pub struct DecryptedAPDU {
     pub is_success: bool,
 }
 
-/// Build protected APDU commands based on access rights
+pub struct RestrictedIdParams {
+    pub alg: RestrictedIdAlg,
+    pub priv_key_ref: Integer,
+    pub pubkey_sector1: EcdsaPublicKey,
+    pub pubkey_sector2: Option<EcdsaPublicKey>,
+}
+
+/// Build protected APDU commands
 pub fn build_protected_cmds(
     access_rights: &AccessRights,
     sm: &mut SecureMessaging,
+    restricted_id_params: Option<RestrictedIdParams>,
 ) -> Result<Vec<ProtectedAPDU>> {
     let mut commands = vec![];
 
@@ -113,6 +126,11 @@ pub fn build_protected_cmds(
             AccessRight::CommunityIdVerification => {
                 add_verify_cmds(&mut commands, sm, CmdType::VerifyPlace, MUNICIPALITY_ID_OID)?
             }
+            AccessRight::RestrictedIdentification => {
+                if let Some(ref restricted_id_params) = restricted_id_params {
+                    add_restricted_id_cmds(&mut commands, sm, restricted_id_params)?;
+                }
+            }
             _ => {}
         }
     }
@@ -155,7 +173,7 @@ fn add_verify_cmds(
     oid: &'static [u32],
 ) -> Result<()> {
     sm.update_ssc();
-    let oid = ObjectIdentifier::new_unchecked(oid.into());
+    let oid = Oid::new_unchecked(oid.into());
     let mut verify_cmd = apdu::verify(rasn::der::encode(&oid)?);
     verify_cmd.cla = 0x8C;
 
@@ -163,6 +181,62 @@ fn add_verify_cmds(
     commands.push(ProtectedAPDU {
         cmd: secured_verify,
         cmd_type,
+    });
+    sm.update_ssc();
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, AsnType, DerEncode)]
+#[rasn(tag(context, 0), delegate)]
+struct RestrictedIdOid(Oid);
+
+#[derive(Debug, Clone, PartialEq, AsnType, DerEncode)]
+#[rasn(tag(context, 4), delegate)]
+struct RestrictedIdKeyRef(Integer);
+
+#[derive(Debug, Clone, AsnType, DerEncode)]
+#[rasn(tag(application, 28))]
+struct RestrictedIdSectorPubKey {
+    #[rasn(tag(context, 0))]
+    first_sector_pub_key: EcdsaPublicKey,
+    #[rasn(tag(context, 2))]
+    second_sector_pub_key: Option<EcdsaPublicKey>,
+}
+
+fn add_restricted_id_cmds(
+    commands: &mut Vec<ProtectedAPDU>,
+    sm: &mut SecureMessaging,
+    params: &RestrictedIdParams,
+) -> Result<()> {
+    // First, select the Restricted Identification protocol
+    let mut set_at_data = Vec::with_capacity(24);
+    let oid = RestrictedIdOid(Oid::new_unchecked(params.alg.to_oid().into()));
+    let key_ref = RestrictedIdKeyRef(params.priv_key_ref.to_owned());
+    set_at_data.extend_from_slice(&der_encode(&oid)?);
+    set_at_data.extend_from_slice(&der_encode(&key_ref)?);
+
+    sm.update_ssc();
+    let set_at_cmd = apdu::set_at(&*set_at_data);
+    let secured_set_at = sm.create_secure_command(&set_at_cmd)?;
+    commands.push(ProtectedAPDU {
+        cmd: secured_set_at,
+        cmd_type: CmdType::SetAt,
+    });
+    sm.update_ssc();
+
+    // Then send sector public key
+    let sector_key = RestrictedIdSectorPubKey {
+        first_sector_pub_key: params.pubkey_sector1.to_owned(),
+        second_sector_pub_key: params.pubkey_sector2.to_owned(),
+    };
+    let sector_key_data = der_encode(&sector_key)?;
+
+    sm.update_ssc();
+    let general_auth_cmd = apdu::general_auth(&*sector_key_data);
+    let secured_general_auth = sm.create_secure_command(&general_auth_cmd)?;
+    commands.push(ProtectedAPDU {
+        cmd: secured_general_auth,
+        cmd_type: CmdType::GeneralAuth,
     });
     sm.update_ssc();
     Ok(())

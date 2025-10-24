@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use rasn::der::decode as der_decode;
+use rasn::{AsnType, Decode, Decoder, Encode, types::OctetString};
 use serde::Serialize;
 use tracing::instrument;
 use validator::Validate;
@@ -10,7 +11,8 @@ use crate::asn1::{perso_data::*, utils::MobileEIDType};
 use crate::domain::models::eid::{
     AttrResponse, AttributeResp, EIDTypeResp, EIDTypeSelection, EIDTypeUsed, GeneralDate,
     GeneralPlace as ResultGeneralPlace, GetResultRequest, GetResultResponse, LevelOfAssurance,
-    Operations, PersonalData, Place as ResultPlace, VerificationResult, useid::UseIDRequest,
+    Operations, PersonalData, Place as ResultPlace, RestrictedID, VerificationResult,
+    useid::UseIDRequest,
 };
 use crate::domain::models::{ResultType, State};
 use crate::pki::truststore::TrustStore;
@@ -199,6 +201,7 @@ fn extract_response_data(responses: &Vec<DecryptedAPDU>) -> Result<ResultData, A
     let mut age_verification_result = None;
     let mut place_verification_result = None;
     let mut failed_selects = HashSet::new();
+    let mut set_at_failed = false;
 
     for response in responses {
         process_response(
@@ -208,6 +211,7 @@ fn extract_response_data(responses: &Vec<DecryptedAPDU>) -> Result<ResultData, A
             &mut age_verification_result,
             &mut place_verification_result,
             &mut failed_selects,
+            &mut set_at_failed,
         )?;
     }
     Ok((
@@ -218,6 +222,15 @@ fn extract_response_data(responses: &Vec<DecryptedAPDU>) -> Result<ResultData, A
     ))
 }
 
+#[derive(Debug, Clone, AsnType, Encode, Decode)]
+#[rasn(tag(application, 28))]
+struct RestrictedIdResponse {
+    #[rasn(tag(context, 1))]
+    first_id: Option<OctetString>,
+    #[rasn(tag(context, 3))]
+    second_id: Option<OctetString>,
+}
+
 fn process_response(
     response: &DecryptedAPDU,
     personal_data: &mut PersonalData,
@@ -225,6 +238,7 @@ fn process_response(
     age_result: &mut Option<VerificationResult>,
     place_result: &mut Option<VerificationResult>,
     failed_selects: &mut HashSet<DataGroup>,
+    set_at_failed: &mut bool,
 ) -> Result<(), AppError> {
     let status = compute_response_status(response);
 
@@ -243,8 +257,30 @@ fn process_response(
             ops_allowed.place_verification = Some(AttributeResp { value: status });
             return Ok(());
         }
+        CmdType::SetAt => {
+            if !response.is_success {
+                *set_at_failed = true;
+                ops_allowed.restricted_id = Some(AttributeResp { value: status });
+            }
+        }
+        CmdType::GeneralAuth => {
+            ops_allowed.restricted_id = Some(AttributeResp { value: status });
+            if !*set_at_failed && response.is_success {
+                match der_decode::<RestrictedIdResponse>(&response.response_data) {
+                    Ok(restricted_id) => {
+                        personal_data.restricted_id = Some(RestrictedID {
+                            id: restricted_id
+                                .first_id
+                                .map(|id| hex::encode_upper(&id))
+                                .unwrap_or_default(),
+                            id2: restricted_id.second_id.map(|id| hex::encode_upper(&id)),
+                        });
+                    }
+                    Err(e) => tracing::warn!("Failed to parse restricted ID: {e:?}"),
+                }
+            }
+        }
         CmdType::SelectFile(dg) => {
-            // Track failed selects and update ops_allowed
             if !response.is_success {
                 failed_selects.insert(dg);
                 update_ops_allowed(ops_allowed, dg, status);
@@ -252,15 +288,14 @@ fn process_response(
             return Ok(());
         }
         CmdType::ReadBinary(dg) => {
-            if failed_selects.contains(&dg) {
-                return Ok(());
-            }
-            update_ops_allowed(ops_allowed, dg, status);
+            if !failed_selects.contains(&dg) {
+                update_ops_allowed(ops_allowed, dg, status);
 
-            if response.is_success
-                && let Err(e) = store_datagroup(dg, &response.response_data, personal_data)
-            {
-                tracing::warn!("Failed to parse {dg:?}: {e:?}");
+                if response.is_success
+                    && let Err(e) = store_datagroup(dg, &response.response_data, personal_data)
+                {
+                    tracing::warn!("Failed to parse {dg:?}: {e:?}");
+                }
             }
         }
         _ => {}

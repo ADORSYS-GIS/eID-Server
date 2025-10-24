@@ -32,6 +32,8 @@ pub enum Material {
     X509,
     /// Certificate description
     CertDesc,
+    /// Sector public key for restricted identification
+    SectorPubKey,
 }
 
 /// Server identity provider
@@ -101,6 +103,7 @@ impl FileIdentity {
     /// - `dv_cvc.der` for Material::DvCvc
     /// - `x509.der` for Material::X509
     /// - `cert_desc.der` for Material::CertDesc
+    /// - `sector_pubkey.der` for Material::SectorPubKey
     pub fn new() -> Self {
         let data = Arc::new(DashMap::new());
 
@@ -134,6 +137,10 @@ impl FileIdentity {
             Material::X509Key,
             include_bytes!("../../test_certs/identity/x509_key.der").into(),
         );
+        self.data.insert(
+            Material::SectorPubKey,
+            include_bytes!("../../test_certs/identity/sector_pubkey.der").into(),
+        );
     }
 }
 
@@ -166,5 +173,6 @@ fn material_to_string(material: Material) -> &'static str {
         Material::DvCvc => "DV CVC",
         Material::X509 => "Server certificate",
         Material::CertDesc => "Certificate description",
+        Material::SectorPubKey => "Sector public key",
     }
 }

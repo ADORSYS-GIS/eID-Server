@@ -115,3 +115,13 @@ pub fn read_data_group(data_group: DataGroup) -> Vec<APDUCommand> {
 pub fn verify(data: impl Into<Vec<u8>>) -> APDUCommand {
     APDUCommand::new(Ins::Verify, 0x80, 0x00, data.into(), Some(0x00))
 }
+
+/// Command to select the Restricted Identification protocol
+pub fn set_at(data: impl Into<Vec<u8>>) -> APDUCommand {
+    APDUCommand::new(Ins::MseSet, 0x41, 0xA4, data.into(), Some(0x00))
+}
+
+/// Command to perform general authentication for Restricted Identification
+pub fn general_auth(data: impl Into<Vec<u8>>) -> APDUCommand {
+    APDUCommand::new(Ins::GeneralAuth, 0x00, 0x00, data.into(), Some(0x00))
+}
