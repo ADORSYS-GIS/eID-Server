@@ -115,6 +115,6 @@ cargo test
 
 ## Testing the Online Authentication Flow
 
-A test eService is available in the `test-eService` directory. It can be used to set up a test environment with the eID-Server and an eID-Client, allowing you to test the different behaviors of the online authentication flow.
+A test eService is available in the [`test-eService`](test-eService) directory. It can be used to set up a test environment with the eID-Server and an eID-Client, allowing to test different behaviors of the online authentication flow.
 
 For setup and usage instructions, please refer to the [`README.md`](test-eService/README.md:1) in the `test-eService` directory.
