@@ -3,6 +3,7 @@ mod de;
 mod ser;
 #[cfg(test)]
 mod tests;
+pub mod wsse;
 
 pub use config::XmlConfig;
 pub use de::from_str;
