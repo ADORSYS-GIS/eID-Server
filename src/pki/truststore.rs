@@ -32,7 +32,7 @@ impl From<walkdir::Error> for TrustStoreError {
 #[derive(Debug, Clone)]
 pub struct CertificateEntry {
     pub raw: Arc<Vec<u8>>,
-    pub serial_number: Vec<u8>,
+    pub serial_number: String,
     pub subject: String,
     pub issuer: String,
 }
@@ -44,7 +44,7 @@ impl CertificateEntry {
         let (_, cert) =
             X509Certificate::from_der(der_bytes).map_err(|e| TrustStoreError::X509(e.into()))?;
 
-        let serial_number = cert.raw_serial().to_vec();
+        let serial_number = cert.tbs_certificate.serial.to_string();
         let subject = cert.subject().to_string();
         let issuer = cert.issuer().to_string();
 
@@ -80,7 +80,7 @@ pub trait TrustStore: Clone + Send + Sync + 'static {
     /// Get a certificate by its serial number.
     fn get_cert_by_serial(
         &self,
-        serial_number: impl AsRef<[u8]> + Send,
+        serial_number: &str,
     ) -> impl Future<Output = Result<Option<CertificateEntry>, TrustStoreError>> + Send;
 
     /// Get a certificate by its subject DN.
@@ -108,7 +108,7 @@ pub trait TrustStore: Clone + Send + Sync + 'static {
     /// Remove a certificate from the trust store by its serial number.
     fn remove_cert(
         &self,
-        serial_number: impl AsRef<[u8]> + Send,
+        serial_number: &str,
     ) -> impl Future<Output = Result<bool, TrustStoreError>> + Send;
 
     /// Remove all certificates from the trust store.
@@ -129,7 +129,7 @@ pub trait TrustStore: Clone + Send + Sync + 'static {
 #[derive(Debug, Clone)]
 pub struct MemoryTrustStore {
     base_path: PathBuf,
-    cache: Arc<DashMap<Vec<u8>, CertificateEntry>>,
+    cache: Arc<DashMap<String, CertificateEntry>>,
 }
 
 impl MemoryTrustStore {
@@ -337,11 +337,11 @@ impl TrustStore for MemoryTrustStore {
 
     async fn get_cert_by_serial(
         &self,
-        serial_number: impl AsRef<[u8]> + Send,
+        serial_number: &str,
     ) -> Result<Option<CertificateEntry>, TrustStoreError> {
         Ok(self
             .cache
-            .get(serial_number.as_ref())
+            .get(serial_number)
             .map(|entry| entry.value().clone()))
     }
 
@@ -386,11 +386,8 @@ impl TrustStore for MemoryTrustStore {
         self.verify_chain(&trust_chain)
     }
 
-    async fn remove_cert(
-        &self,
-        serial_number: impl AsRef<[u8]> + Send,
-    ) -> Result<bool, TrustStoreError> {
-        Ok(self.cache.remove(serial_number.as_ref()).is_some())
+    async fn remove_cert(&self, serial_number: &str) -> Result<bool, TrustStoreError> {
+        Ok(self.cache.remove(serial_number).is_some())
     }
 
     async fn clear(&self) -> Result<(), TrustStoreError> {

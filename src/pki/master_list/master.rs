@@ -139,7 +139,7 @@ impl<T: TrustStore> MasterListHandler<T> {
     /// Get a CSCA certificate by its serial number
     pub async fn get_certificate_by_serial(
         &self,
-        serial_number: impl AsRef<[u8]> + Send,
+        serial_number: &str,
     ) -> Result<Option<crate::pki::truststore::CertificateEntry>, MasterListError> {
         Ok(self.truststore.get_cert_by_serial(serial_number).await?)
     }
