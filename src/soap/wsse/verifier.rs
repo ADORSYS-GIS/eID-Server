@@ -10,7 +10,7 @@ use crate::soap::wsse::timestamp::Timestamp;
 use crate::soap::wsse::*;
 
 /// Verify a signed SOAP envelope
-pub async fn verify_envelope(envelope_xml: &str, truststore: impl TrustStore) -> Result<()> {
+pub async fn verify_envelope<T: TrustStore>(envelope_xml: &str, truststore: &T) -> Result<()> {
     // Extract and parse Security header
     let security_xml = utils::extract_element(envelope_xml, "Security")?;
 
@@ -19,8 +19,7 @@ pub async fn verify_envelope(envelope_xml: &str, truststore: impl TrustStore) ->
     timestamp.validate()?;
 
     // Extract and parse signature
-    let signature_xml = utils::extract_element(&security_xml, "Signature")?;
-    let signature = extract_signature(&signature_xml)?;
+    let signature = extract_signature(&security_xml)?;
 
     // Verify reference digests
     verify_references(envelope_xml, &signature.signed_info.references)?;
@@ -43,11 +42,11 @@ pub async fn verify_envelope(envelope_xml: &str, truststore: impl TrustStore) ->
         .ok_or_else(|| Error::Invalid("Certificate not found in truststore".into()))?;
 
     if cert_entry.issuer != issuer_serial.issuer_name {
-        return Err(Error::Invalid("Certificate issuer mismatch".into()));
+        return Err(Error::Invalid(format!(
+            "Certificate issuer mismatch: expected {}, got {}",
+            cert_entry.issuer, issuer_serial.issuer_name
+        )));
     }
-
-    // Parse certificate
-    let cert = cert_entry.parse()?;
 
     // Determine hash algorithm
     let hash_alg = match signature.signed_info.signature_method.algorithm.as_str() {
@@ -61,6 +60,7 @@ pub async fn verify_envelope(envelope_xml: &str, truststore: impl TrustStore) ->
     };
 
     // Verify signature
+    let cert = cert_entry.parse()?;
     let signature_bytes = BASE64.decode(&signature.signature_value)?;
     let public_key = RsaPublicKey::from_der(cert.tbs_certificate.subject_pki.raw)?;
     let rsa_sig = RsaSignature::new(public_key.key_size(), signature_bytes);

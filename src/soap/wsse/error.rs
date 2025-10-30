@@ -1,9 +1,7 @@
-use color_eyre::eyre::Report;
-
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("XML processing error: {0}")]
-    Xml(#[from] Report),
+    Xml(String),
 
     #[error("Crypto error: {0}")]
     Crypto(#[from] crate::crypto::Error),
@@ -29,31 +27,31 @@ pub enum Error {
 
 impl From<quick_xml::Error> for Error {
     fn from(err: quick_xml::Error) -> Self {
-        Error::Xml(err.into())
+        Error::Xml(err.to_string())
     }
 }
 
 impl From<quick_xml::DeError> for Error {
     fn from(err: quick_xml::DeError) -> Self {
-        Error::Xml(err.into())
+        Error::Xml(err.to_string())
     }
 }
 
 impl From<quick_xml::SeError> for Error {
     fn from(err: quick_xml::SeError) -> Self {
-        Error::Xml(err.into())
+        Error::Xml(err.to_string())
     }
 }
 
 impl From<quick_xml::events::attributes::AttrError> for Error {
     fn from(err: quick_xml::events::attributes::AttrError) -> Self {
-        Error::Xml(err.into())
+        Error::Xml(err.to_string())
     }
 }
 
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
-        Error::Xml(err.into())
+        Error::Xml(err.to_string())
     }
 }
 

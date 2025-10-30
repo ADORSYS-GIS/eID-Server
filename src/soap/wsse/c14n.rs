@@ -37,7 +37,7 @@ pub fn canonicalize(xml: impl AsRef<str>) -> Result<String> {
                 ns_rendered_stack.pop();
             }
             Ok(Event::Text(e)) => {
-                let text = e.xml_content().map_err(|e| Error::Xml(e.into()))?;
+                let text = e.xml_content().map_err(|e| Error::Xml(e.to_string()))?;
                 let esc = escape_text_value(text.as_bytes())?;
                 writer.write_event(Event::Text(BytesText::from_escaped(esc)))?;
             }
@@ -50,7 +50,7 @@ pub fn canonicalize(xml: impl AsRef<str>) -> Result<String> {
             }
             Ok(Event::Eof) => break,
             Ok(_) => {}
-            Err(e) => return Err(Error::Xml(e.into())),
+            Err(e) => return Err(Error::Xml(e.to_string())),
         }
         buf.clear();
     }
@@ -135,7 +135,7 @@ fn handle_start<W: std::io::Write>(
     let mut local_ns_decls = vec![];
 
     for attr in e.attributes().with_checks(false) {
-        let attr = attr.map_err(|e| Error::Xml(e.into()))?;
+        let attr = attr.map_err(|e| Error::Xml(e.to_string()))?;
         let key = attr.key.as_ref();
         if key == b"xmlns" {
             local_ns_decls.push((vec![], attr.value.to_vec()));
