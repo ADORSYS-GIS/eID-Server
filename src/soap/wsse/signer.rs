@@ -3,7 +3,7 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use crate::crypto::{HashAlg, rsa, rsa::RsaPrivateKey};
 use crate::pki::truststore::CertificateEntry;
 use crate::soap::wsse::timestamp::Timestamp;
-use crate::soap::wsse::*;
+use crate::soap::{Envelope, Header, wsse::*};
 
 /// Configuration for signing SOAP messages
 pub struct SignConfig {
@@ -17,20 +17,33 @@ pub struct SignConfig {
     pub timestamp_ttl: Option<i64>,
 }
 
-/// Sign a SOAP envelope according to WS-Security policy.
-/// Returns the WS-Security header and the modified envelope.
-pub fn sign_envelope(xml: impl AsRef<str>, config: SignConfig) -> Result<(WsSecurity, String)> {
+/// Sign the SOAP envelope according to WS-Security policy.
+pub fn sign_envelope<T: Serialize>(env: Envelope<T>, config: SignConfig) -> Result<String> {
+    let unsigned_env = env.serialize_soap(false)?;
+    let body_id = format!("Body-{}", uuid::Uuid::new_v4());
+    let ws_security = sign_inner(&unsigned_env, &body_id, config)?;
+    let header = Header {
+        message_id: None,
+        relates_to: None,
+        security: Some(ws_security),
+    };
+    let security_env = env.with_header(header);
+    let security_env_xml = security_env.serialize_soap(false)?;
+    utils::add_body_id_to_envelope(&security_env_xml, &body_id)
+}
+
+/// Sign the envelope and returns the WS-Security header
+fn sign_inner(xml: impl AsRef<str>, body_id: &str, config: SignConfig) -> Result<WsSecurity> {
     use quick_xml::se::to_string_with_root as xml_to_string;
 
     // Parse certificate to extract issuer and serial number
     let cert = CertificateEntry::from_der(&config.certificate)?;
 
     let timestamp_id = format!("TS-{}", uuid::Uuid::new_v4());
-    let body_id = format!("Body-{}", uuid::Uuid::new_v4());
 
     // Canonicalize timestamp and body elements
     let timestamp = Timestamp::new(timestamp_id.clone(), config.timestamp_ttl)?;
-    let modified_envelope = utils::add_body_id_to_envelope(xml.as_ref(), &body_id)?;
+    let modified_envelope = utils::add_body_id_to_envelope(xml.as_ref(), body_id)?;
     let timestamp_xml = xml_to_string("wsu:Timestamp", &timestamp)?;
     let body_xml = utils::extract_element(&modified_envelope, "Body")?;
     let timestamp_c14n = c14n::canonicalize(&timestamp_xml)?;
@@ -100,11 +113,8 @@ pub fn sign_envelope(xml: impl AsRef<str>, config: SignConfig) -> Result<(WsSecu
             },
         },
     };
-    Ok((
-        WsSecurity {
-            timestamp,
-            signature,
-        },
-        modified_envelope,
-    ))
+    Ok(WsSecurity {
+        timestamp,
+        signature,
+    })
 }
