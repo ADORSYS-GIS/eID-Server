@@ -1,0 +1,3 @@
+[submodule "eID-Service"]
+	path = eID-Service
+	url = https://github.com/ADORSYS-GIS/EID-Service
