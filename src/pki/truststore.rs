@@ -83,10 +83,10 @@ pub trait TrustStore: Clone + Send + Sync + 'static {
         serial_number: &str,
     ) -> impl Future<Output = Result<Option<CertificateEntry>, TrustStoreError>> + Send;
 
-    /// Get a certificate by its subject DN.
-    fn get_cert_by_subject(
+    /// Get a certificate by its issuer DN.
+    fn get_cert_by_issuer(
         &self,
-        subject: &str,
+        issuer: &str,
     ) -> impl Future<Output = Result<Option<CertificateEntry>, TrustStoreError>> + Send;
 
     /// Verify the given DER encoded certificate chain against the trust store.
@@ -345,12 +345,12 @@ impl TrustStore for MemoryTrustStore {
             .map(|entry| entry.value().clone()))
     }
 
-    async fn get_cert_by_subject(
+    async fn get_cert_by_issuer(
         &self,
-        subject: &str,
+        issuer: &str,
     ) -> Result<Option<CertificateEntry>, TrustStoreError> {
         for entry in self.cache.iter() {
-            if entry.value().subject == subject {
+            if entry.value().issuer == issuer {
                 return Ok(Some(entry.value().clone()));
             }
         }
@@ -457,11 +457,11 @@ mod tests {
             .unwrap();
         assert!(by_serial.is_some());
 
-        let by_subject = store.get_cert_by_subject(&ca_entry.subject).await.unwrap();
-        assert!(by_subject.is_some());
+        let by_issuer = store.get_cert_by_issuer(&ca_entry.issuer).await.unwrap();
+        assert!(by_issuer.is_some());
         assert_eq!(
             by_serial.unwrap().serial_number,
-            by_subject.unwrap().serial_number
+            by_issuer.unwrap().serial_number
         );
     }
 

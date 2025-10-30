@@ -144,12 +144,12 @@ impl<T: TrustStore> MasterListHandler<T> {
         Ok(self.truststore.get_cert_by_serial(serial_number).await?)
     }
 
-    /// Get a CSCA certificate by its subject DN
-    pub async fn get_certificate_by_subject(
+    /// Get a CSCA certificate by its issuer DN
+    pub async fn get_certificate_by_issuer(
         &self,
-        subject: &str,
+        issuer: &str,
     ) -> Result<Option<crate::pki::truststore::CertificateEntry>, MasterListError> {
-        Ok(self.truststore.get_cert_by_subject(subject).await?)
+        Ok(self.truststore.get_cert_by_issuer(issuer).await?)
     }
 
     /// Clear all certificates from the trust store

@@ -37,14 +37,14 @@ pub async fn verify_envelope<T: TrustStore>(envelope_xml: &str, truststore: &T) 
 
     // Find certificate in truststore
     let cert_entry = truststore
-        .get_cert_by_serial(&issuer_serial.serial_number)
+        .get_cert_by_issuer(&issuer_serial.issuer_name)
         .await?
         .ok_or_else(|| Error::Invalid("Certificate not found in truststore".into()))?;
 
-    if cert_entry.issuer != issuer_serial.issuer_name {
+    if cert_entry.serial_number != issuer_serial.serial_number {
         return Err(Error::Invalid(format!(
-            "Certificate issuer mismatch: expected {}, got {}",
-            cert_entry.issuer, issuer_serial.issuer_name
+            "Certificate serial number mismatch: expected {}, got {}",
+            cert_entry.serial_number, issuer_serial.serial_number
         )));
     }
 
@@ -53,8 +53,7 @@ pub async fn verify_envelope<T: TrustStore>(envelope_xml: &str, truststore: &T) 
         algorithms::RSA_SHA256 => HashAlg::Sha256,
         alg => {
             return Err(Error::Invalid(format!(
-                "Unsupported signature algorithm: {}",
-                alg
+                "Unsupported signature algorithm: {alg}",
             )));
         }
     };
