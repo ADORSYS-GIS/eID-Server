@@ -14,7 +14,7 @@ pub use verifier::verify_envelope;
 use crate::soap::wsse::timestamp::Timestamp;
 use serde::{Deserialize, Serialize};
 
-pub type Result<T> = std::result::Result<T, Error>;
+type Result<T> = std::result::Result<T, Error>;
 
 // Algorithm URIs as per WS-Security Policy Basic256Sha256
 pub mod algorithms {
