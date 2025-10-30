@@ -1,5 +1,4 @@
 use crate::soap::wsse::{Error, Result};
-use color_eyre::eyre::eyre;
 use quick_xml::{Reader, Writer, events::Event};
 use std::io::Cursor;
 
@@ -7,7 +6,6 @@ use std::io::Cursor;
 pub fn add_body_id_to_envelope(xml: impl AsRef<str>, body_id: &str) -> Result<String> {
     let mut reader = Reader::from_str(xml.as_ref());
     reader.config_mut().trim_text(false);
-    reader.config_mut().expand_empty_elements = true;
 
     let mut writer = Writer::new(Vec::new());
     let mut buf = Vec::new();
@@ -30,12 +28,12 @@ pub fn add_body_id_to_envelope(xml: impl AsRef<str>, body_id: &str) -> Result<St
             }
             Ok(Event::Eof) => break,
             Ok(e) => writer.write_event(e)?,
-            Err(e) => return Err(Error::Xml(e.into())),
+            Err(e) => return Err(Error::Xml(e.to_string())),
         }
         buf.clear();
     }
     if !body_found {
-        return Err(Error::Xml(eyre!("No Body element found in envelope")));
+        return Err(Error::Xml("No Body element found in envelope".into()));
     }
     Ok(String::from_utf8(writer.into_inner())?)
 }
@@ -49,12 +47,25 @@ pub fn extract_element_by_id(xml: &str, id: &str) -> Result<String> {
             key == b"Id" && attr.unescape_value().ok().as_deref() == Some(id)
         })
     })
+    .map_err(|error| {
+        if matches!(error, Error::Xml(ref msg) if msg == "Element not found") {
+            Error::Xml(format!("Element with Id='{id}' not found in envelope"))
+        } else {
+            error
+        }
+    })
 }
 
 /// Extract element by local name
 pub fn extract_element(xml: &str, name: &str) -> Result<String> {
     let target = name.as_bytes();
-    extract_with_predicate(xml, |e| e.name().local_name().as_ref() == target)
+    extract_with_predicate(xml, |e| e.name().local_name().as_ref() == target).map_err(|error| {
+        if matches!(error, Error::Xml(ref msg) if msg == "Element not found") {
+            Error::Xml(format!("Element '{name}' not found in envelope"))
+        } else {
+            error
+        }
+    })
 }
 
 /// Extract element by predicate
@@ -93,19 +104,18 @@ where
                 }
             }
             Ok(Event::Eof) => break,
-            Ok(e @ (Event::Text(_) | Event::CData(_) | Event::Comment(_) | Event::PI(_))) => {
+            Ok(e) => {
                 if capturing {
                     writer.write_event(e)?;
                 }
             }
-            Ok(_) => {}
-            Err(e) => return Err(Error::Xml(e.into())),
+            Err(e) => return Err(Error::Xml(e.to_string())),
         }
         buf.clear();
     }
 
     if !capturing {
-        return Err(Error::Xml(eyre!("Element not found")));
+        return Err(Error::Xml("Element not found".into()));
     }
     Ok(String::from_utf8(writer.into_inner().into_inner())?)
 }
