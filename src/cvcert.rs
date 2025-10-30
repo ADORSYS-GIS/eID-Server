@@ -14,8 +14,8 @@ use rasn::types::{ObjectIdentifier as Oid, OctetString};
 use types::CvcResult;
 
 use crate::asn1::cvcert::{
-    Chat, CvCertificate as Asn1CVCertificate, CvCertificateBody as Asn1CVCertificateBody,
-    EcdsaPublicKey,
+    CertificateExtensions, Chat, CvCertificate as Asn1CVCertificate,
+    CvCertificateBody as Asn1CVCertificateBody, EcdsaPublicKey,
 };
 use crate::asn1::oid::CHAT_OID;
 
@@ -115,6 +115,11 @@ impl CvCertificate {
     /// Returns the access rights of this certificate
     pub fn access_rights(&self) -> AccessRights {
         self.chat().access_rights()
+    }
+
+    /// Returns the extensions of this certificate
+    pub fn extensions(&self) -> Option<&CertificateExtensions> {
+        self.inner.body.extensions.as_ref()
     }
 
     /// Check if this certificate has domain parameters (CVCA characteristic)
