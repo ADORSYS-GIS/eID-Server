@@ -21,12 +21,19 @@ impl Default for MasterListConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct CrlConfig {
+    /// List of CRL distribution point URLs to fetch from
+    pub distribution_points: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
     #[serde(default)]
     pub redis: Option<RedisConfig>,
     pub master_list: MasterListConfig,
+    pub crl: CrlConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,8 +74,12 @@ impl Config {
             .set_default("server.host", "localhost")?
             .set_default("server.port", 3000)?
             .set_default("master_list.master_list_url", "https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/ElekAusweise/CSCA/GermanMasterList.html")?
+            // CRL defaults
+            .set_default("crl.enabled", true)?
+            .set_default("crl.timeout_secs", 30)?
+            .set_default("crl.check_interval_hours", 24)?
+            .set_default("crl.distribution_points", Vec::<String>::new())?
             .add_source(File::with_name("config/settings").required(false));
-
         // If env_vars is provided, we use it instead of system environment
         // This is to avoid systems variables pollution across tests
         if let Some(vars) = env_vars {
