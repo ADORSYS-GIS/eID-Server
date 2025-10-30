@@ -82,6 +82,7 @@ async fn handle_inner<T: TrustStore>(
     let header = Header {
         relates_to: Some(relates_to),
         message_id: Some(message_id),
+        security: None,
     };
 
     // Update session state

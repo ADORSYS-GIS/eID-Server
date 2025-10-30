@@ -56,7 +56,7 @@ impl<T: TrustStore> CrlProcessor<T> {
     }
 
     /// Fetch a CRL from a distribution point URL and return revoked serials
-    async fn fetch_crl(&self, url: &str) -> CrlResult<Vec<Vec<u8>>> {
+    async fn fetch_crl(&self, url: &str) -> CrlResult<Vec<String>> {
         let response = self.client.get(url).send().await?;
 
         if !response.status().is_success() {
@@ -77,7 +77,7 @@ impl<T: TrustStore> CrlProcessor<T> {
             .tbs_cert_list
             .revoked_certificates
             .iter()
-            .map(|revoked_cert| revoked_cert.user_certificate.to_bytes_be())
+            .map(|revoked_cert| revoked_cert.user_certificate.to_string())
             .collect();
 
         Ok(serials)

@@ -202,6 +202,7 @@ mod tests {
         let header = Header {
             message_id: Some("12345678-1234-1234-1234-123456789012".to_string()),
             relates_to: Some("12345678-1234-1234-1234-123456789012".to_string()),
+            security: None,
         };
         let result = Envelope::new(req).with_header(header).serialize_paos(true);
         assert!(result.is_ok());
@@ -270,6 +271,7 @@ mod tests {
         let header = Header {
             message_id: Some("12345678-1234-1234-1234-123456789012".to_string()),
             relates_to: Some("12345678-1234-1234-1234-123456789012".to_string()),
+            security: None,
         };
         let result = Envelope::new(req).with_header(header).serialize_paos(true);
         assert!(result.is_ok());

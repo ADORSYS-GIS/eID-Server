@@ -17,7 +17,7 @@ where
     quick_xml_to_writer(&mut xml_buf, value)?;
 
     let mut reader = Reader::from_reader(Cursor::new(xml_buf.as_bytes()));
-    reader.config_mut().trim_text(true);
+    reader.config_mut().trim_text(false);
 
     let mut output_buf = Vec::with_capacity(xml_buf.len());
     let mut writer = if config.pretty {

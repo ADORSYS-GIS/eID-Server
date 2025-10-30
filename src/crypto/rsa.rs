@@ -182,6 +182,25 @@ pub struct RsaPublicKey {
 }
 
 impl RsaPublicKey {
+    /// Parse from DER-encoded SubjectPublicKeyInfo.
+    pub fn from_der(der_bytes: impl AsRef<[u8]>) -> CryptoResult<Self> {
+        let key = PKey::public_key_from_der(der_bytes.as_ref())?;
+        Self::from_pkey(key)
+    }
+
+    /// Parse from PEM-encoded SubjectPublicKeyInfo.
+    pub fn from_pem(pem_bytes: impl AsRef<[u8]>) -> CryptoResult<Self> {
+        let key = PKey::public_key_from_pem(pem_bytes.as_ref())?;
+        Self::from_pkey(key)
+    }
+
+    fn from_pkey(key: PKey<Public>) -> CryptoResult<Self> {
+        let rsa = key.rsa()?;
+        let bits = rsa.size() * 8;
+        let key_size = RsaKeySize::try_from(bits)?;
+        Ok(Self { key, key_size })
+    }
+
     /// Export key in SubjectPublicKeyInfo DER format
     pub fn to_der(&self) -> CryptoResult<Vec<u8>> {
         Ok(self.key.public_key_to_der()?)
@@ -269,10 +288,9 @@ pub fn sign(
     data: impl AsRef<[u8]>,
     hash_alg: HashAlg,
 ) -> CryptoResult<RsaSignature> {
-    let digest = hash_alg.hash(data.as_ref())?;
-    let mut signer = Signer::new_without_digest(private_key.pkey())?;
-    let signature_data = signer.sign_oneshot_to_vec(&digest)?;
-
+    let mut signer = Signer::new(hash_alg.into(), private_key.pkey())?;
+    signer.update(data.as_ref())?;
+    let signature_data = signer.sign_to_vec()?;
     Ok(RsaSignature::new(private_key.key_size(), signature_data))
 }
 
@@ -289,9 +307,9 @@ pub fn verify(
         ));
     }
 
-    let digest = hash_alg.hash(data.as_ref())?;
-    let mut verifier = Verifier::new_without_digest(public_key.pkey())?;
-    let result = verifier.verify_oneshot(signature.as_bytes(), &digest)?;
+    let mut verifier = Verifier::new(hash_alg.into(), public_key.pkey())?;
+    verifier.update(data.as_ref())?;
+    let result = verifier.verify(signature.as_bytes())?;
     Ok(result)
 }
 
