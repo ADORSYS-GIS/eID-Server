@@ -52,7 +52,14 @@ export default async function handler(
         ca: process.env.EID_SERVER_CA,
       };
 
-      const soapClient = new SOAPClient(eidServerUrl, tlsOptions);
+      // Configure WS-Security options (reuse existing certificates if enabled)
+      const wsSecurityOptions = {
+        enabled: process.env.WS_SECURITY_ENABLED === "true",
+        privateKey: process.env.EID_SERVER_KEY_PATH || process.env.EID_SERVER_KEY,
+        certificate: process.env.EID_SERVER_CERT_PATH || process.env.EID_SERVER_CERT,
+      };
+
+      const soapClient = new SOAPClient(eidServerUrl, tlsOptions, wsSecurityOptions);
 
       // Call useID on eID-Server
       console.log("Calling useID with config for token:", token);

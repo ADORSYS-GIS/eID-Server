@@ -19,7 +19,15 @@ export default async function handler(
       rejectUnauthorized: process.env.NODE_ENV === "production",
     };
 
-    const soapClient = new SOAPClient(eidServerUrl, tlsOptions);
+    // Configure WS-Security options (reuse existing certificates if enabled)
+    const wsSecurityOptions = {
+      enabled: process.env.WS_SECURITY_ENABLED === "true",
+      privateKey: process.env.HTTPS_KEY_PATH || process.env.HTTPS_KEY,
+      certificate: process.env.HTTPS_CERT_PATH || process.env.HTTPS_CERT,
+      trustedCertsDir: "./certs/",
+    };
+
+    const soapClient = new SOAPClient(eidServerUrl, tlsOptions, wsSecurityOptions);
 
     // Call getServerInfo on eID-Server
     const getServerInfoResponse = await soapClient.callGetServerInfo();

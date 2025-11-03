@@ -29,7 +29,7 @@ Test eService for testing eID authentication flows with eID-Server and eID-Clien
 
    Then, add the following content to the `.env.local` file, adjusting the values for your environment:
 
-   ```
+   ```toml
    # eID-Server Configuration
    EID_SERVER_URL="Your server URL"
    EID_SERVER_ADDRESS="Your server address"
@@ -48,6 +48,9 @@ Test eService for testing eID authentication flows with eID-Server and eID-Clien
    # EID_SERVER_KEY_PATH=path/to/client-key.pem
    # EID_SERVER_CA_PATH=path/to/ca-cert.pem
    # EID_SERVER_REJECT_UNAUTHORIZED=false
+
+   # WS-Security Configuration (optional)
+   # WS_SECURITY_ENABLED=true
 
    # Security
    NODE_ENV=development
@@ -104,6 +107,12 @@ Test eService for testing eID authentication flows with eID-Server and eID-Clien
 | `EID_SERVER_CA_PATH`             | Path to eID-Server CA certificate (PEM)   | -             |
 | `EID_SERVER_REJECT_UNAUTHORIZED` | Validate certificates strictly            | `false` (dev) |
 
+#### WS-Security Configuration
+
+| Variable               | Description                                | Default |
+| ---------------------- | ----------------------------------------- | ------- |
+| `WS_SECURITY_ENABLED`  | Enable WS-Security for SOAP messages      | `false` |
+
 ### eID-Server Integration
 
 The eService communicates with the eID-Server via SOAP:
@@ -147,6 +156,93 @@ The eService supports flexible TLS configuration:
 - **Certificate Validation**: Configurable certificate validation for development
 
 See [CERTIFICATE_GUIDE.md](CERTIFICATE_GUIDE.md) for detailed certificate configuration instructions.
+
+### WS-Security Support
+
+The eService now supports WS-Security for SOAP message signing according to the specified policy:
+
+- **AsymmetricBinding** with X.509 tokens
+- **Basic256Sha256** algorithm suite
+- **Strict** layout with timestamp
+- **Signed SOAP Body** as per policy requirements
+- **Issuer serial reference** support
+
+#### Enabling WS-Security
+
+To enable WS-Security for SOAP messages:
+
+1. **Set the environment variable:**
+
+   ```bash
+   WS_SECURITY_ENABLED=true
+   ```
+
+2. **Ensure certificates are configured** (WS-Security reuses existing mTLS certificates):
+
+   ```bash
+   HTTPS_CERT_PATH=./certs/client.crt
+   HTTPS_KEY_PATH=./certs/client.key
+   ```
+
+3. **The application will automatically sign** all SOAP messages (useID, getResult, getServerInfo) with WS-Security headers.
+
+#### Signed SOAP Message Structure
+
+When WS-Security is enabled, SOAP messages include:
+
+```xml
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Header>
+    <wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
+      <wsu:Timestamp wsu:Id="TS-unique-id">
+        <wsu:Created>2025-10-31T10:30:00.000Z</wsu:Created>
+        <wsu:Expires>2025-10-31T10:35:00.000Z</wsu:Expires>
+      </wsu:Timestamp>
+      <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+        <ds:SignedInfo>
+          <ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+          <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
+          <ds:Reference URI="#Body-reference">
+            <ds:Transforms>
+              <ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+            </ds:Transforms>
+            <ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>
+            <ds:DigestValue>[SHA256 digest of Body]</ds:DigestValue>
+          </ds:Reference>
+        </ds:SignedInfo>
+        <ds:SignatureValue>[RSA-SHA256 signature]</ds:SignatureValue>
+        <ds:KeyInfo>
+          <wsse:SecurityTokenReference>
+            <ds:X509Data>
+              <ds:X509IssuerSerial>
+                <ds:X509IssuerName>CN=Test CA, O=Test Organization, C=DE</ds:X509IssuerName>
+                <ds:X509SerialNumber>123456789</ds:X509SerialNumber>
+              </ds:X509IssuerSerial>
+            </ds:X509Data>
+          </wsse:SecurityTokenReference>
+        </ds:KeyInfo>
+      </ds:Signature>
+    </wsse:Security>
+  </soapenv:Header>
+  <soapenv:Body wsu:Id="Body-reference">
+    <!-- SOAP Body content remains unchanged -->
+  </soapenv:Body>
+</soapenv:Envelope>
+```
+
+**Note**: Following the WS-Security policy with `IncludeToken="Never"`, the implementation uses **issuer serial references** instead of including the entire X.509 certificate in the message. This provides a more lightweight and secure approach where recipients can look up certificates using the issuer name and serial number.
+
+#### Security Policy Compliance
+
+The implementation follows the specified WS-Security policy:
+
+- **AsymmetricBinding** with X.509 tokens for initiator and recipient
+- **Basic256Sha256** algorithm suite for strong cryptography
+- **Strict** layout ensuring proper message ordering
+- **IncludeTimestamp** for message freshness
+- **OnlySignEntireHeadersAndBody** for complete message integrity
+- **Wss10** support with issuer serial reference
+- **SignedParts** including the SOAP Body
 
 ### Port Configuration
 
@@ -199,10 +295,12 @@ NEXT_PUBLIC_BASE_URL=https://localhost:8443
 │   └── _app.tsx           # App wrapper
 ├── lib/                   # Utility libraries
 │   ├── soapClient.ts      # SOAP communication with eID-Server
-│   └── sessionManager.ts  # Session management
+│   ├── sessionManager.ts  # Session management
+│   └── wsSecurity.ts      # WS-Security utilities for XML signatures
 ├── types/                 # TypeScript type definitions
 ├── styles/                # Global styles and Tailwind CSS
-└── docs/                  # Specification documents
+├── docs/                  # Specification documents
+└── certs/                 # Certificate files for TLS/mTLS and WS-Security
 ```
 
 ## Specifications
