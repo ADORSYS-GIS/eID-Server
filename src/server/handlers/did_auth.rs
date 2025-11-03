@@ -127,6 +127,7 @@ async fn handle_eac1<T: TrustStore>(
     let header = Header {
         relates_to: Some(relates_to),
         message_id: Some(message_id),
+        security: None,
     };
 
     let chat = &data.chat;
@@ -191,6 +192,7 @@ async fn handle_eac2<T: TrustStore>(
     let header = Header {
         relates_to: Some(relates_to),
         message_id: Some(message_id),
+        security: None,
     };
 
     // Create APDU decrypt parameters from the session keys used to build commands

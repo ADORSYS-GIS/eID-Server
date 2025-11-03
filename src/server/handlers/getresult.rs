@@ -16,12 +16,13 @@ use crate::domain::models::eid::{
 };
 use crate::domain::models::{ResultType, State};
 use crate::pki::truststore::TrustStore;
+use crate::server::handlers::sign_config;
 use crate::server::{
     AppState,
     errors::{AppError, EidError},
 };
 use crate::session::SessionData;
-use crate::soap::Envelope;
+use crate::soap::{Envelope, sign_envelope};
 
 #[derive(Debug, Serialize, Validate)]
 struct GetResultResp {
@@ -66,7 +67,8 @@ pub async fn handle_get_result<T: TrustStore>(
     session_mgr.remove(&*body.session.id).await?;
 
     resp.validate().map_err(AppError::soap_internal)?;
-    let result = Envelope::new(resp).serialize_soap(true);
+    let env = Envelope::new(resp);
+    let result = sign_envelope(env, sign_config(&state).await?);
     result.map_err(AppError::soap_internal)
 }
 

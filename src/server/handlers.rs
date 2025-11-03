@@ -19,14 +19,16 @@ use startpaos::handle_start_paos;
 use tracing::{debug, instrument};
 use useid::handle_useid;
 
+use crate::crypto::rsa::RsaPrivateKey;
 use crate::domain::models::paos::StartPaosResponse;
+use crate::pki::identity::Material;
 use crate::pki::truststore::TrustStore;
 use crate::server::handlers::did_auth::{handle_did_auth_eac1, handle_did_auth_eac2};
 use crate::server::handlers::transmit::handle_transmit;
 use crate::server::responses::SoapResponse;
 use crate::server::{AppState, errors::AppError};
 use crate::session::SessionManager;
-use crate::soap::Envelope;
+use crate::soap::{Envelope, SignConfig, verify_envelope};
 
 static SESSION_TRACKER: Lazy<Cache<String, String>> = Lazy::new(|| {
     Cache::builder()
@@ -69,6 +71,18 @@ async fn handle_paos_error<E: Into<AppError>>(
     env.serialize_paos(true).map_err(AppError::paos_internal)
 }
 
+/// Creates SOAP signature configuration
+async fn sign_config<T: TrustStore>(state: &AppState<T>) -> Result<SignConfig, AppError> {
+    let identity = &state.service.identity;
+    let cert_der = identity.get(Material::X509).await?;
+    let key_der = identity.get(Material::X509Key).await?;
+    Ok(SignConfig {
+        private_key: RsaPrivateKey::from_der(&key_der)?,
+        certificate: cert_der,
+        timestamp_ttl: None,
+    })
+}
+
 #[derive(Debug)]
 enum APIFunction {
     UseIDRequest,
@@ -90,6 +104,10 @@ where
     T: TrustStore,
 {
     debug!(req = %request, "Processing authentication request\n");
+
+    // verify envelope signature
+    let truststore = &state.service.trust_store;
+    verify_envelope(&request, truststore).await?;
 
     let request_type = infer_request_type(&request)?;
     match request_type {
@@ -174,4 +192,10 @@ where
         debug!(xml = %xml, "Sending response\n");
         SoapResponse::new(xml).into_response()
     })
+}
+
+impl From<crate::soap::Error> for AppError {
+    fn from(e: crate::soap::Error) -> Self {
+        AppError::soap_internal(e)
+    }
 }

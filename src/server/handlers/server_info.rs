@@ -5,8 +5,9 @@ use crate::cvcert::{AccessRight, AccessRights, CvCertificate};
 use crate::domain::models::eid::{Operations, info::*};
 use crate::pki::identity::Material;
 use crate::pki::truststore::TrustStore;
+use crate::server::handlers::sign_config;
 use crate::server::{AppState, errors::AppError};
-use crate::soap::Envelope;
+use crate::soap::{Envelope, sign_envelope};
 
 const MAJOR: u8 = 2;
 const MINOR: u8 = 4;
@@ -24,7 +25,7 @@ pub async fn handle_get_server_info<T: TrustStore>(
     state: AppState<T>,
     _envelope: Envelope<GetServerInfoRequest>,
 ) -> Result<String, AppError> {
-    let identity = state.service.identity;
+    let identity = &state.service.identity;
     let term_cvc_data = identity
         .get(Material::TermCvc)
         .await
@@ -47,7 +48,8 @@ pub async fn handle_get_server_info<T: TrustStore>(
         },
     };
 
-    let result = Envelope::new(resp).serialize_soap(true);
+    let env = Envelope::new(resp);
+    let result = sign_envelope(env, sign_config(&state).await?);
     result.map_err(AppError::soap_internal)
 }
 
