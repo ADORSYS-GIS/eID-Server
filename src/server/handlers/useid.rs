@@ -9,12 +9,13 @@ use crate::domain::models::{
     eid::{PreSharedKey, Session, UseIDRequest, UseIDResponse},
 };
 use crate::pki::truststore::TrustStore;
+use crate::server::handlers::sign_config;
 use crate::server::{
     AppState,
     errors::{AppError, EidError},
 };
 use crate::session::{SessionData, SessionError};
-use crate::soap::Envelope;
+use crate::soap::{Envelope, sign_envelope};
 
 #[derive(Debug, Serialize, Validate)]
 struct UseIDResp {
@@ -56,7 +57,7 @@ pub async fn handle_useid<T: TrustStore>(
         .insert(&*id, session_data)
         .await
     {
-        Ok(_) => build_response(id, key),
+        Ok(_) => build_response(&state, id, key).await,
         Err(SessionError::MaxSessions) => Err(EidError::TooManyOpenSessions.into()),
         Err(e) => Err(AppError::soap_internal(e)),
     }
@@ -85,7 +86,11 @@ fn validate_request(body: &UseIDRequest) -> Result<(), AppError> {
     Ok(())
 }
 
-fn build_response(session_id: String, psk: Vec<u8>) -> Result<String, AppError> {
+async fn build_response<T: TrustStore>(
+    state: &AppState<T>,
+    session_id: String,
+    psk: Vec<u8>,
+) -> Result<String, AppError> {
     let resp = UseIDResp {
         value: UseIDResponse {
             session: Session {
@@ -100,6 +105,7 @@ fn build_response(session_id: String, psk: Vec<u8>) -> Result<String, AppError> 
         },
     };
     resp.validate().map_err(AppError::soap_internal)?;
-    let result = Envelope::new(resp).serialize_soap(true);
+    let env = Envelope::new(resp);
+    let result = sign_envelope(env, sign_config(state).await?);
     result.map_err(AppError::soap_internal)
 }

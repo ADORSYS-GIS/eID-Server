@@ -3,10 +3,12 @@ mod de;
 mod ser;
 #[cfg(test)]
 mod tests;
+mod wsse;
 
 pub use config::XmlConfig;
 pub use de::from_str;
 pub use ser::to_string;
+pub use wsse::*;
 
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +20,7 @@ pub mod ns {
     pub const DSS: &str = "urn:oasis:names:tc:dss:1.0:core:schema";
     pub const WSA: &str = "http://www.w3.org/2005/03/addressing";
     pub const XSI: &str = "http://www.w3.org/2001/XMLSchema-instance";
+    pub use crate::soap::wsse::ns::*;
 }
 
 pub mod prefix {
@@ -27,6 +30,9 @@ pub mod prefix {
     pub const DSS: &str = "dss";
     pub const WSA: &str = "wsa";
     pub const XSI: &str = "xsi";
+    pub const WSSE: &str = "wsse";
+    pub const WSU: &str = "wsu";
+    pub const DS: &str = "ds";
 }
 
 /// A SOAP envelope
@@ -88,7 +94,10 @@ impl<T: Serialize> Envelope<T> {
         let config = conf
             .namespace(prefix::SOAP_ENV, ns::SOAP_ENV)
             .namespace(prefix::EID, ns::EID)
-            .namespace(prefix::DSS, ns::DSS);
+            .namespace(prefix::DSS, ns::DSS)
+            .namespace(prefix::WSSE, ns::WSSE)
+            .namespace(prefix::WSU, ns::WSU)
+            .namespace(prefix::DS, ns::DS);
 
         let env = SoapEnvRef(self);
         to_string(&config, &env)
@@ -124,6 +133,10 @@ pub struct Header {
     #[serde(default)]
     #[serde(rename(serialize = "wsa:MessageID", deserialize = "MessageID"))]
     pub message_id: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename(serialize = "wsse:Security", deserialize = "Security"))]
+    pub security: Option<WsSecurity>,
 }
 
 /// Represents a SOAP body
