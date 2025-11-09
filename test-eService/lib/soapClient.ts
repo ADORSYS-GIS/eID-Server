@@ -8,7 +8,7 @@ import type {
   UseIDResponse,
   GetResultResponse,
   GetServerInfoResponse,
-} from "@/types/eid";
+} from "../types/eid";
 
 export class SOAPError extends Error {
   public resultMajor?: string;
@@ -53,7 +53,7 @@ export class SOAPClient {
       enabled?: boolean;
       privateKey?: string | Buffer;
       certificate?: string | Buffer;
-      trustedCertsDir?: string; // Add trustedCertsDir for verification
+      trustedCertsDir?: string;
       policy?: WSSecurityPolicy;
     },
   ) {
@@ -216,7 +216,8 @@ export class SOAPClient {
 
     this.builder = new XMLBuilder({
       ignoreAttributes: false,
-      format: true,
+      format: false,
+      suppressEmptyNode: true,
     });
   }
 
@@ -347,17 +348,29 @@ export class SOAPClient {
       const response = await this.client.post(this.eidServerUrl, soapRequest);
       const parsed = this.parser.parse(response.data);
 
-      // Verify WS-Security signature if enabled
-      if (this.wsSecurityEnabled && this.wsSecurityUtils) {
+      // Verify WS-Security signature if enabled and not a SOAP fault
+      if (
+        this.wsSecurityEnabled &&
+        this.wsSecurityUtils &&
+        !parsed.Envelope?.Body?.ResultMajor?.includes("error")
+      ) {
         try {
-          const isVerified = this.wsSecurityUtils.verifySOAPEnvelope(response.data);
+          const isVerified =
+            this.wsSecurityUtils.verifySOAPEnvelope(response.data);
           if (!isVerified) {
-            throw new WSSecurityError("useID response signature verification failed.");
+            throw new WSSecurityError(
+              "useID response signature verification failed.",
+            );
           }
           console.log("✅ useID response signature verified.");
         } catch (error: any) {
-          console.error("❌ Failed to verify useID response signature:", error.message);
-          throw new Error(`WS-Security verification failed: ${error.message}`);
+          console.error(
+            "❌ Failed to verify useID response signature:",
+            error.message,
+          );
+          throw new Error(
+            `WS-Security verification failed: ${error.message}`,
+          );
         }
       }
 
@@ -416,21 +429,33 @@ export class SOAPClient {
 
     try {
       const response = await this.client.post(this.eidServerUrl, soapRequest);
-      // Verify WS-Security signature if enabled
-      if (this.wsSecurityEnabled && this.wsSecurityUtils) {
+      const parsed = this.parser.parse(response.data);
+
+      // Verify WS-Security signature if enabled and not a SOAP fault
+      if (
+        this.wsSecurityEnabled &&
+        this.wsSecurityUtils &&
+        !parsed.Envelope?.Body?.ResultMajor?.includes("error")
+      ) {
         try {
-          const isVerified = this.wsSecurityUtils.verifySOAPEnvelope(response.data);
+          const isVerified =
+            this.wsSecurityUtils.verifySOAPEnvelope(response.data);
           if (!isVerified) {
-            throw new WSSecurityError("getResult response signature verification failed.");
+            throw new WSSecurityError(
+              "getResult response signature verification failed.",
+            );
           }
           console.log("✅ getResult response signature verified.");
         } catch (error: any) {
-          console.error("❌ Failed to verify getResult response signature:", error.message);
-          throw new Error(`WS-Security verification failed: ${error.message}`);
+          console.error(
+            "❌ Failed to verify getResult response signature:",
+            error.message,
+          );
+          throw new Error(
+            `WS-Security verification failed: ${error.message}`,
+          );
         }
       }
-
-      const parsed = this.parser.parse(response.data);
 
       console.log(
         "Received getResult response:",
@@ -538,21 +563,33 @@ export class SOAPClient {
 
     try {
       const response = await this.client.post(this.eidServerUrl, soapRequest);
-      // Verify WS-Security signature if enabled
-      if (this.wsSecurityEnabled && this.wsSecurityUtils) {
+      const parsed = this.parser.parse(response.data);
+
+      // Verify WS-Security signature if enabled and not a SOAP fault
+      if (
+        this.wsSecurityEnabled &&
+        this.wsSecurityUtils &&
+        !parsed.Envelope?.Body?.ResultMajor?.includes("error")
+      ) {
         try {
-          const isVerified = this.wsSecurityUtils.verifySOAPEnvelope(response.data);
+          const isVerified =
+            this.wsSecurityUtils.verifySOAPEnvelope(response.data);
           if (!isVerified) {
-            throw new WSSecurityError("getServerInfo response signature verification failed.");
+            throw new WSSecurityError(
+              "getServerInfo response signature verification failed.",
+            );
           }
           console.log("✅ getServerInfo response signature verified.");
         } catch (error: any) {
-          console.error("❌ Failed to verify getServerInfo response signature:", error.message);
-          throw new Error(`WS-Security verification failed: ${error.message}`);
+          console.error(
+            "❌ Failed to verify getServerInfo response signature:",
+            error.message,
+          );
+          throw new Error(
+            `WS-Security verification failed: ${error.message}`,
+          );
         }
       }
-
-      const parsed = this.parser.parse(response.data);
 
       console.log(
         "Received getServerInfo response:",
