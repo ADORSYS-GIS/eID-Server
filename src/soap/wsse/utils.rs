@@ -93,18 +93,16 @@ where
 
                     // Collect existing namespace declarations in the target element
                     let mut existing_namespaces: HashMap<String, String> = HashMap::new();
-                    for attr in target_elem.attributes().with_checks(false) {
-                        if let Ok(attr) = attr {
-                            let key = attr.key.as_ref();
-                            if key == b"xmlns" {
-                                if let Ok(value) = attr.unescape_value() {
-                                    existing_namespaces.insert(String::new(), value.to_string());
-                                }
-                            } else if key.starts_with(b"xmlns:") {
-                                let prefix = String::from_utf8_lossy(&key[6..]).to_string();
-                                if let Ok(value) = attr.unescape_value() {
-                                    existing_namespaces.insert(prefix, value.to_string());
-                                }
+                    for attr in target_elem.attributes().with_checks(false).flatten() {
+                        let key = attr.key.as_ref();
+                        if key == b"xmlns" {
+                            if let Ok(value) = attr.unescape_value() {
+                                existing_namespaces.insert(String::new(), value.to_string());
+                            }
+                        } else if key.starts_with(b"xmlns:") {
+                            let prefix = String::from_utf8_lossy(&key[6..]).to_string();
+                            if let Ok(value) = attr.unescape_value() {
+                                existing_namespaces.insert(prefix, value.to_string());
                             }
                         }
                     }
@@ -126,18 +124,16 @@ where
                     writer.write_event(Event::Start(e))?;
                 } else {
                     // Collect namespace declarations from parent elements
-                    for attr in e.attributes().with_checks(false) {
-                        if let Ok(attr) = attr {
-                            let key = attr.key.as_ref();
-                            if key == b"xmlns" {
-                                if let Ok(value) = attr.unescape_value() {
-                                    parent_namespaces.insert(String::new(), value.to_string());
-                                }
-                            } else if key.starts_with(b"xmlns:") {
-                                let prefix = String::from_utf8_lossy(&key[6..]).to_string();
-                                if let Ok(value) = attr.unescape_value() {
-                                    parent_namespaces.insert(prefix, value.to_string());
-                                }
+                    for attr in e.attributes().with_checks(false).flatten() {
+                        let key = attr.key.as_ref();
+                        if key == b"xmlns" {
+                            if let Ok(value) = attr.unescape_value() {
+                                parent_namespaces.insert(String::new(), value.to_string());
+                            }
+                        } else if key.starts_with(b"xmlns:") {
+                            let prefix = String::from_utf8_lossy(&key[6..]).to_string();
+                            if let Ok(value) = attr.unescape_value() {
+                                parent_namespaces.insert(prefix, value.to_string());
                             }
                         }
                     }
