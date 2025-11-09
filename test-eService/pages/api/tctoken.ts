@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from "next";
 import { XMLBuilder } from "fast-xml-parser";
 import { sessionManager } from "@/lib/sessionManager";
 import { SOAPClient } from "@/lib/soapClient";
+import fs from "fs";
 
 export default async function handler(
   req: NextApiRequest,
@@ -52,11 +53,24 @@ export default async function handler(
         ca: process.env.EID_SERVER_CA,
       };
 
-      // Configure WS-Security options (reuse existing certificates if enabled)
+      // Read certificate and key from file paths. Ensure paths are configured.
+      if (!process.env.HTTPS_KEY_PATH || !process.env.HTTPS_CERT_PATH) {
+        throw new Error(
+          "Missing HTTPS_KEY_PATH or HTTPS_CERT_PATH environment variables for WS-Security",
+        );
+      }
+      const privateKey = fs.readFileSync(process.env.HTTPS_KEY_PATH, "utf-8");
+      const certificate = fs.readFileSync(
+        process.env.HTTPS_CERT_PATH,
+        "utf-8",
+      );
+
+      // Configure WS-Security options
       const wsSecurityOptions = {
         enabled: process.env.WS_SECURITY_ENABLED === "true",
-        privateKey: process.env.EID_SERVER_KEY_PATH || process.env.EID_SERVER_KEY,
-        certificate: process.env.EID_SERVER_CERT_PATH || process.env.EID_SERVER_CERT,
+        privateKey: privateKey,
+        certificate: certificate,
+        trustedCertsDir: "./certs/", // Directory with trusted certificates for response verification
       };
 
       const soapClient = new SOAPClient(eidServerUrl, tlsOptions, wsSecurityOptions);
