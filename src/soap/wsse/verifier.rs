@@ -26,7 +26,7 @@ pub async fn verify_envelope<T: TrustStore>(envelope_xml: &str, truststore: &T) 
 
     // Extract and canonicalize SignedInfo
     let signed_info_xml = utils::extract_element(&security_xml, "SignedInfo")?;
-    let signed_info_c14n = c14n::canonicalize(&signed_info_xml)?;
+    let signed_info_c14n = c14n::canonicalize(&signed_info_xml, None)?;
 
     // Get certificate info
     let issuer_serial = &signature
@@ -37,14 +37,14 @@ pub async fn verify_envelope<T: TrustStore>(envelope_xml: &str, truststore: &T) 
 
     // Find certificate in truststore
     let cert_entry = truststore
-        .get_cert_by_issuer(&issuer_serial.issuer_name)
+        .get_cert_by_serial(&issuer_serial.serial_number)
         .await?
         .ok_or_else(|| Error::Invalid("Certificate not found in truststore".into()))?;
 
-    if cert_entry.serial_number != issuer_serial.serial_number {
+    if cert_entry.issuer != issuer_serial.issuer_name {
         return Err(Error::Invalid(format!(
-            "Certificate serial number mismatch: expected {}, got {}",
-            cert_entry.serial_number, issuer_serial.serial_number
+            "Certificate issuer name mismatch: expected {}, got {}",
+            cert_entry.issuer, issuer_serial.issuer_name
         )));
     }
 
@@ -78,10 +78,7 @@ fn verify_references(envelope_xml: &str, references: &[Reference]) -> Result<()>
             .strip_prefix('#')
             .ok_or_else(|| Error::Invalid(format!("Invalid reference URI: {}", reference.uri)))?;
 
-        // Extract referenced element
         let element_xml = utils::extract_element_by_id(envelope_xml, id)?;
-
-        // Apply transforms
         let transformed = apply_transforms(&element_xml, &reference.transforms)?;
 
         // Compute digest
@@ -113,7 +110,15 @@ fn apply_transforms(data: &str, transforms: &Option<Transforms>) -> Result<Strin
     if let Some(transforms) = transforms {
         for transform in &transforms.transform {
             result = match transform.algorithm.as_str() {
-                algorithms::EXCLUSIVE_C14N => c14n::canonicalize(&result)?,
+                algorithms::EXCLUSIVE_C14N => {
+                    if let Some(ref inclusive_ns) = transform.inclusive_ns {
+                        let prefixes: Vec<&str> =
+                            inclusive_ns.prefix_list.split_whitespace().collect();
+                        c14n::canonicalize(data, Some(&prefixes))?
+                    } else {
+                        c14n::canonicalize(data, None)?
+                    }
+                }
                 alg => return Err(Error::Invalid(format!("Unsupported transform: {alg}"))),
             };
         }
