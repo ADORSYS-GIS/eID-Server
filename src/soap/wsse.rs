@@ -8,7 +8,7 @@ mod utils;
 mod verifier;
 
 pub use error::Error;
-pub use signer::{SignConfig, sign_envelope}; 
+pub use signer::{SignConfig, sign_envelope};
 pub use verifier::verify_envelope;
 
 use crate::soap::wsse::timestamp::Timestamp;
