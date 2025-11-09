@@ -874,7 +874,9 @@ function DataField({ label, value, icon }: DataFieldProps) {
         {icon}
         <span className="text-sm font-medium text-gray-600">{label}</span>
       </div>
-      <p className="text-lg font-semibold text-gray-900">{value}</p>
+      <p className="text-lg font-semibold text-gray-900 overflow-wrap-break-word">
+        {value}
+      </p>
     </div>
   );
 }
