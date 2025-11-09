@@ -2,7 +2,6 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 import { SignedXml } from "xml-crypto";
 import { DOMParser, XMLSerializer } from "xmldom";
-import * as forge from "node-forge";
 
 export interface WSSecurityOptions {
   privateKey: string | Buffer;
@@ -80,7 +79,7 @@ export class WSSecurityUtils {
 
     this.trustedCertsDir = options.trustedCertsDir;
 
-    this.policy = options.policy || this.getDefaultPolicy();
+    this.policy = { ...this.getDefaultPolicy(), ...options.policy };
   }
 
   private getDefaultPolicy(): WSSecurityPolicy {
@@ -169,11 +168,10 @@ export class WSSecurityUtils {
       body.setAttributeNS(this.utilityNamespace, "wsu:Id", bodyId);
 
       signedXml.addReference({
-        xpath: `//*[local-name()='Body']`,
+        xpath: `//*[local-name()='Body' and namespace-uri()='${this.soapenvNamespace}']`,
         transforms: ["http://www.w3.org/2001/10/xml-exc-c14n#"],
         digestAlgorithm: digestAlgorithm,
         uri: `#${bodyId}`,
-        inclusiveNamespacesPrefixList: ["wsu"],
       });
 
       // Add reference to the Timestamp if it exists
@@ -190,19 +188,10 @@ export class WSSecurityUtils {
         // Get issuer and serial from the certificate
         const { issuer, serialNumber } = this.getCertificateIssuerSerial();
 
-        return `<KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
-          <wsse:SecurityTokenReference xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
-            <X509Data>
-              <X509IssuerSerial>
-                <X509IssuerName>${issuer}</X509IssuerName>
-                <X509SerialNumber>${serialNumber}</X509SerialNumber>
-              </X509IssuerSerial>
-            </X509Data>
-          </wsse:SecurityTokenReference>
-        </KeyInfo>`;
+        return `<wsse:SecurityTokenReference xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"><ds:X509Data><ds:X509IssuerSerial><ds:X509IssuerName>${issuer}</ds:X509IssuerName><ds:X509SerialNumber>${serialNumber}</ds:X509SerialNumber></ds:X509IssuerSerial></ds:X509Data></wsse:SecurityTokenReference>`;
       };
 
-      // Compute signature - use the document directly
+      // Compute signature
       const xmlString = new XMLSerializer().serializeToString(doc);
       signedXml.computeSignature(xmlString, {
         prefix: "ds",
@@ -270,49 +259,56 @@ export class WSSecurityUtils {
         throw new WSSecurityError("Failed to parse signed SOAP envelope");
       }
 
-      const signedXml = new SignedXml();
+      // Get the certificate to use for verification
+      let verificationCert = this.certificate;
+      if (this.verificationCertificate) {
+        verificationCert = this.verificationCertificate;
+      } else if (this.trustedCertsDir) {
+        // Try to find the certificate by issuer/serial from the signature
+        const signatureElement = doc.documentElement.getElementsByTagNameNS(
+          "http://www.w3.org/2000/09/xmldsig#",
+          "Signature"
+        )[0];
 
-      // KeyInfo Provider for verification
-      (signedXml as any).keyInfoProvider = {
-        getKeyInfo: (keyInfo: Element) => {
-          return keyInfo;
-        },
-        getKey: (keyInfo: Element) => {
-          const x509IssuerSerialElement = keyInfo.getElementsByTagNameNS(
+        if (signatureElement) {
+          const keyInfo = signatureElement.getElementsByTagNameNS(
             "http://www.w3.org/2000/09/xmldsig#",
-            "X509IssuerSerial"
+            "KeyInfo"
           )[0];
-          if (x509IssuerSerialElement) {
-            const issuerName = x509IssuerSerialElement.getElementsByTagNameNS(
-              "http://www.w3.org/2000/09/xmldsig#",
-              "X509IssuerName"
-            )[0]?.textContent;
-            const serialNumber = x509IssuerSerialElement.getElementsByTagNameNS(
-              "http://www.w3.org/2000/09/xmldsig#",
-              "X509SerialNumber"
-            )[0]?.textContent;
 
-            if (issuerName && serialNumber && this.trustedCertsDir) {
-              try {
+          if (keyInfo) {
+            const x509IssuerSerial = keyInfo.getElementsByTagNameNS(
+              "http://www.w3.org/2000/09/xmldsig#",
+              "X509IssuerSerial"
+            )[0];
+
+            if (x509IssuerSerial) {
+              const issuerName = x509IssuerSerial.getElementsByTagNameNS(
+                "http://www.w3.org/2000/09/xmldsig#",
+                "X509IssuerName"
+              )[0]?.textContent;
+              const serialNumber = x509IssuerSerial.getElementsByTagNameNS(
+                "http://www.w3.org/2000/09/xmldsig#",
+                "X509SerialNumber"
+              )[0]?.textContent;
+
+              if (issuerName && serialNumber) {
                 const trustedCert = this.loadCertificateByIssuerSerial(
                   issuerName,
                   serialNumber
                 );
                 if (trustedCert) {
-                  return trustedCert; // Return the public key of the trusted certificate
+                  verificationCert = trustedCert;
                 }
-              } catch (error) {
-                console.warn(
-                  `Failed to load trusted certificate for IssuerSerial: ${issuerName}, ${serialNumber}`,
-                  error
-                );
               }
             }
           }
-          // Fallback: if dynamic loading fails, use the pre-configured verificationCertificate or client's own cert
-          return this.verificationCertificate || this.certificate;
-        },
-      };
+        }
+      }
+
+      const signedXml = new SignedXml({
+        publicCert: verificationCert
+      });
 
       // Verify signature
       const signatureElement = doc.documentElement.getElementsByTagNameNS(
@@ -328,7 +324,6 @@ export class WSSecurityUtils {
       const result = signedXml.checkSignature(signedSoapEnvelope);
 
       if (!result) {
-        // Explicitly cast signedXml to any to access validationErrors if TypeScript complains
         console.error(
           "Signature verification failed:",
           (signedXml as any).validationErrors
@@ -407,22 +402,13 @@ export class WSSecurityUtils {
     serialNumber: string;
   } {
     try {
-      const pki = forge.pki;
-      const cert = pki.certificateFromPem(this.certificate);
+      const cert = new crypto.X509Certificate(this.certificate);
 
-      const issuer = (cert.issuer.attributes as forge.pki.Attribute[])
-        .map((attr) => {
-          const name = attr.shortName || attr.type || "";
-          const value = attr.value || "";
-          return `${name.toUpperCase()}=${value}`;
-        })
-        .join(", ");
+      const issuer = cert.issuer.split('\n').join(', ');
+      // Convert serial number from hex to decimal string
+      const serialNumber = BigInt(`0x${cert.serialNumber}`).toString();
 
-      // Convert hex serial number to decimal for XML Digital Signature compliance
-      const hexSerialNumber = cert.serialNumber;
-      const decimalSerialNumber = BigInt("0x" + hexSerialNumber).toString();
-
-      return { issuer, serialNumber: decimalSerialNumber };
+      return { issuer, serialNumber };
     } catch (error: any) {
       throw new WSSecurityError(
         `Failed to parse certificate for issuer serial: ${error.message}`
@@ -448,28 +434,16 @@ export class WSSecurityUtils {
           const certPath = `${this.trustedCertsDir}/${file}`;
           const certContent = fs.readFileSync(certPath, "utf-8");
           try {
-            const pki = forge.pki;
-            const cert = pki.certificateFromPem(certContent);
-            const certIssuer = (cert.issuer.attributes as forge.pki.Attribute[])
-              .map((attr) => {
-                const name = attr.shortName || attr.type || "";
-                const value = attr.value || "";
-                return `${name.toUpperCase()}=${value}`;
-              })
-              .join(", ");
-
-            // Convert hex serial number to decimal for comparison
-            const certHexSerialNumber = cert.serialNumber;
-            const certDecimalSerialNumber = BigInt(
-              "0x" + certHexSerialNumber
-            ).toString();
+            const cert = new crypto.X509Certificate(certContent);
+            const certIssuer = cert.issuer.split('\n').join(', ');
+            const certSerialNumber = BigInt(`0x${cert.serialNumber}`).toString();
 
             if (
               certIssuer === issuerName &&
-              certDecimalSerialNumber === serialNumber
+              certSerialNumber === serialNumber
             ) {
               console.log(`✅ Found matching trusted certificate: ${file}`);
-              return certContent; // Return the PEM encoded certificate
+              return certContent;
             }
           } catch (parseError) {
             console.warn(`Failed to parse certificate ${file}:`, parseError);
