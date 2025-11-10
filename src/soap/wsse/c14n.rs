@@ -7,8 +7,8 @@ use std::str;
 
 use crate::soap::wsse::{Error, Result};
 
-/// Perform Exclusive XML Canonicalization
-pub fn canonicalize(xml: impl AsRef<str>) -> Result<String> {
+/// Perform Exclusive XML Canonicalization with optional inclusive namespaces
+pub fn canonicalize(xml: impl AsRef<str>, inclusive_ns: Option<&[&str]>) -> Result<String> {
     let mut reader = Reader::from_str(xml.as_ref());
     reader.config_mut().trim_text(false);
     reader.config_mut().expand_empty_elements = true;
@@ -29,10 +29,11 @@ pub fn canonicalize(xml: impl AsRef<str>) -> Result<String> {
                     &e,
                     &mut ns_declared_stack,
                     &mut ns_rendered_stack,
+                    inclusive_ns,
                 )?;
             }
             Ok(Event::End(e)) => {
-                writer.write_event(Event::End(e.to_owned()))?;
+                writer.write_event(Event::End(e))?;
                 ns_declared_stack.pop();
                 ns_rendered_stack.pop();
             }
@@ -47,6 +48,9 @@ pub fn canonicalize(xml: impl AsRef<str>) -> Result<String> {
                 let normalized = normalize_line_endings(&v);
                 let esc = escape_text_value(&normalized)?;
                 writer.write_event(Event::Text(BytesText::from_escaped(esc)))?;
+            }
+            Ok(Event::GeneralRef(e)) => {
+                writer.write_event(Event::GeneralRef(e))?;
             }
             Ok(Event::Eof) => break,
             Ok(_) => {}
@@ -124,6 +128,7 @@ fn handle_start<W: std::io::Write>(
     e: &BytesStart,
     ns_declared_stack: &mut Vec<BTreeMap<Vec<u8>, Vec<u8>>>,
     ns_rendered_stack: &mut Vec<BTreeMap<Vec<u8>, Vec<u8>>>,
+    inclusive_namespaces: Option<&[&str]>,
 ) -> Result<()> {
     // Get parent context
     let parent_declared = ns_declared_stack.last().cloned().unwrap_or_default();
@@ -174,6 +179,15 @@ fn handle_start<W: std::io::Write>(
             // xml: prefix is never rendered as it's implicitly bound
             if prefix != b"xml" {
                 visibly_utilized.insert(prefix);
+            }
+        }
+    }
+
+    // Add inclusive namespaces to visibly utilized set
+    if let Some(prefixes) = inclusive_namespaces {
+        for prefix_str in prefixes {
+            if current_declared.contains_key(prefix_str.as_bytes()) {
+                visibly_utilized.insert(prefix_str.as_bytes().to_vec());
             }
         }
     }
@@ -272,14 +286,14 @@ mod tests {
     #[test]
     fn test_basic_canonicalization() {
         let xml = r#"<root><child attr="value">text</child></root>"#;
-        let result = canonicalize(xml).unwrap();
+        let result = canonicalize(xml, None).unwrap();
         assert_eq!(result, r#"<root><child attr="value">text</child></root>"#);
     }
 
     #[test]
     fn test_attribute_escaping() {
         let xml = r#"<root attr="&lt;&quot;&#x9;&#xA;&#xD;">text</root>"#;
-        let result = canonicalize(xml).unwrap();
+        let result = canonicalize(xml, None).unwrap();
         assert!(result.contains("&lt;&quot;&#x9;&#xA;&#xD;"));
     }
 
@@ -287,7 +301,7 @@ mod tests {
     fn test_namespace_not_duplicated() {
         // Namespace declared on root should not be re-rendered on child
         let xml = r#"<root xmlns="http://example.com"><child>text</child></root>"#;
-        let result = canonicalize(xml).unwrap();
+        let result = canonicalize(xml, None).unwrap();
 
         let count = result.matches(r#"xmlns="http://example.com""#).count();
         assert_eq!(count, 1);
@@ -304,7 +318,7 @@ mod tests {
     fn test_inclusive_prefixes() {
         // With exclusive mode, 'a' namespace should not appear on child
         let xml = r#"<root xmlns:a="http://a.com"><child>text</child></root>"#;
-        let result = canonicalize(xml).unwrap();
+        let result = canonicalize(xml, None).unwrap();
         let child_part = result.split("<child").nth(1).unwrap();
         assert!(!child_part.starts_with(" xmlns:a"));
     }
@@ -312,7 +326,7 @@ mod tests {
     #[test]
     fn test_prefix_utilized_by_element() {
         let xml = r#"<root xmlns:a="http://a.com"><a:child>text</a:child></root>"#;
-        let result = canonicalize(xml).unwrap();
+        let result = canonicalize(xml, None).unwrap();
         // The 'a' prefix should be rendered on the child element because it's used
         assert!(result.contains(r#"<a:child xmlns:a="http://a.com""#));
     }
@@ -320,8 +334,20 @@ mod tests {
     #[test]
     fn test_prefix_utilized_by_attribute() {
         let xml = r#"<root xmlns:a="http://a.com"><child a:attr="value">text</child></root>"#;
-        let result = canonicalize(xml).unwrap();
+        let result = canonicalize(xml, None).unwrap();
         // The 'a' prefix should be rendered on the child element because it's used by attribute
         assert!(result.contains(r#"<child xmlns:a="http://a.com""#));
+    }
+
+    #[test]
+    fn test_inclusive_namespaces_with_prefix_list() {
+        // Test case for inclusive namespaces with PrefixList
+        let xml =
+            r#"<root xmlns:a="http://a.com" xmlns:b="http://b.com"><child>text</child></root>"#;
+        let result = canonicalize(xml, Some(&["a"])).unwrap();
+        // The 'a' prefix should be rendered on the child element due to inclusive namespaces
+        assert!(result.contains(r#"xmlns:a="http://a.com""#));
+        // The 'b' prefix should not be rendered as it's not in the inclusive list
+        assert!(!result.contains(r#"xmlns:b=""#));
     }
 }

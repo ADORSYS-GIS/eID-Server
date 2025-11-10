@@ -36,10 +36,8 @@ node_modules/
 # Next.js build output
 .next/
 
+# Session files
+.sessions
 
-# Ignore node_modules directory for the eID-service
-eID-service/node_modules/
-
-
-# Ignore eID-service node_modules
-eID-service/node_modules
+# Kilocode
+.kilocode

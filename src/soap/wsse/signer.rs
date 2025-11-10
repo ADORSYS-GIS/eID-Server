@@ -21,7 +21,11 @@ pub struct SignConfig {
 pub fn sign_envelope<T: Serialize>(env: Envelope<T>, config: SignConfig) -> Result<String> {
     let unsigned_env = env.serialize_soap(false)?;
     let body_id = format!("Body-{}", uuid::Uuid::new_v4());
+
+    // Sign the envelope content
     let ws_security = sign_inner(&unsigned_env, &body_id, config)?;
+
+    // Add the security header to the envelope
     let header = Header {
         message_id: None,
         relates_to: None,
@@ -29,25 +33,35 @@ pub fn sign_envelope<T: Serialize>(env: Envelope<T>, config: SignConfig) -> Resu
     };
     let security_env = env.with_header(header);
     let security_env_xml = security_env.serialize_soap(false)?;
-    utils::add_body_id_to_envelope(&security_env_xml, &body_id)
+
+    // Add the body ID to the envelope
+    utils::insert_attributes(&security_env_xml, "Body", vec![("wsu:Id", &body_id)])
 }
 
 /// Sign the envelope and returns the WS-Security header
-fn sign_inner(xml: impl AsRef<str>, body_id: &str, config: SignConfig) -> Result<WsSecurity> {
+fn sign_inner(xml: &str, body_id: &str, config: SignConfig) -> Result<WsSecurity> {
+    use crate::soap::wsse::ns;
     use quick_xml::se::to_string_with_root as xml_to_string;
 
     // Parse certificate to extract issuer and serial number
     let cert = CertificateEntry::from_der(&config.certificate)?;
 
+    // create timestamp
     let timestamp_id = format!("TS-{}", uuid::Uuid::new_v4());
-
-    // Canonicalize timestamp and body elements
     let timestamp = Timestamp::new(timestamp_id.clone(), config.timestamp_ttl)?;
-    let modified_envelope = utils::add_body_id_to_envelope(xml.as_ref(), body_id)?;
+
+    // Add Body ID to the envelope first, needed for extraction
+    let modified_envelope = utils::insert_attributes(xml, "Body", vec![("wsu:Id", body_id)])?;
+
+    // Canonicalize timestamp
     let timestamp_xml = xml_to_string("wsu:Timestamp", &timestamp)?;
+    let timestamp_xml =
+        utils::insert_attributes(&timestamp_xml, "Timestamp", vec![("xmlns:wsu", ns::WSU)])?;
+    let timestamp_c14n = c14n::canonicalize(&timestamp_xml, None)?;
+
+    // Canonicalize body
     let body_xml = utils::extract_element(&modified_envelope, "Body")?;
-    let timestamp_c14n = c14n::canonicalize(&timestamp_xml)?;
-    let body_c14n = c14n::canonicalize(&body_xml)?;
+    let body_c14n = c14n::canonicalize(&body_xml, None)?;
 
     let timestamp_digest = HashAlg::Sha256.hash(timestamp_c14n.as_bytes())?;
     let body_digest = HashAlg::Sha256.hash(body_c14n.as_bytes())?;
@@ -57,6 +71,7 @@ fn sign_inner(xml: impl AsRef<str>, body_id: &str, config: SignConfig) -> Result
         transforms: Some(Transforms {
             transform: vec![Transform {
                 algorithm: algorithms::EXCLUSIVE_C14N.into(),
+                inclusive_ns: None,
             }],
         }),
         digest_method: DigestMethod {
@@ -70,6 +85,7 @@ fn sign_inner(xml: impl AsRef<str>, body_id: &str, config: SignConfig) -> Result
         transforms: Some(Transforms {
             transform: vec![Transform {
                 algorithm: algorithms::EXCLUSIVE_C14N.into(),
+                inclusive_ns: None,
             }],
         }),
         digest_method: DigestMethod {
@@ -90,7 +106,9 @@ fn sign_inner(xml: impl AsRef<str>, body_id: &str, config: SignConfig) -> Result
 
     // Serialize and canonicalize SignedInfo
     let signed_info_xml = xml_to_string("ds:SignedInfo", &signed_info)?;
-    let signed_info_c14n = c14n::canonicalize(&signed_info_xml)?;
+    let signed_info_xml =
+        utils::insert_attributes(&signed_info_xml, "SignedInfo", vec![("xmlns:ds", ns::DS)])?;
+    let signed_info_c14n = c14n::canonicalize(&signed_info_xml, None)?;
 
     // Sign the canonicalized SignedInfo
     let signature = rsa::sign(
