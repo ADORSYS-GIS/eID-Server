@@ -60,20 +60,21 @@ export default async function handler(
         );
       }
       const privateKey = fs.readFileSync(process.env.HTTPS_KEY_PATH, "utf-8");
-      const certificate = fs.readFileSync(
-        process.env.HTTPS_CERT_PATH,
-        "utf-8",
-      );
+      const certificate = fs.readFileSync(process.env.HTTPS_CERT_PATH, "utf-8");
 
       // Configure WS-Security options
       const wsSecurityOptions = {
         enabled: process.env.WS_SECURITY_ENABLED === "true",
         privateKey: privateKey,
         certificate: certificate,
-        trustedCertsDir: "./certs/", // Directory with trusted certificates for response verification
+        trustedCertsDir: "./certs/",
       };
 
-      const soapClient = new SOAPClient(eidServerUrl, tlsOptions, wsSecurityOptions);
+      const soapClient = new SOAPClient(
+        eidServerUrl,
+        tlsOptions,
+        wsSecurityOptions,
+      );
 
       // Call useID on eID-Server
       console.log("Calling useID with config for token:", token);
@@ -127,7 +128,7 @@ export default async function handler(
     // Build TC Token XML
     const builder = new XMLBuilder({
       ignoreAttributes: false,
-      format: false, // No formatting for TC Token
+      format: false,
       suppressEmptyNode: true,
     });
 

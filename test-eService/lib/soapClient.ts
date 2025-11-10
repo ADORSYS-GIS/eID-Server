@@ -2,7 +2,12 @@ import axios, { AxiosInstance } from "axios";
 import https from "https";
 import fs from "fs";
 import { XMLParser, XMLBuilder } from "fast-xml-parser";
-import { WSSecurityUtils, WSSecurityOptions, WSSecurityPolicy, WSSecurityError } from "./wsSecurity";
+import {
+  WSSecurityUtils,
+  WSSecurityOptions,
+  WSSecurityPolicy,
+  WSSecurityError,
+} from "./wsSecurity";
 import type {
   AuthenticationConfig,
   UseIDResponse,
@@ -141,7 +146,11 @@ export class SOAPClient {
     }
 
     // Initialize WS-Security if enabled
-    if (this.wsSecurityEnabled && wsSecurityOptions?.privateKey && wsSecurityOptions?.certificate) {
+    if (
+      this.wsSecurityEnabled &&
+      wsSecurityOptions?.privateKey &&
+      wsSecurityOptions?.certificate
+    ) {
       try {
         this.wsSecurityUtils = new WSSecurityUtils({
           privateKey: wsSecurityOptions.privateKey,
@@ -241,7 +250,7 @@ export class SOAPClient {
 
     const useOperations =
       request["soapenv:Envelope"]["soapenv:Body"]["eid:useIDRequest"][
-      "eid:UseOperations"
+        "eid:UseOperations"
       ];
 
     // Add all operations
@@ -355,8 +364,9 @@ export class SOAPClient {
         !parsed.Envelope?.Body?.ResultMajor?.includes("error")
       ) {
         try {
-          const isVerified =
-            this.wsSecurityUtils.verifySOAPEnvelope(response.data);
+          const isVerified = this.wsSecurityUtils.verifySOAPEnvelope(
+            response.data,
+          );
           if (!isVerified) {
             throw new WSSecurityError(
               "useID response signature verification failed.",
@@ -368,9 +378,7 @@ export class SOAPClient {
             "❌ Failed to verify useID response signature:",
             error.message,
           );
-          throw new Error(
-            `WS-Security verification failed: ${error.message}`,
-          );
+          throw new Error(`WS-Security verification failed: ${error.message}`);
         }
       }
 
@@ -438,8 +446,9 @@ export class SOAPClient {
         !parsed.Envelope?.Body?.ResultMajor?.includes("error")
       ) {
         try {
-          const isVerified =
-            this.wsSecurityUtils.verifySOAPEnvelope(response.data);
+          const isVerified = this.wsSecurityUtils.verifySOAPEnvelope(
+            response.data,
+          );
           if (!isVerified) {
             throw new WSSecurityError(
               "getResult response signature verification failed.",
@@ -451,9 +460,7 @@ export class SOAPClient {
             "❌ Failed to verify getResult response signature:",
             error.message,
           );
-          throw new Error(
-            `WS-Security verification failed: ${error.message}`,
-          );
+          throw new Error(`WS-Security verification failed: ${error.message}`);
         }
       }
 
@@ -554,7 +561,10 @@ export class SOAPClient {
         soapRequest = this.wsSecurityUtils.signSOAPEnvelope(soapRequest);
         console.log("🔏 getServerInfo request signed with WS-Security");
       } catch (error: any) {
-        console.error("❌ Failed to sign getServerInfo request:", error.message);
+        console.error(
+          "❌ Failed to sign getServerInfo request:",
+          error.message,
+        );
         throw new Error(`WS-Security signing failed: ${error.message}`);
       }
     }
@@ -572,8 +582,9 @@ export class SOAPClient {
         !parsed.Envelope?.Body?.ResultMajor?.includes("error")
       ) {
         try {
-          const isVerified =
-            this.wsSecurityUtils.verifySOAPEnvelope(response.data);
+          const isVerified = this.wsSecurityUtils.verifySOAPEnvelope(
+            response.data,
+          );
           if (!isVerified) {
             throw new WSSecurityError(
               "getServerInfo response signature verification failed.",
@@ -585,9 +596,7 @@ export class SOAPClient {
             "❌ Failed to verify getServerInfo response signature:",
             error.message,
           );
-          throw new Error(
-            `WS-Security verification failed: ${error.message}`,
-          );
+          throw new Error(`WS-Security verification failed: ${error.message}`);
         }
       }
 

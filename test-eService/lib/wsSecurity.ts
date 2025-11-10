@@ -159,7 +159,7 @@ export class WSSecurityUtils {
 
       const body = doc.documentElement.getElementsByTagNameNS(
         this.soapenvNamespace,
-        "Body"
+        "Body",
       )[0];
       if (!body) {
         throw new WSSecurityError("SOAP Body not found in the envelope.");
@@ -210,7 +210,7 @@ export class WSSecurityUtils {
         throw error;
       }
       throw new WSSecurityError(
-        `Failed to sign SOAP envelope: ${error.message}`
+        `Failed to sign SOAP envelope: ${error.message}`,
       );
     }
   }
@@ -267,35 +267,35 @@ export class WSSecurityUtils {
         // Try to find the certificate by issuer/serial from the signature
         const signatureElement = doc.documentElement.getElementsByTagNameNS(
           "http://www.w3.org/2000/09/xmldsig#",
-          "Signature"
+          "Signature",
         )[0];
 
         if (signatureElement) {
           const keyInfo = signatureElement.getElementsByTagNameNS(
             "http://www.w3.org/2000/09/xmldsig#",
-            "KeyInfo"
+            "KeyInfo",
           )[0];
 
           if (keyInfo) {
             const x509IssuerSerial = keyInfo.getElementsByTagNameNS(
               "http://www.w3.org/2000/09/xmldsig#",
-              "X509IssuerSerial"
+              "X509IssuerSerial",
             )[0];
 
             if (x509IssuerSerial) {
               const issuerName = x509IssuerSerial.getElementsByTagNameNS(
                 "http://www.w3.org/2000/09/xmldsig#",
-                "X509IssuerName"
+                "X509IssuerName",
               )[0]?.textContent;
               const serialNumber = x509IssuerSerial.getElementsByTagNameNS(
                 "http://www.w3.org/2000/09/xmldsig#",
-                "X509SerialNumber"
+                "X509SerialNumber",
               )[0]?.textContent;
 
               if (issuerName && serialNumber) {
                 const trustedCert = this.loadCertificateByIssuerSerial(
                   issuerName,
-                  serialNumber
+                  serialNumber,
                 );
                 if (trustedCert) {
                   verificationCert = trustedCert;
@@ -307,17 +307,17 @@ export class WSSecurityUtils {
       }
 
       const signedXml = new SignedXml({
-        publicCert: verificationCert
+        publicCert: verificationCert,
       });
 
       // Verify signature
       const signatureElement = doc.documentElement.getElementsByTagNameNS(
         "http://www.w3.org/2000/09/xmldsig#",
-        "Signature"
+        "Signature",
       )[0];
       if (!signatureElement) {
         throw new WSSecurityError(
-          "No XML Signature found in the SOAP envelope for verification."
+          "No XML Signature found in the SOAP envelope for verification.",
         );
       }
       signedXml.loadSignature(signatureElement);
@@ -326,7 +326,7 @@ export class WSSecurityUtils {
       if (!result) {
         console.error(
           "Signature verification failed:",
-          (signedXml as any).validationErrors
+          (signedXml as any).validationErrors,
         );
         return false;
       }
@@ -363,7 +363,7 @@ export class WSSecurityUtils {
 
     let security = header.getElementsByTagNameNS(
       securityNamespace,
-      "Security"
+      "Security",
     )[0];
 
     if (!security) {
@@ -404,25 +404,25 @@ export class WSSecurityUtils {
     try {
       const cert = new crypto.X509Certificate(this.certificate);
 
-      const issuer = cert.issuer.split('\n').join(', ');
+      const issuer = cert.issuer.split("\n").join(", ");
       // Convert serial number from hex to decimal string
       const serialNumber = BigInt(`0x${cert.serialNumber}`).toString();
 
       return { issuer, serialNumber };
     } catch (error: any) {
       throw new WSSecurityError(
-        `Failed to parse certificate for issuer serial: ${error.message}`
+        `Failed to parse certificate for issuer serial: ${error.message}`,
       );
     }
   }
 
   private loadCertificateByIssuerSerial(
     issuerName: string,
-    serialNumber: string
+    serialNumber: string,
   ): string | undefined {
     if (!this.trustedCertsDir) {
       console.warn(
-        "No trustedCertsDir configured for certificate verification."
+        "No trustedCertsDir configured for certificate verification.",
       );
       return undefined;
     }
@@ -435,8 +435,10 @@ export class WSSecurityUtils {
           const certContent = fs.readFileSync(certPath, "utf-8");
           try {
             const cert = new crypto.X509Certificate(certContent);
-            const certIssuer = cert.issuer.split('\n').join(', ');
-            const certSerialNumber = BigInt(`0x${cert.serialNumber}`).toString();
+            const certIssuer = cert.issuer.split("\n").join(", ");
+            const certSerialNumber = BigInt(
+              `0x${cert.serialNumber}`,
+            ).toString();
 
             if (
               certIssuer === issuerName &&
@@ -453,11 +455,11 @@ export class WSSecurityUtils {
     } catch (error) {
       console.error(
         `Error reading trusted certificates from ${this.trustedCertsDir}:`,
-        error
+        error,
       );
     }
     console.warn(
-      `❌ No trusted certificate found for Issuer: ${issuerName}, Serial: ${serialNumber}`
+      `❌ No trusted certificate found for Issuer: ${issuerName}, Serial: ${serialNumber}`,
     );
     return undefined;
   }

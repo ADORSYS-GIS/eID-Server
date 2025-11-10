@@ -28,10 +28,7 @@ export default async function handler(
       );
     }
     const privateKey = fs.readFileSync(process.env.HTTPS_KEY_PATH, "utf-8");
-    const certificate = fs.readFileSync(
-      process.env.HTTPS_CERT_PATH,
-      "utf-8",
-    );
+    const certificate = fs.readFileSync(process.env.HTTPS_CERT_PATH, "utf-8");
 
     // Configure WS-Security options
     const wsSecurityOptions = {
@@ -41,7 +38,11 @@ export default async function handler(
       trustedCertsDir: "./certs/",
     };
 
-    const soapClient = new SOAPClient(eidServerUrl, tlsOptions, wsSecurityOptions);
+    const soapClient = new SOAPClient(
+      eidServerUrl,
+      tlsOptions,
+      wsSecurityOptions,
+    );
 
     // Call getServerInfo on eID-Server
     const getServerInfoResponse = await soapClient.callGetServerInfo();

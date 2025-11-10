@@ -84,10 +84,10 @@ Test eService for testing eID authentication flows with eID-Server and eID-Clien
 
 | Variable               | Description                                | Default                             |
 | ---------------------- | ------------------------------------------ | ----------------------------------- |
-| `EID_SERVER_URL`       | eID-Server SOAP endpoint                   | `https://localhost:8443/eIDService` |
-| `EID_SERVER_ADDRESS`   | eID-Server address for TC Token            | `https://localhost:8443/eIDService` |
-| `NEXT_PUBLIC_BASE_URL` | Your service base URL (for browser/client) | `https://localhost:3000`            |
-| `PORT`                 | Server port (optional)                     | `3000`                              |
+| `EID_SERVER_URL`       | eID-Server SOAP endpoint                   | `https://localhost:3000/eid` |
+| `EID_SERVER_ADDRESS`   | eID-Server address for TC Token            | `https://localhost:3000/eid` |
+| `NEXT_PUBLIC_BASE_URL` | Your service base URL (for browser/client) | `https://localhost:8443`            |
+| `PORT`                 | Server port (optional)                     | `8443`                              |
 
 #### HTTPS Server Configuration
 
@@ -109,9 +109,9 @@ Test eService for testing eID authentication flows with eID-Server and eID-Clien
 
 #### WS-Security Configuration
 
-| Variable               | Description                                | Default |
-| ---------------------- | ----------------------------------------- | ------- |
-| `WS_SECURITY_ENABLED`  | Enable WS-Security for SOAP messages      | `false` |
+| Variable              | Description                          | Default |
+| --------------------- | ------------------------------------ | ------- |
+| `WS_SECURITY_ENABLED` | Enable WS-Security for SOAP messages | `false` |
 
 ### eID-Server Integration
 
@@ -248,7 +248,7 @@ The implementation follows the specified WS-Security policy:
 
 **Important**: `PORT` and `NEXT_PUBLIC_BASE_URL` serve different purposes:
 
-- **`PORT`**: The actual port the server listens on (default: 3000)
+- **`PORT`**: The actual port the server listens on (default: 8443)
 - **`NEXT_PUBLIC_BASE_URL`**: The URL clients use to access the service (for browser/API calls)
 
 **Example Configuration:**
@@ -283,34 +283,12 @@ NEXT_PUBLIC_BASE_URL=https://localhost:8443
 - `GET /api/refresh` - Handle eID-Client callback
 - `GET /api/auth/result` - Retrieve authentication results
 
-## Development
-
-### Project Structure
-
-```toml
-├── pages/                 # Next.js pages
-│   ├── api/               # API routes
-│   ├── index.tsx          # Main configuration page
-│   ├── results.tsx        # Results display page
-│   └── _app.tsx           # App wrapper
-├── lib/                   # Utility libraries
-│   ├── soapClient.ts      # SOAP communication with eID-Server
-│   ├── sessionManager.ts  # Session management
-│   └── wsSecurity.ts      # WS-Security utilities for XML signatures
-├── types/                 # TypeScript type definitions
-├── styles/                # Global styles and Tailwind CSS
-├── docs/                  # Specification documents
-└── certs/                 # Certificate files for TLS/mTLS and WS-Security
-```
-
 ## Specifications
 
 This implementation follows:
 
 - **TR-03130 Part 1** - eID-Server specifications
 - **TR-03124 Part 1** - eID-Client specifications
-
-See the `docs/` folder for detailed specifications and example payloads.
 
 ## License
 
