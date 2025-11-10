@@ -82,12 +82,12 @@ Test eService for testing eID authentication flows with eID-Server and eID-Clien
 
 #### Basic Configuration
 
-| Variable               | Description                                | Default                             |
-| ---------------------- | ------------------------------------------ | ----------------------------------- |
+| Variable               | Description                                | Default                      |
+| ---------------------- | ------------------------------------------ | ---------------------------- |
 | `EID_SERVER_URL`       | eID-Server SOAP endpoint                   | `https://localhost:3000/eid` |
 | `EID_SERVER_ADDRESS`   | eID-Server address for TC Token            | `https://localhost:3000/eid` |
-| `NEXT_PUBLIC_BASE_URL` | Your service base URL (for browser/client) | `https://localhost:8443`            |
-| `PORT`                 | Server port (optional)                     | `8443`                              |
+| `NEXT_PUBLIC_BASE_URL` | Your service base URL (for browser/client) | `https://localhost:8443`     |
+| `PORT`                 | Server port (optional)                     | `8443`                       |
 
 #### HTTPS Server Configuration
 
