@@ -2,12 +2,18 @@ import axios, { AxiosInstance } from "axios";
 import https from "https";
 import fs from "fs";
 import { XMLParser, XMLBuilder } from "fast-xml-parser";
+import {
+  WSSecurityUtils,
+  WSSecurityOptions,
+  WSSecurityPolicy,
+  WSSecurityError,
+} from "./wsSecurity";
 import type {
   AuthenticationConfig,
   UseIDResponse,
   GetResultResponse,
   GetServerInfoResponse,
-} from "@/types/eid";
+} from "../types/eid";
 
 export class SOAPError extends Error {
   public resultMajor?: string;
@@ -33,6 +39,8 @@ export class SOAPClient {
   private parser: XMLParser;
   private builder: XMLBuilder;
   private eidServerUrl: string;
+  private wsSecurityUtils?: WSSecurityUtils;
+  private wsSecurityEnabled: boolean;
 
   constructor(
     eidServerUrl: string,
@@ -46,8 +54,16 @@ export class SOAPClient {
       rejectUnauthorized?: boolean;
       mode?: "normal" | "mtls"; // TLS mode: normal TLS vs mutual TLS
     },
+    wsSecurityOptions?: {
+      enabled?: boolean;
+      privateKey?: string | Buffer;
+      certificate?: string | Buffer;
+      trustedCertsDir?: string;
+      policy?: WSSecurityPolicy;
+    },
   ) {
     this.eidServerUrl = eidServerUrl;
+    this.wsSecurityEnabled = wsSecurityOptions?.enabled || false;
 
     // Configure HTTPS agent for TLS/mTLS
     const httpsAgentConfig: any = {
@@ -129,6 +145,28 @@ export class SOAPClient {
       console.log("⚠️  Accepting self-signed certificates (eID testing mode)");
     }
 
+    // Initialize WS-Security if enabled
+    if (
+      this.wsSecurityEnabled &&
+      wsSecurityOptions?.privateKey &&
+      wsSecurityOptions?.certificate
+    ) {
+      try {
+        this.wsSecurityUtils = new WSSecurityUtils({
+          privateKey: wsSecurityOptions.privateKey,
+          certificate: wsSecurityOptions.certificate,
+          trustedCertsDir: wsSecurityOptions.trustedCertsDir, // Pass trustedCertsDir
+          policy: wsSecurityOptions.policy,
+        });
+        console.log("🔐 WS-Security enabled for SOAP messages");
+      } catch (error: any) {
+        console.error("❌ Failed to initialize WS-Security:", error.message);
+        throw new Error(`WS-Security initialization failed: ${error.message}`);
+      }
+    } else if (this.wsSecurityEnabled) {
+      console.warn("⚠️  WS-Security enabled but certificates not provided");
+    }
+
     const httpsAgent = new https.Agent(httpsAgentConfig);
 
     this.client = axios.create({
@@ -187,7 +225,8 @@ export class SOAPClient {
 
     this.builder = new XMLBuilder({
       ignoreAttributes: false,
-      format: true,
+      format: false,
+      suppressEmptyNode: true,
     });
   }
 
@@ -299,13 +338,49 @@ export class SOAPClient {
   }
 
   async callUseID(config: AuthenticationConfig): Promise<UseIDResponse> {
-    const soapRequest = this.buildUseIDRequest(config);
+    let soapRequest = this.buildUseIDRequest(config);
+
+    // Apply WS-Security if enabled
+    if (this.wsSecurityEnabled && this.wsSecurityUtils) {
+      try {
+        soapRequest = this.wsSecurityUtils.signSOAPEnvelope(soapRequest);
+        console.log("🔏 useID request signed with WS-Security");
+      } catch (error: any) {
+        console.error("❌ Failed to sign useID request:", error.message);
+        throw new Error(`WS-Security signing failed: ${error.message}`);
+      }
+    }
 
     console.log("Sending useID request:", soapRequest);
 
     try {
       const response = await this.client.post(this.eidServerUrl, soapRequest);
       const parsed = this.parser.parse(response.data);
+
+      // Verify WS-Security signature if enabled and not a SOAP fault
+      if (
+        this.wsSecurityEnabled &&
+        this.wsSecurityUtils &&
+        !parsed.Envelope?.Body?.ResultMajor?.includes("error")
+      ) {
+        try {
+          const isVerified = this.wsSecurityUtils.verifySOAPEnvelope(
+            response.data,
+          );
+          if (!isVerified) {
+            throw new WSSecurityError(
+              "useID response signature verification failed.",
+            );
+          }
+          console.log("✅ useID response signature verified.");
+        } catch (error: any) {
+          console.error(
+            "❌ Failed to verify useID response signature:",
+            error.message,
+          );
+          throw new Error(`WS-Security verification failed: ${error.message}`);
+        }
+      }
 
       console.log("Received useID response:", JSON.stringify(parsed, null, 2));
 
@@ -345,13 +420,49 @@ export class SOAPClient {
     sessionId: string,
     requestCounter: number = 1,
   ): Promise<GetResultResponse> {
-    const soapRequest = this.buildGetResultRequest(sessionId, requestCounter);
+    let soapRequest = this.buildGetResultRequest(sessionId, requestCounter);
+
+    // Apply WS-Security if enabled
+    if (this.wsSecurityEnabled && this.wsSecurityUtils) {
+      try {
+        soapRequest = this.wsSecurityUtils.signSOAPEnvelope(soapRequest);
+        console.log("🔏 getResult request signed with WS-Security");
+      } catch (error: any) {
+        console.error("❌ Failed to sign getResult request:", error.message);
+        throw new Error(`WS-Security signing failed: ${error.message}`);
+      }
+    }
 
     console.log("Sending getResult request:", soapRequest);
 
     try {
       const response = await this.client.post(this.eidServerUrl, soapRequest);
       const parsed = this.parser.parse(response.data);
+
+      // Verify WS-Security signature if enabled and not a SOAP fault
+      if (
+        this.wsSecurityEnabled &&
+        this.wsSecurityUtils &&
+        !parsed.Envelope?.Body?.ResultMajor?.includes("error")
+      ) {
+        try {
+          const isVerified = this.wsSecurityUtils.verifySOAPEnvelope(
+            response.data,
+          );
+          if (!isVerified) {
+            throw new WSSecurityError(
+              "getResult response signature verification failed.",
+            );
+          }
+          console.log("✅ getResult response signature verified.");
+        } catch (error: any) {
+          console.error(
+            "❌ Failed to verify getResult response signature:",
+            error.message,
+          );
+          throw new Error(`WS-Security verification failed: ${error.message}`);
+        }
+      }
 
       console.log(
         "Received getResult response:",
@@ -442,13 +553,52 @@ export class SOAPClient {
   }
 
   async callGetServerInfo(): Promise<GetServerInfoResponse> {
-    const soapRequest = this.buildGetServerInfoRequest();
+    let soapRequest = this.buildGetServerInfoRequest();
+
+    // Apply WS-Security if enabled
+    if (this.wsSecurityEnabled && this.wsSecurityUtils) {
+      try {
+        soapRequest = this.wsSecurityUtils.signSOAPEnvelope(soapRequest);
+        console.log("🔏 getServerInfo request signed with WS-Security");
+      } catch (error: any) {
+        console.error(
+          "❌ Failed to sign getServerInfo request:",
+          error.message,
+        );
+        throw new Error(`WS-Security signing failed: ${error.message}`);
+      }
+    }
 
     console.log("Sending getServerInfo request:", soapRequest);
 
     try {
       const response = await this.client.post(this.eidServerUrl, soapRequest);
       const parsed = this.parser.parse(response.data);
+
+      // Verify WS-Security signature if enabled and not a SOAP fault
+      if (
+        this.wsSecurityEnabled &&
+        this.wsSecurityUtils &&
+        !parsed.Envelope?.Body?.ResultMajor?.includes("error")
+      ) {
+        try {
+          const isVerified = this.wsSecurityUtils.verifySOAPEnvelope(
+            response.data,
+          );
+          if (!isVerified) {
+            throw new WSSecurityError(
+              "getServerInfo response signature verification failed.",
+            );
+          }
+          console.log("✅ getServerInfo response signature verified.");
+        } catch (error: any) {
+          console.error(
+            "❌ Failed to verify getServerInfo response signature:",
+            error.message,
+          );
+          throw new Error(`WS-Security verification failed: ${error.message}`);
+        }
+      }
 
       console.log(
         "Received getServerInfo response:",

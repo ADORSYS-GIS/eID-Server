@@ -114,6 +114,16 @@ pub struct Transforms {
 pub struct Transform {
     #[serde(rename = "@Algorithm")]
     pub algorithm: String,
+
+    #[serde(rename = "InclusiveNamespaces")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inclusive_ns: Option<InclusiveNS>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InclusiveNS {
+    #[serde(rename = "@PrefixList")]
+    pub prefix_list: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

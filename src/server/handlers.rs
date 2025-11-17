@@ -104,17 +104,18 @@ where
     T: TrustStore,
 {
     debug!(req = %request, "Processing authentication request\n");
-
-    // verify envelope signature
     let truststore = &state.service.trust_store;
-    verify_envelope(&request, truststore).await?;
 
     let request_type = infer_request_type(&request)?;
     match request_type {
         APIFunction::UseIDRequest => {
+            // verify envelope signature for useIDRequest
+            verify_envelope(&request, truststore).await?;
             process_request(state, &request, |s, e| handle_useid(s, e)).await
         }
         APIFunction::GetResult => {
+            // verify envelope signature for getResultRequest
+            verify_envelope(&request, truststore).await?;
             process_request(state, &request, |s, e| handle_get_result(s, e)).await
         }
         APIFunction::StartPaos => {
@@ -130,6 +131,8 @@ where
             process_request(state, &request, |s, e| handle_transmit(s, e)).await
         }
         APIFunction::GetServerInfo => {
+            // verify envelope signature for getServerInfoRequest
+            verify_envelope(&request, truststore).await?;
             process_request(state, &request, |s, e| handle_get_server_info(s, e)).await
         }
     }
